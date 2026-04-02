@@ -1,0 +1,17 @@
+{
+    "id": "minecraft-modrinth",
+    "name": "Minecraft Modrinth",
+    "author": "Boy132",
+    "version": "1.0.0",
+    "description": "Easily download, update, and manage minecraft mods & plugins from modrinth",
+    "category": "plugin",
+    "url": "https://github.com/pelican-dev/plugins/tree/main/minecraft-modrinth",
+    "update_url": null,
+    "namespace": "Boy132\\MinecraftModrinth",
+    "class": "MinecraftModrinthPlugin",
+    "panels": [
+        "server"
+    ],
+    "panel_version": null,
+    "composer_packages": null
+}
