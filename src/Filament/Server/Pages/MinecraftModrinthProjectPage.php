@@ -210,7 +210,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
     }
 
     /**
-     * @param  array<int, array{primary: bool, filename: string, url: string}>  $files
+     * @param array<int, array{primary: bool, filename: string, url: string}> $files
      * @return array{primary: bool, filename: string, url: string}|null
      */
     protected function getPrimaryFile(array $files): ?array

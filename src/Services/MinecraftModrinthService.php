@@ -72,7 +72,7 @@ class MinecraftModrinthService
     }
 
     /**
-     * @param  array<int, array{project_id: string, project_slug: string, project_title: string, version_id: string, version_number: string, filename: string, installed_at: string, author?: string}>  $installedMods
+     * @param array<int, array{project_id: string, project_slug: string, project_title: string, version_id: string, version_number: string, filename: string, installed_at: string, author?: string}> $installedMods
      * @return array<int, array<string, mixed>>
      */
     public function getInstalledModsFromModrinth(array $installedMods, int $page = 1): array
@@ -206,8 +206,8 @@ class MinecraftModrinthService
     }
 
     /**
-     * @param  array<string, string>  $hashMap  [filename => sha512hash]
-     * @return array<string, mixed>  [sha512hash => versionData]
+     * @param array<string, string> $hashMap [filename => sha512hash]
+     * @return array<string, mixed> [sha512hash => versionData]
      */
     public function lookupVersionsByHashes(array $hashMap): array
     {
@@ -237,8 +237,8 @@ class MinecraftModrinthService
     }
 
     /**
-     * @param  array<string>  $projectIds
-     * @return array<string, mixed>  [projectId => projectData]
+     * @param array<string> $projectIds
+     * @return array<string, mixed> [projectId => projectData]
      *
      * @throws Exception
      */
@@ -668,8 +668,8 @@ class MinecraftModrinthService
     }
 
     /**
-     * @param  array{version_id: string, version_number: string}  $installedMod
-     * @param  array<int, array{id: string, version_number: string}>  $availableVersions
+     * @param array{version_id: string, version_number: string} $installedMod
+     * @param array<int, array{id: string, version_number: string}> $availableVersions
      */
     public function isUpdateAvailable(array $installedMod, array $availableVersions): bool
     {
