@@ -3,7 +3,7 @@
 A plugin for [Pelican Panel](https://pelican.dev) that lets you search, install, update, and manage Minecraft mods/plugins from [Modrinth](https://modrinth.com) directly in the server panel.
 
 > This repository is a **fork** of
-> [H1ghSyst3m/plugins](https://github.com/H1ghSyst3m/plugins/tree/featcomplete-mod-plugin-management).
+> [H1ghSyst3m/plugins](https://github.com/H1ghSyst3m/plugins/tree/featcomplete-mod-plugin-management), which forks [pelican-dev/plugins](https://github.com/pelican-dev/plugins).
 
 ## Features
 
