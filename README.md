@@ -28,7 +28,7 @@ Also ensure the egg has the `minecraft` tag and a matching loader tag (for examp
 
 ### Option 1: Direct URL
 
-Use this URL in the Pelican Panel plugin installer (after releases are published):
+Use this URL in the Pelican Panel plugin installer:
 
 ```txt
 https://github.com/YONN2222/pelican-minecraft-modrinth/releases/latest/download/pelican-minecraft-modrinth.zip
