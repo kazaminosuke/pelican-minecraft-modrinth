@@ -21,6 +21,7 @@ use Filament\Schemas\Components\Grid;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Components\Tabs\Tab;
 use Filament\Schemas\Schema;
+use Filament\Support\Enums\TextSize;
 use Filament\Tables\Columns\ImageColumn;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Concerns\InteractsWithTable;
@@ -996,11 +997,11 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                         TextEntry::make('Minecraft Version')
                             ->state(fn () => MinecraftModrinth::getMinecraftVersion($server) ?? trans('pelican-minecraft-modrinth::strings.page.unknown'))
                             ->badge()
-                            ->size(\Filament\Support\Enums\TextSize::Large),
+                            ->size(TextSize::Large),
                         TextEntry::make('Loader')
                             ->state(fn () => MinecraftLoader::fromServer($server)?->getLabel() ?? trans('pelican-minecraft-modrinth::strings.page.unknown'))
                             ->badge()
-                            ->size(\Filament\Support\Enums\TextSize::Large),
+                            ->size(TextSize::Large),
                         TextEntry::make('installed')
                             ->label(fn () => trans('pelican-minecraft-modrinth::strings.page.installed', ['type' => $type?->getLabel() ?? 'Modrinth']))
                             ->state(function (DaemonFileRepository $fileRepository) use ($server, $type) {
@@ -1025,7 +1026,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                                 }
                             })
                             ->badge()
-                            ->size(\Filament\Support\Enums\TextSize::Large),
+                            ->size(TextSize::Large),
                     ]),
                 $this->getTabsContentComponent(),
                 EmbeddedTable::make(),
