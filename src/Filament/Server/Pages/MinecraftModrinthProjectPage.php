@@ -973,7 +973,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     ModrinthProjectType::Plugin => 'pelican-minecraft-modrinth::strings.actions.rescan_plugins_for_updates',
                     default => 'pelican-minecraft-modrinth::strings.actions.rescan_mods_for_updates',
                 }))
-                ->icon('heroicon-o-magnifying-glass')
+                ->icon('tabler-search')
                 ->action(function () use ($server) {
                     Cache::forget("modrinth_hash_scan:{$server->id}");
                     $this->redirect(static::getUrl());
