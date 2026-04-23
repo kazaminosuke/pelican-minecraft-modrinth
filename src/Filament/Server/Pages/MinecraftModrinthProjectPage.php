@@ -995,10 +995,12 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     ->schema([
                         TextEntry::make('Minecraft Version')
                             ->state(fn () => MinecraftModrinth::getMinecraftVersion($server) ?? trans('pelican-minecraft-modrinth::strings.page.unknown'))
-                            ->badge(),
+                            ->badge()
+                            ->size(\Filament\Support\Enums\TextSize::Large),
                         TextEntry::make('Loader')
                             ->state(fn () => MinecraftLoader::fromServer($server)?->getLabel() ?? trans('pelican-minecraft-modrinth::strings.page.unknown'))
-                            ->badge(),
+                            ->badge()
+                            ->size(\Filament\Support\Enums\TextSize::Large),
                         TextEntry::make('installed')
                             ->label(fn () => trans('pelican-minecraft-modrinth::strings.page.installed', ['type' => $type?->getLabel() ?? 'Modrinth']))
                             ->state(function (DaemonFileRepository $fileRepository) use ($server, $type) {
@@ -1022,7 +1024,8 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                                     return trans('pelican-minecraft-modrinth::strings.page.unknown');
                                 }
                             })
-                            ->badge(),
+                            ->badge()
+                            ->size(\Filament\Support\Enums\TextSize::Large),
                     ]),
                 $this->getTabsContentComponent(),
                 EmbeddedTable::make(),
