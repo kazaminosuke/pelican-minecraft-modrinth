@@ -11,7 +11,12 @@ enum MinecraftLoader: string implements HasLabel
     case Forge = 'forge';
     case Fabric = 'fabric';
     case Quilt = 'quilt';
+    case Folia = 'folia';
+    case Purpur = 'purpur';
     case Paper = 'paper';
+    case Spigot = 'spigot';
+    case Bukkit = 'bukkit';
+    case Sponge = 'sponge';
     case Velocity = 'velocity';
     case Bungeecord = 'bungeecord';
 
@@ -49,8 +54,28 @@ enum MinecraftLoader: string implements HasLabel
                 return self::Quilt;
             }
 
-            if (in_array('bukkit', $tags) || in_array('spigot', $tags) || in_array('paper', $tags)) {
+            if (in_array('folia', $tags)) {
+                return self::Folia;
+            }
+
+            if (in_array('purpur', $tags)) {
+                return self::Purpur;
+            }
+
+            if (in_array('paper', $tags)) {
                 return self::Paper;
+            }
+
+            if (in_array('spigot', $tags)) {
+                return self::Spigot;
+            }
+
+            if (in_array('bukkit', $tags)) {
+                return self::Bukkit;
+            }
+
+            if (in_array('sponge', $tags)) {
+                return self::Sponge;
             }
 
             if (in_array('velocity', $tags)) {
