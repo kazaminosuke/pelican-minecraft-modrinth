@@ -7,6 +7,8 @@ return [
 
     'settings' => [
         'latest_minecraft_version' => 'Neueste Minecraft-Version',
+        'nav_sort' => 'Navigationsreihenfolge',
+        'nav_sort_helper' => 'Sortierreihenfolge im Seitenmenü. Niedrigere Zahlen erscheinen weiter oben.',
         'settings_saved' => 'Einstellungen gespeichert',
     ],
 

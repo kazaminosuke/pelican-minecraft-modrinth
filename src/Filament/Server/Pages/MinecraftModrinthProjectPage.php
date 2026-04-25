@@ -52,7 +52,10 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
     protected static ?string $slug = 'modrinth';
 
-    protected static ?int $navigationSort = 30;
+    public static function getNavigationSort(): ?int
+    {
+        return (int) env('MINECRAFT_MODRINTH_NAV_SORT', 10);
+    }
 
     public static function canAccess(): bool
     {

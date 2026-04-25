@@ -7,6 +7,8 @@ return [
 
     'settings' => [
         'latest_minecraft_version' => 'Latest Minecraft Version',
+        'nav_sort' => 'Navigation Order',
+        'nav_sort_helper' => 'Sort order in the side menu. Lower numbers appear higher.',
         'settings_saved' => 'Settings saved',
     ],
 
