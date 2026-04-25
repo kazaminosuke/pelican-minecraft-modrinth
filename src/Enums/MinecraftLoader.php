@@ -3,9 +3,10 @@
 namespace Boy132\MinecraftModrinth\Enums;
 
 use App\Models\Server;
+use Filament\Support\Contracts\HasIcon;
 use Filament\Support\Contracts\HasLabel;
 
-enum MinecraftLoader: string implements HasLabel
+enum MinecraftLoader: string implements HasLabel, HasIcon
 {
     case NeoForge = 'neoforge';
     case Forge = 'forge';
@@ -17,13 +18,32 @@ enum MinecraftLoader: string implements HasLabel
     case Spigot = 'spigot';
     case Bukkit = 'bukkit';
     case Sponge = 'sponge';
-    case Leaf = 'leaf';
     case Velocity = 'velocity';
+    case Waterfall = 'waterfall';
     case Bungeecord = 'bungeecord';
 
     public function getLabel(): string
     {
         return str($this->name)->title();
+    }
+
+    public function getIcon(): string
+    {
+        return match($this) {
+            self::NeoForge   => 'mcloader-neoforge',
+            self::Forge      => 'mcloader-forge',
+            self::Fabric     => 'mcloader-fabric',
+            self::Quilt      => 'mcloader-quilt',
+            self::Folia      => 'mcloader-folia',
+            self::Purpur     => 'mcloader-purpur',
+            self::Paper      => 'mcloader-paper',
+            self::Spigot     => 'mcloader-spigot',
+            self::Bukkit     => 'mcloader-bukkit',
+            self::Sponge     => 'mcloader-sponge',
+            self::Velocity   => 'mcloader-velocity',
+            self::Waterfall  => 'mcloader-waterfall',
+            self::Bungeecord => 'mcloader-bungeecord',
+        };
     }
 
     public static function fromServer(Server $server): ?MinecraftLoader
@@ -67,7 +87,11 @@ enum MinecraftLoader: string implements HasLabel
                 return self::Paper;
             }
 
-            if (in_array('spigot', $tags) || in_array('bukkit', $tags)) {
+            if (in_array('bukkit', $tags)) {
+                return self::Bukkit;
+            }
+
+            if (in_array('spigot', $tags)) {
                 return self::Spigot;
             }
 
@@ -79,7 +103,11 @@ enum MinecraftLoader: string implements HasLabel
                 return self::Velocity;
             }
 
-            if (in_array('waterfall', $tags) || in_array('bungeecord', $tags)) {
+            if (in_array('waterfall', $tags)) {
+                return self::Waterfall;
+            }
+
+            if (in_array('bungeecord', $tags)) {
                 return self::Bungeecord;
             }
 

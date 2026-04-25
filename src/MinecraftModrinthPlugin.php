@@ -4,10 +4,13 @@ namespace Boy132\MinecraftModrinth;
 
 use App\Contracts\Plugins\HasPluginSettings;
 use App\Traits\EnvironmentWriterTrait;
+use BladeUI\Icons\Factory as BladeIconsFactory;
 use Filament\Contracts\Plugin;
 use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
 use Filament\Panel;
+use Filament\View\PanelsRenderHook;
+use Illuminate\Support\HtmlString;
 
 class MinecraftModrinthPlugin implements HasPluginSettings, Plugin
 {
@@ -23,6 +26,16 @@ class MinecraftModrinthPlugin implements HasPluginSettings, Plugin
         $id = str($panel->getId())->title();
 
         $panel->discoverPages(plugin_path($this->getId(), "src/Filament/$id/Pages"), "Boy132\\MinecraftModrinth\\Filament\\$id\\Pages");
+
+        app(BladeIconsFactory::class)->add('mcloader', [
+            'path' => plugin_path($this->getId(), 'resources/icons/loaders'),
+            'prefix' => 'mcloader',
+        ]);
+
+        $panel->renderHook(
+            PanelsRenderHook::HEAD_END,
+            fn () => new HtmlString('<style>.mcloader-badge .fi-icon{width:1em!important;height:1em!important;}</style>'),
+        );
     }
 
     public function boot(Panel $panel): void {}

@@ -1000,8 +1000,18 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                             ->size(TextSize::Large),
                         TextEntry::make('Loader')
                             ->state(fn () => MinecraftLoader::fromServer($server)?->getLabel() ?? trans('pelican-minecraft-modrinth::strings.page.unknown'))
+                            ->icon(function () use ($server) {
+                                $loader = MinecraftLoader::fromServer($server);
+                                if (!$loader) {
+                                    return null;
+                                }
+                                $name = strtolower($loader->name);
+                                $path = plugin_path('pelican-minecraft-modrinth', 'resources/icons/loaders/' . $name . '.svg');
+                                return file_exists($path) ? 'mcloader-' . $name : null;
+                            })
                             ->badge()
-                            ->size(TextSize::Large),
+                            ->size(TextSize::Large)
+                            ->extraAttributes(['class' => 'mcloader-badge']),
                         TextEntry::make('installed')
                             ->label(fn () => trans('pelican-minecraft-modrinth::strings.page.installed', ['type' => $type?->getLabel() ?? 'Modrinth']))
                             ->state(function (DaemonFileRepository $fileRepository) use ($server, $type) {
