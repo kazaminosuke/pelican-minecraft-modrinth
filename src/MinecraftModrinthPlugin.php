@@ -47,6 +47,11 @@ class MinecraftModrinthPlugin implements HasPluginSettings, Plugin
                 ->label(trans('pelican-minecraft-modrinth::strings.settings.latest_minecraft_version'))
                 ->required()
                 ->default(fn () => config('pelican-minecraft-modrinth.latest_minecraft_version', '1.21.11')),
+            TextInput::make('nav_sort')
+                ->label(trans('pelican-minecraft-modrinth::strings.settings.nav_sort'))
+                ->helperText(trans('pelican-minecraft-modrinth::strings.settings.nav_sort_helper'))
+                ->numeric()
+                ->default(env('MINECRAFT_MODRINTH_NAV_SORT', 10)),
         ];
     }
 
@@ -54,6 +59,7 @@ class MinecraftModrinthPlugin implements HasPluginSettings, Plugin
     {
         $this->writeToEnvironment([
             'LATEST_MINECRAFT_VERSION' => $data['latest_minecraft_version'],
+            'MINECRAFT_MODRINTH_NAV_SORT' => $data['nav_sort'],
         ]);
 
         Notification::make()
