@@ -6,7 +6,7 @@ use App\Models\Server;
 use Filament\Support\Contracts\HasIcon;
 use Filament\Support\Contracts\HasLabel;
 
-enum MinecraftLoader: string implements HasLabel, HasIcon
+enum MinecraftLoader: string implements HasIcon, HasLabel
 {
     case NeoForge = 'neoforge';
     case Forge = 'forge';
@@ -29,7 +29,7 @@ enum MinecraftLoader: string implements HasLabel, HasIcon
 
     public function getIcon(): string
     {
-        return match($this) {
+        return match ($this) {
             self::NeoForge   => 'mcloader-neoforge',
             self::Forge      => 'mcloader-forge',
             self::Fabric     => 'mcloader-fabric',

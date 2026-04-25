@@ -1006,6 +1006,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                                 }
                                 $name = strtolower($loader->name);
                                 $path = plugin_path('pelican-minecraft-modrinth', 'resources/icons/loaders/' . $name . '.svg');
+
                                 return file_exists($path) ? 'mcloader-' . $name : null;
                             })
                             ->badge()
