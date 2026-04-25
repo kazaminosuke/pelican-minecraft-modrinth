@@ -928,13 +928,12 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                 ->icon('tabler-folder-open')
                 ->url(fn () => ListFiles::getUrl(['path' => $folder]), true),
             Action::make('update_all')
-                ->iconButton()
-                ->icon('tabler-download')
-                ->color('warning')
-                ->tooltip(fn () => trans(match ($type) {
+                ->label(fn () => trans(match ($type) {
                     ModrinthProjectType::Plugin => 'pelican-minecraft-modrinth::strings.actions.update_all_plugins',
                     default => 'pelican-minecraft-modrinth::strings.actions.update_all_mods',
                 }))
+                ->icon('tabler-download')
+                ->color('warning')
                 ->requiresConfirmation()
                 ->action(function (DaemonFileRepository $fileRepository) use ($server) {
                     $result = $this->performBulkUpdate($server, $fileRepository);
