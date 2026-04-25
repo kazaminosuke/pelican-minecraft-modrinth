@@ -30,18 +30,18 @@ enum MinecraftLoader: string implements HasIcon, HasLabel
     public function getIcon(): string
     {
         return match ($this) {
-            self::NeoForge   => 'mcloader-neoforge',
-            self::Forge      => 'mcloader-forge',
-            self::Fabric     => 'mcloader-fabric',
-            self::Quilt      => 'mcloader-quilt',
-            self::Folia      => 'mcloader-folia',
-            self::Purpur     => 'mcloader-purpur',
-            self::Paper      => 'mcloader-paper',
-            self::Spigot     => 'mcloader-spigot',
-            self::Bukkit     => 'mcloader-bukkit',
-            self::Sponge     => 'mcloader-sponge',
-            self::Velocity   => 'mcloader-velocity',
-            self::Waterfall  => 'mcloader-waterfall',
+            self::NeoForge => 'mcloader-neoforge',
+            self::Forge => 'mcloader-forge',
+            self::Fabric => 'mcloader-fabric',
+            self::Quilt => 'mcloader-quilt',
+            self::Folia => 'mcloader-folia',
+            self::Purpur => 'mcloader-purpur',
+            self::Paper => 'mcloader-paper',
+            self::Spigot => 'mcloader-spigot',
+            self::Bukkit => 'mcloader-bukkit',
+            self::Sponge => 'mcloader-sponge',
+            self::Velocity => 'mcloader-velocity',
+            self::Waterfall => 'mcloader-waterfall',
             self::Bungeecord => 'mcloader-bungeecord',
         };
     }
