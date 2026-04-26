@@ -6,7 +6,7 @@
     "description": "Easily download, update, and manage minecraft mods & plugins from modrinth",
     "category": "plugin",
     "url": "https://github.com/YONN2222/pelican-minecraft-modrinth",
-    "update_url": null,
+    "update_url": "https://raw.githubusercontent.com/YONN2222/pelican-minecraft-modrinth/refs/heads/main/update.json",
     "namespace": "Boy132\\MinecraftModrinth",
     "class": "MinecraftModrinthPlugin",
     "panels": [
