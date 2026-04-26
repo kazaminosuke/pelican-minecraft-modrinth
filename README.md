@@ -18,10 +18,12 @@ A plugin for [Pelican Panel](https://pelican.dev) that lets you search, install,
   - Rescan actions for mods/plugins update checks
   - Bulk update action for all updatable mods/plugins
   - Extended German/English notification and action texts
+  - Install Datapacks from Modrinth
 
 ## Setup
 
 Add `modrinth_mods` or `modrinth_plugins` to your egg **features**.
+Add `modrinth_datapacks` if you want to manage datapacks as well.
 Also ensure the egg has the `minecraft` tag and a matching loader tag (for example `paper`, `fabric`, `forge`, or `neoforge`).
 
 ## Installation

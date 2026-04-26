@@ -4,6 +4,7 @@ return [
     'plugin_name' => 'Modrinth',
     'minecraft_mods' => 'Minecraft Mods',
     'minecraft_plugins' => 'Minecraft Plugins',
+    'minecraft_datapacks' => 'Minecraft Datapacks',
 
     'settings' => [
         'latest_minecraft_version' => 'Latest Minecraft Version',
@@ -44,8 +45,10 @@ return [
         'scan' => 'Scan Mods',
         'rescan_mods_for_updates' => 'Rescan mods for updates',
         'rescan_plugins_for_updates' => 'Rescan plugins for updates',
+        'rescan_datapacks_for_updates' => 'Rescan datapacks for updates',
         'update_all_mods' => 'Update all mods',
         'update_all_plugins' => 'Update all plugins',
+        'update_all_datapacks' => 'Update all datapacks',
         'install_latest' => 'Install latest version',
         'install' => 'Install',
         'installed' => 'Installed',
@@ -80,6 +83,7 @@ return [
         'uninstall_failed_body' => 'An error occurred during uninstallation. Please try again or contact support if the issue persists.',
         'scan_in_progress_mods' => 'Scanning mods... please wait a moment.',
         'scan_in_progress_plugins' => 'Scanning plugins... please wait a moment.',
+        'scan_in_progress_datapacks' => 'Scanning datapacks... please wait a moment.',
         'scan_success' => ':count mod(s) imported from scan.',
         'scan_failed' => 'Scan failed — Modrinth could not be reached.',
         'bulk_update_success' => ':count item(s) updated.',

@@ -9,12 +9,14 @@ enum ModrinthProjectType: string implements HasLabel
 {
     case Mod = 'mod';
     case Plugin = 'plugin';
+    case Datapack = 'datapack';
 
     public function getLabel(): string
     {
         return match ($this) {
             self::Mod => trans('pelican-minecraft-modrinth::strings.minecraft_mods'),
             self::Plugin => trans('pelican-minecraft-modrinth::strings.minecraft_plugins'),
+            self::Datapack => trans('pelican-minecraft-modrinth::strings.minecraft_datapacks'),
         };
     }
 
@@ -23,6 +25,23 @@ enum ModrinthProjectType: string implements HasLabel
         return match ($this) {
             self::Mod => 'mods',
             self::Plugin => 'plugins',
+            self::Datapack => 'world/datapacks',
+        };
+    }
+
+    public function getFileExtension(): string
+    {
+        return match ($this) {
+            self::Mod, self::Plugin => '.jar',
+            self::Datapack => '.zip',
+        };
+    }
+
+    public function getModrinthLoader(Server $server): ?string
+    {
+        return match ($this) {
+            self::Datapack => 'datapack',
+            default => MinecraftLoader::fromServer($server)?->value,
         };
     }
 
@@ -42,5 +61,14 @@ enum ModrinthProjectType: string implements HasLabel
         }
 
         return null;
+    }
+
+    public static function supportsDatapacks(Server $server): bool
+    {
+        $server->loadMissing('egg');
+
+        $features = $server->egg->features ?? [];
+
+        return in_array('modrinth_datapacks', $features);
     }
 }
