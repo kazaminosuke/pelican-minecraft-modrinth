@@ -4,7 +4,6 @@ namespace Boy132\MinecraftModrinth\Services;
 
 use App\Models\Server;
 use App\Repositories\Daemon\DaemonFileRepository;
-use Boy132\MinecraftModrinth\Enums\MinecraftLoader;
 use Boy132\MinecraftModrinth\Enums\ModrinthProjectType;
 use Exception;
 use Illuminate\Support\Facades\Cache;
