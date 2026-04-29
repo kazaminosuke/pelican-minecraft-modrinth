@@ -425,7 +425,7 @@ class MinecraftModrinthService
 
         $properties = $this->serverPropertiesCache[$server->id];
 
-        return $properties[$key] ?? null;
+        return $properties ? ($properties[$key] ?? null) : null;
     }
 
     /** @return array<string, string>|null */
@@ -434,6 +434,10 @@ class MinecraftModrinthService
         try {
             $content = $fileRepository->setServer($server)->getContent('server.properties');
         } catch (Exception $exception) {
+            return null;
+        }
+
+        if (empty($content)) {
             return null;
         }
 
