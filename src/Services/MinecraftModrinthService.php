@@ -11,6 +11,9 @@ use Illuminate\Support\Facades\Http;
 
 class MinecraftModrinthService
 {
+    /** @var array<int, array<string, string>|null> */
+    protected array $serverPropertiesCache = [];
+
     public function getMinecraftVersion(Server $server): ?string
     {
         $version = $server->variables()->where(fn ($builder) => $builder->where('env_variable', 'MINECRAFT_VERSION')->orWhere('env_variable', 'MC_VERSION'))->first()?->server_value;
@@ -416,12 +419,25 @@ class MinecraftModrinthService
 
     protected function getServerPropertiesValue(Server $server, DaemonFileRepository $fileRepository, string $key): ?string
     {
+        if (!array_key_exists($server->id, $this->serverPropertiesCache)) {
+            $this->serverPropertiesCache[$server->id] = $this->getServerProperties($server, $fileRepository);
+        }
+
+        $properties = $this->serverPropertiesCache[$server->id];
+
+        return $properties[$key] ?? null;
+    }
+
+    /** @return array<string, string>|null */
+    protected function getServerProperties(Server $server, DaemonFileRepository $fileRepository): ?array
+    {
         try {
             $content = $fileRepository->setServer($server)->getContent('server.properties');
         } catch (Exception $exception) {
             return null;
         }
 
+        $properties = [];
         foreach (preg_split('/\r\n|\r|\n/', $content) ?: [] as $line) {
             $line = trim($line);
 
@@ -430,13 +446,10 @@ class MinecraftModrinthService
             }
 
             [$propertyKey, $value] = array_map('trim', explode('=', $line, 2));
-
-            if ($propertyKey === $key) {
-                return $value;
-            }
+            $properties[$propertyKey] = $value;
         }
 
-        return null;
+        return $properties;
     }
 
     /**
@@ -466,7 +479,7 @@ class MinecraftModrinthService
 
         $extension = $type->getFileExtension();
 
-        $jarFiles = collect($directoryContents)
+        $diskFiles = collect($directoryContents)
             ->filter(fn ($item) => is_array($item) && isset($item['name']) && str($item['name'])->lower()->endsWith($extension))
             ->pluck('name')
             ->values()
@@ -474,7 +487,7 @@ class MinecraftModrinthService
 
         $installedModsMetadata = $this->getInstalledModsMetadata($server, $fileRepository, $type);
 
-        $diskFilesLower = array_flip(array_map('strtolower', $jarFiles));
+        $diskFilesLower = array_flip(array_map('strtolower', $diskFiles));
         $filteredInstalledModsMetadata = array_values(array_filter(
             $installedModsMetadata,
             fn ($installedMod) => isset($diskFilesLower[strtolower($installedMod['filename'])])
@@ -486,7 +499,7 @@ class MinecraftModrinthService
 
         $installedModsMetadata = $filteredInstalledModsMetadata;
 
-        if (empty($jarFiles)) {
+        if (empty($diskFiles)) {
             return [];
         }
 
@@ -496,7 +509,7 @@ class MinecraftModrinthService
         }
 
         $unknownFiles = array_values(
-            array_filter($jarFiles, function ($name) use ($knownFilenames) {
+            array_filter($diskFiles, function ($name) use ($knownFilenames) {
                 $normalizedName = strtolower($name);
 
                 return !isset($knownFilenames[$normalizedName]);
