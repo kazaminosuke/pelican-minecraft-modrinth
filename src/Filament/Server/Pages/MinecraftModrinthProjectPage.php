@@ -109,7 +109,8 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
         /** @var Server $server */
         $server = Filament::getTenant();
 
-        $scanCacheKey = "modrinth_hash_scan:{$server->id}";
+        $projectType = static::detectProjectType($server);
+        $scanCacheKey = MinecraftModrinth::getHashScanCacheKey($server, $projectType);
         if (Cache::has($scanCacheKey)) {
             return;
         }
@@ -120,7 +121,6 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
             return;
         }
 
-        $projectType = static::detectProjectType($server);
         $scanInProgressKey = match ($projectType) {
             ModrinthProjectType::Plugin => 'pelican-minecraft-modrinth::strings.notifications.scan_in_progress_plugins',
             ModrinthProjectType::Datapack => 'pelican-minecraft-modrinth::strings.notifications.scan_in_progress_datapacks',
@@ -141,7 +141,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
         }
 
         try {
-            $directoryContents = $fileRepository->setServer($server)->getDirectory($type->getFolder());
+            $directoryContents = $fileRepository->setServer($server)->getDirectory(MinecraftModrinth::getProjectFolder($server, $fileRepository, $type));
         } catch (Exception $exception) {
             report($exception);
 
@@ -275,7 +275,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
             throw new Exception('Server does not support Modrinth mods or plugins');
         }
 
-        $folder = $type->getFolder();
+        $folder = MinecraftModrinth::getProjectFolder($server, $fileRepository, $type);
 
         $fileRepository->setServer($server)->pull($primaryFile['url'], $folder);
 
@@ -539,6 +539,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
             ->recordActions([
                 Action::make('versions')
                     ->iconButton()
+                    ->extraAttributes(['class' => 'mx-0.5'])
                     ->icon('tabler-list')
                     ->color('info')
                     ->tooltip(trans('pelican-minecraft-modrinth::strings.actions.versions'))
@@ -658,6 +659,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     }),
                 Action::make('install_latest')
                     ->iconButton()
+                    ->extraAttributes(['class' => 'mx-0.5'])
                     ->icon('tabler-download')
                     ->color('success')
                     ->tooltip(trans('pelican-minecraft-modrinth::strings.actions.install_latest'))
@@ -722,6 +724,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     }),
                 Action::make('update')
                     ->iconButton()
+                    ->extraAttributes(['class' => 'mx-0.5'])
                     ->icon('tabler-refresh')
                     ->color('warning')
                     ->tooltip(trans('pelican-minecraft-modrinth::strings.actions.update'))
@@ -812,6 +815,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     }),
                 Action::make('installed')
                     ->iconButton()
+                    ->extraAttributes(['class' => 'mx-0.5'])
                     ->icon('tabler-check')
                     ->color('success')
                     ->tooltip(trans('pelican-minecraft-modrinth::strings.actions.installed'))
@@ -838,6 +842,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     }),
                 Action::make('uninstall')
                     ->iconButton()
+                    ->extraAttributes(['class' => 'mx-0.5'])
                     ->icon('tabler-trash')
                     ->color('danger')
                     ->tooltip(trans('pelican-minecraft-modrinth::strings.actions.uninstall'))
@@ -870,7 +875,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                                 throw new Exception('Server does not support Modrinth mods or plugins');
                             }
 
-                            $folder = $type->getFolder();
+                            $folder = MinecraftModrinth::getProjectFolder($server, $fileRepository, $type);
 
                             Http::daemon($server->node)
                                 ->post("/api/servers/{$server->uuid}/files/delete", [
@@ -940,7 +945,9 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
             return [];
         }
 
-        $folder = $type->getFolder();
+        /** @var DaemonFileRepository $fileRepository */
+        $fileRepository = app(DaemonFileRepository::class);
+        $folder = MinecraftModrinth::getProjectFolder($server, $fileRepository, $type);
 
         return [
             Action::make('open_folder')
@@ -996,8 +1003,8 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     default => 'pelican-minecraft-modrinth::strings.actions.rescan_mods_for_updates',
                 }))
                 ->icon('tabler-search')
-                ->action(function () use ($server) {
-                    Cache::forget("modrinth_hash_scan:{$server->id}");
+                ->action(function () use ($server, $type) {
+                    Cache::forget(MinecraftModrinth::getHashScanCacheKey($server, $type));
                     $this->redirect(static::getUrl());
                 })
                 ->visible(fn () => static::detectProjectType($server) !== null),
@@ -1013,12 +1020,17 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
         return $schema
             ->components([
-                Grid::make(3)
+                Grid::make($type === ModrinthProjectType::Datapack ? 4 : 3)
                     ->schema([
                         TextEntry::make('Minecraft Version')
                             ->state(fn () => MinecraftModrinth::getMinecraftVersion($server) ?? trans('pelican-minecraft-modrinth::strings.page.unknown'))
                             ->badge()
                             ->size(TextSize::Large),
+                        TextEntry::make('World')
+                            ->state(fn (DaemonFileRepository $fileRepository) => MinecraftModrinth::getDatapackWorldName($server, $fileRepository))
+                            ->badge()
+                            ->size(TextSize::Large)
+                            ->visible(fn () => $type === ModrinthProjectType::Datapack),
                         TextEntry::make('Loader')
                             ->state(fn () => MinecraftLoader::fromServer($server)?->getLabel() ?? trans('pelican-minecraft-modrinth::strings.page.unknown'))
                             ->icon(function () use ($server) {
@@ -1042,7 +1054,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                                         return trans('pelican-minecraft-modrinth::strings.page.unknown');
                                     }
 
-                                    $files = $fileRepository->setServer($server)->getDirectory($type->getFolder());
+                                    $files = $fileRepository->setServer($server)->getDirectory(MinecraftModrinth::getProjectFolder($server, $fileRepository, $type));
 
                                     if (isset($files['error'])) {
                                         throw new Exception($files['error']);

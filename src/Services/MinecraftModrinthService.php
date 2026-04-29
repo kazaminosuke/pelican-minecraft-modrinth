@@ -383,11 +383,61 @@ class MinecraftModrinthService
     public function scanAndImportMods(Server $server, DaemonFileRepository $fileRepository, ?ModrinthProjectType $type = null): array
     {
         $resolvedType = $type ?? ModrinthProjectType::fromServer($server);
-        $cacheKey = "modrinth_hash_scan:{$server->id}:" . ($resolvedType?->value ?? 'unknown');
+        $cacheKey = $this->getHashScanCacheKey($server, $resolvedType);
 
         return cache()->remember($cacheKey, now()->addMinutes(10), function () use ($server, $fileRepository, $resolvedType) {
             return $this->performScan($server, $fileRepository, $resolvedType);
         });
+    }
+
+    public function getHashScanCacheKey(Server $server, ?ModrinthProjectType $type = null): string
+    {
+        $resolvedType = $type ?? ModrinthProjectType::fromServer($server);
+
+        return "modrinth_hash_scan:{$server->id}:".($resolvedType?->value ?? 'unknown');
+    }
+
+    public function getProjectFolder(Server $server, DaemonFileRepository $fileRepository, ?ModrinthProjectType $type = null): string
+    {
+        $resolvedType = $type ?? ModrinthProjectType::fromServer($server);
+
+        if ($resolvedType !== ModrinthProjectType::Datapack) {
+            return $resolvedType?->getFolder($server) ?? 'mods';
+        }
+
+        return $this->getDatapackWorldName($server, $fileRepository).'/datapacks';
+    }
+
+    public function getDatapackWorldName(Server $server, DaemonFileRepository $fileRepository): string
+    {
+        $worldName = trim((string) $this->getServerPropertiesValue($server, $fileRepository, 'level-name'), " \t\n\r\0\x0B/\\");
+
+        return $worldName !== '' ? $worldName : 'world';
+    }
+
+    protected function getServerPropertiesValue(Server $server, DaemonFileRepository $fileRepository, string $key): ?string
+    {
+        try {
+            $content = $fileRepository->setServer($server)->getContent('server.properties');
+        } catch (Exception $exception) {
+            return null;
+        }
+
+        foreach (preg_split('/\r\n|\r|\n/', $content) ?: [] as $line) {
+            $line = trim($line);
+
+            if ($line === '' || str_starts_with($line, '#') || !str_contains($line, '=')) {
+                continue;
+            }
+
+            [$propertyKey, $value] = array_map('trim', explode('=', $line, 2));
+
+            if ($propertyKey === $key) {
+                return $value;
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -404,7 +454,7 @@ class MinecraftModrinthService
         }
 
         try {
-            $directoryContents = $fileRepository->setServer($server)->getDirectory($type->getFolder());
+            $directoryContents = $fileRepository->setServer($server)->getDirectory($this->getProjectFolder($server, $fileRepository, $type));
         } catch (Exception $exception) {
             report($exception);
 
@@ -426,11 +476,15 @@ class MinecraftModrinthService
         $installedModsMetadata = $this->getInstalledModsMetadata($server, $fileRepository, $type);
 
         $diskFilesLower = array_flip(array_map('strtolower', $jarFiles));
-        foreach ($installedModsMetadata as $installedMod) {
+        $installedModsMetadata = array_values(array_filter($installedModsMetadata, function ($installedMod) use ($server, $fileRepository, $type, $diskFilesLower) {
             if (!isset($diskFilesLower[strtolower($installedMod['filename'])])) {
                 $this->removeModMetadata($server, $fileRepository, $installedMod['project_id'], $type);
+
+                return false;
             }
-        }
+
+            return true;
+        }));
 
         if (empty($jarFiles)) {
             return [];
@@ -453,7 +507,7 @@ class MinecraftModrinthService
             return [];
         }
 
-        $folder = $type->getFolder();
+        $folder = $this->getProjectFolder($server, $fileRepository, $type);
         $hashMap = []; // [filename => sha512hash]
 
         foreach ($unknownFiles as $filename) {
@@ -546,7 +600,7 @@ class MinecraftModrinthService
     /**
      * @throws Exception
      */
-    protected function getMetadataFilePath(Server $server, ?ModrinthProjectType $type = null): string
+    protected function getMetadataFilePath(Server $server, DaemonFileRepository $fileRepository, ?ModrinthProjectType $type = null): string
     {
         $type ??= ModrinthProjectType::fromServer($server);
 
@@ -554,14 +608,14 @@ class MinecraftModrinthService
             throw new Exception("Server {$server->id} does not support Modrinth mods or plugins");
         }
 
-        return $type->getFolder().'/.modrinth-metadata.json';
+        return $this->getProjectFolder($server, $fileRepository, $type).'/.modrinth-metadata.json';
     }
 
     /** @return array<int, array{project_id: string, project_slug: string, project_title: string, version_id: string, version_number: string, filename: string, installed_at: string, author?: string}> */
     public function getInstalledModsMetadata(Server $server, DaemonFileRepository $fileRepository, ?ModrinthProjectType $type = null): array
     {
         try {
-            $metadataPath = $this->getMetadataFilePath($server, $type);
+            $metadataPath = $this->getMetadataFilePath($server, $fileRepository, $type);
             $content = $fileRepository->setServer($server)->getContent($metadataPath);
             $metadata = json_decode($content, true);
 
@@ -638,7 +692,7 @@ class MinecraftModrinthService
 
                 $metadata['installed_mods'][] = $modEntry;
 
-                $metadataPath = $this->getMetadataFilePath($server, $type);
+                $metadataPath = $this->getMetadataFilePath($server, $fileRepository, $type);
                 $response = $fileRepository->setServer($server)->putContent(
                     $metadataPath,
                     json_encode($metadata, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)
@@ -666,7 +720,7 @@ class MinecraftModrinthService
                     ->values()
                     ->toArray();
 
-                $metadataPath = $this->getMetadataFilePath($server, $type);
+                $metadataPath = $this->getMetadataFilePath($server, $fileRepository, $type);
                 $response = $fileRepository->setServer($server)->putContent(
                     $metadataPath,
                     json_encode($metadata, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)

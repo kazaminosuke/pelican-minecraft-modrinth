@@ -20,7 +20,7 @@ enum ModrinthProjectType: string implements HasLabel
         };
     }
 
-    public function getFolder(): string
+    public function getFolder(?Server $server = null): string
     {
         return match ($this) {
             self::Mod => 'mods',
