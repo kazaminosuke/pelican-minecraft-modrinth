@@ -475,15 +475,16 @@ class MinecraftModrinthService
         $installedModsMetadata = $this->getInstalledModsMetadata($server, $fileRepository, $type);
 
         $diskFilesLower = array_flip(array_map('strtolower', $jarFiles));
-        $installedModsMetadata = array_values(array_filter($installedModsMetadata, function ($installedMod) use ($server, $fileRepository, $type, $diskFilesLower) {
-            if (!isset($diskFilesLower[strtolower($installedMod['filename'])])) {
-                $this->removeModMetadata($server, $fileRepository, $installedMod['project_id'], $type);
+        $filteredInstalledModsMetadata = array_values(array_filter(
+            $installedModsMetadata,
+            fn ($installedMod) => isset($diskFilesLower[strtolower($installedMod['filename'])])
+        ));
 
-                return false;
-            }
+        if (count($filteredInstalledModsMetadata) !== count($installedModsMetadata)) {
+            $this->saveInstalledModsMetadata($server, $fileRepository, $filteredInstalledModsMetadata, $type);
+        }
 
-            return true;
-        }));
+        $installedModsMetadata = $filteredInstalledModsMetadata;
 
         if (empty($jarFiles)) {
             return [];
@@ -695,6 +696,28 @@ class MinecraftModrinthService
                 $response = $fileRepository->setServer($server)->putContent(
                     $metadataPath,
                     json_encode($metadata, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)
+                );
+
+                return !$response->failed();
+            }) === true;
+        } catch (Exception $exception) {
+            report($exception);
+
+            return false;
+        }
+    }
+
+    /**
+     * @param array<int, array{project_id: string, project_slug: string, project_title: string, version_id: string, version_number: string, filename: string, installed_at: string, author?: string}> $installedMods
+     */
+    protected function saveInstalledModsMetadata(Server $server, DaemonFileRepository $fileRepository, array $installedMods, ?ModrinthProjectType $type = null): bool
+    {
+        try {
+            return Cache::lock("modrinth_metadata:{$server->id}", 10)->block(5, function () use ($server, $fileRepository, $installedMods, $type) {
+                $metadataPath = $this->getMetadataFilePath($server, $fileRepository, $type);
+                $response = $fileRepository->setServer($server)->putContent(
+                    $metadataPath,
+                    json_encode(['installed_mods' => array_values($installedMods)], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)
                 );
 
                 return !$response->failed();

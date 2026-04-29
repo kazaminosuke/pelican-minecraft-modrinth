@@ -48,6 +48,8 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
     /** @var array<string> */
     public array $unknownFiles = [];
 
+    protected ?string $datapackWorldName = null;
+
     protected static string|\BackedEnum|null $navigationIcon = 'tabler-packages';
 
     protected static ?string $slug = 'modrinth';
@@ -222,6 +224,15 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
         }
 
         return $this->versionsCache[$projectId];
+    }
+
+    protected function getCachedDatapackWorldName(Server $server, DaemonFileRepository $fileRepository): string
+    {
+        if ($this->datapackWorldName === null) {
+            $this->datapackWorldName = MinecraftModrinth::getDatapackWorldName($server, $fileRepository);
+        }
+
+        return $this->datapackWorldName;
     }
 
     /**
@@ -1027,7 +1038,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                             ->badge()
                             ->size(TextSize::Large),
                         TextEntry::make('World')
-                            ->state(fn (DaemonFileRepository $fileRepository) => MinecraftModrinth::getDatapackWorldName($server, $fileRepository))
+                            ->state(fn (DaemonFileRepository $fileRepository) => $this->getCachedDatapackWorldName($server, $fileRepository))
                             ->badge()
                             ->size(TextSize::Large)
                             ->visible(fn () => $type === ModrinthProjectType::Datapack),
