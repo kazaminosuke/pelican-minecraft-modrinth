@@ -56,7 +56,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
     public static function getNavigationSort(): ?int
     {
-        return (int) env('MINECRAFT_MODRINTH_NAV_SORT', 10);
+        return (int) env('MINECRAFT_MODRINTH_NAV_SORT', 11);
     }
 
     protected static function detectProjectType(Server $server): ?ModrinthProjectType

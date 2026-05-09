@@ -51,7 +51,7 @@ class MinecraftModrinthPlugin implements HasPluginSettings, Plugin
                 ->label(trans('pelican-minecraft-modrinth::strings.settings.nav_sort'))
                 ->helperText(trans('pelican-minecraft-modrinth::strings.settings.nav_sort_helper'))
                 ->numeric()
-                ->default(env('MINECRAFT_MODRINTH_NAV_SORT', 10)),
+                ->default(env('MINECRAFT_MODRINTH_NAV_SORT', 11)),
         ];
     }
 
