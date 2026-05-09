@@ -356,6 +356,11 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                 throw $deleteException;
             }
         }
+
+        Cache::forget(MinecraftModrinth::getHashScanCacheKey($server, $type));
+        $this->unknownFiles = array_values(
+            array_filter($this->unknownFiles, fn (string $filename) => strtolower($filename) !== strtolower($safeNewFilename))
+        );
     }
 
     /**
@@ -412,6 +417,30 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
             'updated' => $updatedCount,
             'failed' => $failedCount,
         ];
+    }
+
+    /**
+     * @param array<string, mixed> $record
+     *
+     * @throws Exception
+     */
+    private function getUninstallFilename(array $record): string
+    {
+        if (($record['not_on_modrinth'] ?? false) === true) {
+            return $this->validateFilename((string) ($record['title'] ?? ''));
+        }
+
+        if (empty($record['project_id'])) {
+            throw new Exception('Missing project ID for uninstall');
+        }
+
+        $installedMod = $this->getInstalledMod($record['project_id']);
+
+        if (!$installedMod) {
+            throw new Exception('Mod not found in metadata');
+        }
+
+        return $this->validateFilename($installedMod['filename']);
     }
 
     /**
@@ -857,8 +886,11 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     ->icon('tabler-trash')
                     ->color('danger')
                     ->tooltip(trans('pelican-minecraft-modrinth::strings.actions.uninstall'))
-                    ->hidden(fn (array $record): bool => $record['not_on_modrinth'] ?? false)
                     ->visible(function (array $record) {
+                        if (($record['not_on_modrinth'] ?? false) === true) {
+                            return true;
+                        }
+
                         if (empty($record['project_id'])) {
                             return false;
                         }
@@ -873,13 +905,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                             /** @var Server $server */
                             $server = Filament::getTenant();
 
-                            $installedMod = $this->getInstalledMod($record['project_id']);
-
-                            if (!$installedMod) {
-                                throw new Exception('Mod not found in metadata');
-                            }
-
-                            $safeFilename = $this->validateFilename($installedMod['filename']);
+                            $safeFilename = $this->getUninstallFilename($record);
 
                             $type = static::detectProjectType($server);
                             if (!$type) {
@@ -895,7 +921,15 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                                 ])
                                 ->throw();
 
-                            $metadataRemoved = MinecraftModrinth::removeModMetadata($server, $fileRepository, $record['project_id'], $type);
+                            Cache::forget(MinecraftModrinth::getHashScanCacheKey($server, $type));
+                            $this->unknownFiles = array_values(
+                                array_filter($this->unknownFiles, fn (string $filename) => strtolower($filename) !== strtolower($safeFilename))
+                            );
+
+                            $metadataRemoved = true;
+                            if (!empty($record['project_id'])) {
+                                $metadataRemoved = MinecraftModrinth::removeModMetadata($server, $fileRepository, $record['project_id'], $type);
+                            }
 
                             if (!$metadataRemoved) {
                                 Log::warning('Failed to remove mod metadata after successful file deletion', [
