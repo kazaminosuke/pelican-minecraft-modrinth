@@ -535,6 +535,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                 }
             })
             ->paginated([20])
+            ->scrollToTopOnPageChange()
             ->columns([
                 ImageColumn::make('icon_url')
                     ->label(''),
