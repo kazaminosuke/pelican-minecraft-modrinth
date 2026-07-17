@@ -22,8 +22,8 @@ A plugin for [Pelican Panel](https://pelican.dev) that lets you search, install,
 
 ## Setup
 
-Add `modrinth_mods` or `modrinth_plugins` to your egg **features**.
-Add `modrinth_datapacks` if you want to manage datapacks as well.
+Add `mod_manager` or `plugin_manager` to your egg **features**.
+Add `datapack_manager` if you want to manage datapacks as well.
 Also ensure the egg has the `minecraft` tag and a matching loader tag (for example `paper`, `fabric`, `forge`, or `neoforge`).
 
 ## Installation

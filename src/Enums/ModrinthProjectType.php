@@ -52,11 +52,11 @@ enum ModrinthProjectType: string implements HasLabel
         $features = $server->egg->features ?? [];
         $tags = $server->egg->tags ?? [];
 
-        if (in_array('modrinth_plugins', $features) || (in_array('minecraft', $tags) && in_array('plugins', $features))) {
+        if (in_array('plugin_manager', $features) || (in_array('minecraft', $tags) && in_array('plugins', $features))) {
             return self::Plugin;
         }
 
-        if (in_array('modrinth_mods', $features) || (in_array('minecraft', $tags) && in_array('mods', $features))) {
+        if (in_array('mod_manager', $features) || (in_array('minecraft', $tags) && in_array('mods', $features))) {
             return self::Mod;
         }
 
@@ -69,6 +69,6 @@ enum ModrinthProjectType: string implements HasLabel
 
         $features = $server->egg->features ?? [];
 
-        return in_array('modrinth_datapacks', $features);
+        return in_array('datapack_manager', $features);
     }
 }
