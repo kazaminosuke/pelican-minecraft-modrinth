@@ -540,6 +540,8 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     ->label(''),
                 TextColumn::make('title')
                     ->searchable()
+                    ->wrap()
+                    ->lineClamp(1)
                     ->description(function (array $record): ?string {
                         if ($record['not_on_modrinth'] ?? false) {
                             return trans('pelican-minecraft-modrinth::strings.badges.not_on_modrinth');
