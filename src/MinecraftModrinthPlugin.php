@@ -37,13 +37,23 @@ class MinecraftModrinthPlugin implements HasPluginSettings, Plugin
             fn () => new HtmlString(
                 '<style>'
                 .'.mcloader-badge .fi-icon{width:1em!important;height:1em!important;}'
-                // Keeps the Minecraft Version/Loader/Installed summary and the
-                // source tabs pinned below Filament's topbar (which is itself
-                // sticky, min-h-16 = 4rem, z-30) while the mod/plugin table
-                // scrolls underneath, so they stay visible on long lists (e.g.
-                // large modpacks) and when switching between source tabs.
-                .'.mmr-sticky-header{position:sticky;top:4rem;z-index:20;background-color:#fff;padding-bottom:.75rem;}'
-                .'.dark .mmr-sticky-header{background-color:rgb(17 24 39);}'
+                // Scopes an internal scrollbar to just the mod/plugin table's row
+                // area (.fi-ta-content-ctn - confirmed via Filament's own table
+                // blade view to sit below the toolbar/search bar and above the
+                // pagination controls, both of which stay outside this rule's
+                // reach) so the Minecraft Version/Loader/Installed summary and
+                // source tabs above it never move, on long lists (e.g. large
+                // modpacks) and when switching between source tabs. The height is
+                // viewport-relative rather than a fixed pixel value so it adapts
+                // to the window size; 20rem approximates the space used by
+                // Filament's topbar plus this page's own header/tabs/padding
+                // above the table - adjust if it's off in practice.
+                .'.mmr-table-scroll-ctn .fi-ta-content-ctn{max-height:calc(100vh - 20rem);min-height:24rem;overflow-y:auto;}'
+                // Keeps the column header row (Title/Author/Downloads/Modified)
+                // pinned to the top of that scrolling area as rows scroll past
+                // underneath it; its own background (set by Filament) keeps rows
+                // from showing through.
+                .'.mmr-table-scroll-ctn .fi-ta-table>thead{position:sticky;top:0;z-index:1;}'
                 .'</style>'
             ),
         );
