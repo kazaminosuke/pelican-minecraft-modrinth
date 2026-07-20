@@ -52,6 +52,12 @@ class MinecraftModrinthPlugin implements HasPluginSettings, Plugin
                 ->helperText(trans('pelican-minecraft-modrinth::strings.settings.nav_sort_helper'))
                 ->numeric()
                 ->default(env('MINECRAFT_MODRINTH_NAV_SORT', 11)),
+            TextInput::make('curseforge_api_key')
+                ->label(trans('pelican-minecraft-modrinth::strings.settings.curseforge_api_key'))
+                ->helperText(trans('pelican-minecraft-modrinth::strings.settings.curseforge_api_key_helper'))
+                ->password()
+                ->revealable()
+                ->default(fn () => config('pelican-minecraft-modrinth.curseforge_api_key')),
         ];
     }
 
@@ -60,6 +66,7 @@ class MinecraftModrinthPlugin implements HasPluginSettings, Plugin
         $this->writeToEnvironment([
             'LATEST_MINECRAFT_VERSION' => $data['latest_minecraft_version'],
             'MINECRAFT_MODRINTH_NAV_SORT' => $data['nav_sort'],
+            'CURSEFORGE_API_KEY' => $data['curseforge_api_key'] ?? '',
         ]);
 
         Notification::make()

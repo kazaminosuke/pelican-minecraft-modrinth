@@ -10,6 +10,8 @@ return [
         'latest_minecraft_version' => 'Neueste Minecraft-Version',
         'nav_sort' => 'Navigationsreihenfolge',
         'nav_sort_helper' => 'Sortierreihenfolge im Seitenmenü. Niedrigere Zahlen erscheinen weiter oben.',
+        'curseforge_api_key' => 'CurseForge-API-Schlüssel',
+        'curseforge_api_key_helper' => 'Optional. Erforderlich, um CurseForge als Mod-/Plugin-Quelle zu aktivieren. Schlüssel in der CurseForge Core API-Konsole (console.curseforge.com) erstellen.',
         'settings_saved' => 'Einstellungen gespeichert',
     ],
 
