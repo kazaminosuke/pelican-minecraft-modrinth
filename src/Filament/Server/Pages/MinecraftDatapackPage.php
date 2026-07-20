@@ -9,7 +9,7 @@ class MinecraftDatapackPage extends MinecraftModrinthProjectPage
 {
     protected static string|\BackedEnum|null $navigationIcon = 'tabler-file-zip';
 
-    protected static ?string $slug = 'modrinth-datapacks';
+    protected static ?string $slug = 'mod-manager-datapacks';
 
     public static function getNavigationSort(): ?int
     {

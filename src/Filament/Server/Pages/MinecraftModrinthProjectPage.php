@@ -59,7 +59,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
     protected static string|\BackedEnum|null $navigationIcon = 'tabler-packages';
 
-    protected static ?string $slug = 'modrinth';
+    protected static ?string $slug = 'mod-manager';
 
     public static function getNavigationSort(): ?int
     {
@@ -111,6 +111,12 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
     public function updatedActiveTab(?string $activeTab): void
     {
+        // Each tab (source or "installed") paginates its own independent result
+        // set, so a page number from the previous tab has no meaning here and
+        // must not carry over (e.g. leaving Modrinth on page 909 and switching
+        // to a CurseForge tab with far fewer results).
+        $this->resetPage();
+
         if ($activeTab !== 'installed') {
             return;
         }
