@@ -4,16 +4,24 @@ namespace Boy132\MinecraftModrinth\Services;
 
 use App\Models\Server;
 use App\Repositories\Daemon\DaemonFileRepository;
+use Boy132\MinecraftModrinth\Contracts\ProjectSourceInterface;
 use Boy132\MinecraftModrinth\Enums\ModrinthProjectType;
 use Boy132\MinecraftModrinth\Enums\ProjectSourceKey;
+use Boy132\MinecraftModrinth\Sources\CurseForgeSource;
+use Boy132\MinecraftModrinth\Sources\HangarSource;
 use Boy132\MinecraftModrinth\Sources\ModrinthSource;
+use Boy132\MinecraftModrinth\Support\CurseForgeFingerprint;
 use Boy132\MinecraftModrinth\Support\MinecraftVersionResolver;
 use Exception;
 use Illuminate\Support\Facades\Cache;
 
 class MinecraftModrinthService
 {
-    public function __construct(protected ModrinthSource $source) {}
+    public function __construct(
+        protected ModrinthSource $source,
+        protected CurseForgeSource $curseForgeSource,
+        protected HangarSource $hangarSource,
+    ) {}
 
     /** @var array<int, array<string, string>|null> */
     protected array $serverPropertiesCache = [];
@@ -219,94 +227,168 @@ class MinecraftModrinthService
         }
 
         $folder = $this->getProjectFolder($server, $fileRepository, $type);
-        $hashMap = []; // [filename => sha512hash]
+        $fileContents = []; // [filename => raw content]
 
         foreach ($unknownFiles as $filename) {
             try {
-                $content = $fileRepository->setServer($server)->getContent("{$folder}/{$filename}");
-                $hashMap[$filename] = hash('sha512', $content);
+                $fileContents[$filename] = $fileRepository->setServer($server)->getContent("{$folder}/{$filename}");
             } catch (Exception $exception) {
                 report($exception);
             }
         }
 
-        if (empty($hashMap)) {
+        if (empty($fileContents)) {
             return $unknownFiles;
-        }
-
-        $versionsByHash = $this->source->findVersionsByHash($hashMap);
-
-        if (empty($versionsByHash)) {
-            return $unknownFiles;
-        }
-
-        $hashToFilenames = [];
-        foreach ($hashMap as $filename => $hash) {
-            if (!isset($hashToFilenames[$hash])) {
-                $hashToFilenames[$hash] = [];
-            }
-
-            $hashToFilenames[$hash][] = $filename;
-        }
-
-        $matchedVersions = []; // [filename => versionData]
-        $projectIds = [];
-
-        foreach ($versionsByHash as $hash => $versionData) {
-            if (!isset($hashToFilenames[$hash]) || !is_array($versionData) || !isset($versionData['project_id'])) {
-                continue;
-            }
-
-            foreach ($hashToFilenames[$hash] as $filename) {
-                $matchedVersions[$filename] = $versionData;
-            }
-
-            $projectIds[] = $versionData['project_id'];
-        }
-
-        if (empty($matchedVersions)) {
-            return $unknownFiles;
-        }
-
-        try {
-            $projectsMap = $this->source->getProjectsByIds(array_unique($projectIds));
-        } catch (Exception $exception) {
-            report($exception);
-            $projectsMap = [];
         }
 
         $matchedFilenames = [];
+        $remainingFilenames = array_keys($fileContents);
 
-        foreach ($matchedVersions as $filename => $versionData) {
-            if (!isset($versionData['project_id'], $versionData['id'], $versionData['version_number'])) {
+        foreach ($this->getHashLookupSourcesInPriorityOrder() as $hashSource) {
+            if (empty($remainingFilenames)) {
+                break;
+            }
+
+            if (!$hashSource->isConfigured() || !$hashSource->supportsHashLookup()) {
                 continue;
             }
 
-            $projectId = $versionData['project_id'];
-            $project = $projectsMap[$projectId] ?? null;
+            $algorithm = $hashSource->getHashAlgorithm();
 
-            $saved = $this->saveModMetadata(
-                server: $server,
-                fileRepository: $fileRepository,
-                projectId: $projectId,
-                projectSlug: $project['slug'] ?? $projectId,
-                projectTitle: $project['title'] ?? $projectId,
-                versionId: $versionData['id'],
-                versionNumber: $versionData['version_number'],
-                filename: $filename,
-                author: $this->source->resolveAuthor($project, $versionData),
-                type: $type,
-                source: $this->source->getKey(),
-            );
-
-            if ($saved) {
-                $matchedFilenames[] = $filename;
+            if ($algorithm === null) {
+                continue;
             }
+
+            $hashMap = []; // [filename => hash]
+            foreach ($remainingFilenames as $filename) {
+                $hashMap[$filename] = $this->computeFileHash($algorithm, $fileContents[$filename]);
+            }
+
+            $versionsByHash = $hashSource->findVersionsByHash($hashMap);
+
+            if (empty($versionsByHash)) {
+                continue;
+            }
+
+            $hashToFilenames = [];
+            foreach ($hashMap as $filename => $hash) {
+                if (!isset($hashToFilenames[$hash])) {
+                    $hashToFilenames[$hash] = [];
+                }
+
+                $hashToFilenames[$hash][] = $filename;
+            }
+
+            $matchedVersions = []; // [filename => versionData]
+            $projectIds = [];
+
+            foreach ($versionsByHash as $hash => $versionData) {
+                if (!isset($hashToFilenames[$hash]) || !is_array($versionData) || !isset($versionData['project_id'])) {
+                    continue;
+                }
+
+                foreach ($hashToFilenames[$hash] as $filename) {
+                    $matchedVersions[$filename] = $versionData;
+                }
+
+                $projectIds[] = $versionData['project_id'];
+            }
+
+            if (empty($matchedVersions)) {
+                continue;
+            }
+
+            try {
+                $projectsMap = $hashSource->getProjectsByIds(array_unique($projectIds));
+            } catch (Exception $exception) {
+                report($exception);
+                $projectsMap = [];
+            }
+
+            foreach ($matchedVersions as $filename => $versionData) {
+                if (!isset($versionData['project_id'], $versionData['id'], $versionData['version_number'])) {
+                    continue;
+                }
+
+                $projectId = $versionData['project_id'];
+                $project = $projectsMap[$projectId] ?? null;
+
+                $saved = $this->saveModMetadata(
+                    server: $server,
+                    fileRepository: $fileRepository,
+                    projectId: $projectId,
+                    projectSlug: $project['slug'] ?? $projectId,
+                    projectTitle: $project['title'] ?? $projectId,
+                    versionId: $versionData['id'],
+                    versionNumber: $versionData['version_number'],
+                    filename: $filename,
+                    author: $this->resolveMatchAuthor($hashSource, $project, $versionData),
+                    type: $type,
+                    source: $hashSource->getKey(),
+                );
+
+                if ($saved) {
+                    $matchedFilenames[] = $filename;
+                }
+            }
+
+            $remainingFilenames = array_values(array_diff($remainingFilenames, $matchedFilenames));
         }
 
         return array_values(
             array_filter($unknownFiles, fn ($name) => !in_array($name, $matchedFilenames, true))
         );
+    }
+
+    /**
+     * Sources to try, in priority order, when identifying unknown files by hash
+     * during a scan. Modrinth and CurseForge resolve a hash match straight to an
+     * exact version. Hangar's hash endpoint only identifies the parent project
+     * and needs an expensive follow-up scan of that project's versions to pin
+     * down the exact file (see HangarSource::findVersionEntryByHash()), so it's
+     * tried last and only against files the cheaper sources didn't already
+     * resolve - Hangar-exclusive plugins are a minority, so this avoids paying
+     * that cost for files that are actually on Modrinth or CurseForge.
+     *
+     * @return array<int, ProjectSourceInterface>
+     */
+    protected function getHashLookupSourcesInPriorityOrder(): array
+    {
+        return [$this->source, $this->curseForgeSource, $this->hangarSource];
+    }
+
+    /**
+     * Computes the hash a given source's findVersionsByHash() expects, from
+     * file content that's already been read once (avoids re-fetching the same
+     * file from the daemon for each source tried).
+     */
+    protected function computeFileHash(string $algorithm, string $content): string
+    {
+        return match ($algorithm) {
+            'sha512' => hash('sha512', $content),
+            'sha256' => hash('sha256', $content),
+            'murmur2' => (string) CurseForgeFingerprint::hash($content),
+            default => '',
+        };
+    }
+
+    /**
+     * Modrinth's raw project data doesn't reliably include an author, so
+     * ModrinthSource resolves it separately via resolveAuthor(). The other
+     * sources already bake author into their normalized project data.
+     *
+     * @param array<string, mixed>|null $project
+     * @param array<string, mixed> $versionData
+     */
+    protected function resolveMatchAuthor(ProjectSourceInterface $hashSource, ?array $project, array $versionData): ?string
+    {
+        if ($hashSource instanceof ModrinthSource) {
+            return $hashSource->resolveAuthor($project, $versionData);
+        }
+
+        $author = $project['author'] ?? null;
+
+        return (is_string($author) && $author !== '') ? $author : null;
     }
 
     /**

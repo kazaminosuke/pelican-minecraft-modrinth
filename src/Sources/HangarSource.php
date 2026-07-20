@@ -26,6 +26,13 @@ class HangarSource implements ProjectSourceInterface
      */
     protected const HASH_SCAN_MAX_PAGES = 4;
 
+    /**
+     * A hash->version match is an immutable fact (a given file's bytes will
+     * always resolve to the same Hangar file), so this cache is kept far
+     * longer than the other API-response caches in this codebase.
+     */
+    protected const HASH_MATCH_CACHE_DAYS = 7;
+
     public function getKey(): ProjectSourceKey
     {
         return ProjectSourceKey::Hangar;
@@ -218,10 +225,25 @@ class HangarSource implements ProjectSourceInterface
     /**
      * Scans a bounded window of a project's most recent versions (across all
      * platforms) for the file matching the given sha256 hash, since Hangar's
-     * hash endpoint only identifies the parent project.
+     * hash endpoint only identifies the parent project. This is the expensive
+     * part of Hangar hash matching, so a successful result is cached by hash
+     * (see HASH_MATCH_CACHE_TTL) - the hash is the cache key, so if a file's
+     * content ever changes its hash changes too and the old entry is simply
+     * never looked up again, with no explicit invalidation needed. Only
+     * successful matches are cached; a miss isn't, since a project could be
+     * published to Hangar after this file was last scanned.
      */
     protected function findVersionEntryByHash(string $projectId, string $hash): ?array
     {
+        $cacheKey = "hangar_hash_match:$hash";
+        $cached = cache()->get($cacheKey);
+
+        if (is_array($cached)) {
+            return $cached;
+        }
+
+        $entry = null;
+
         for ($page = 0; $page < self::HASH_SCAN_MAX_PAGES; $page++) {
             $response = $this->getJson("/projects/$projectId/versions", [
                 'limit' => self::PAGE_SIZE,
@@ -247,9 +269,9 @@ class HangarSource implements ProjectSourceInterface
 
                         if ($entry !== null) {
                             $entry['project_id'] = $projectId;
-
-                            return $entry;
                         }
+
+                        break 3;
                     }
                 }
             }
@@ -259,7 +281,11 @@ class HangarSource implements ProjectSourceInterface
             }
         }
 
-        return null;
+        if ($entry !== null) {
+            cache()->put($cacheKey, $entry, now()->addDays(self::HASH_MATCH_CACHE_DAYS));
+        }
+
+        return $entry;
     }
 
     /**
