@@ -25,12 +25,17 @@ return [
         'unknown' => 'Unbekannt',
         'view_all' => 'Alle',
         'view_installed' => 'Installiert',
-        'mod_unavailable' => 'Dieser Mod/Plugin ist auf Modrinth nicht mehr verfügbar',
+        'mod_unavailable' => 'Dieser Mod/Plugin ist bei seiner Quelle nicht mehr verfügbar',
+        'source_not_configured_heading' => 'Nicht konfiguriert',
+        'source_not_configured' => 'Diese Quelle muss zuerst in den Plugin-Einstellungen konfiguriert werden.',
+        'github_repo_label' => 'GitHub-Repository',
+        'github_repo_helper' => 'Das zu verfolgende Repository, als owner/repo (z. B. ViaVersion/ViaVersion). Das neueste Release wird installiert.',
     ],
 
     'table' => [
         'columns' => [
             'title' => 'Titel',
+            'source' => 'Quelle',
             'author' => 'Autor',
             'downloads' => 'Downloads',
             'date_modified' => 'Geändert',
@@ -59,10 +64,11 @@ return [
         'update' => 'Aktualisieren',
         'uninstall' => 'Deinstallieren',
         'versions' => 'Versionsauswahl',
+        'track_github_repo' => 'GitHub-Repository verfolgen',
     ],
 
     'badges' => [
-        'not_on_modrinth' => 'Nicht auf Modrinth',
+        'not_on_modrinth' => 'Nicht erfasst',
     ],
 
     'modals' => [
@@ -89,7 +95,7 @@ return [
         'scan_in_progress_plugins' => 'Plugins werden gescannt... bitte kurz warten.',
         'scan_in_progress_datapacks' => 'Datapacks werden gescannt... bitte kurz warten.',
         'scan_success' => ':count Mod(s) beim Scan importiert.',
-        'scan_failed' => 'Scan fehlgeschlagen — Modrinth nicht erreichbar.',
+        'scan_failed' => 'Scan fehlgeschlagen. Bitte versuche es erneut.',
         'bulk_update_success' => ':count Element(e) aktualisiert.',
         'bulk_update_partial' => ':updated aktualisiert, :failed fehlgeschlagen.',
         'bulk_update_none' => 'Alle Elemente sind bereits aktuell.',

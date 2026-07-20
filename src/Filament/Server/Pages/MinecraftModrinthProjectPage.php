@@ -6,12 +6,16 @@ use App\Filament\Server\Resources\Files\Pages\ListFiles;
 use App\Models\Server;
 use App\Repositories\Daemon\DaemonFileRepository;
 use App\Traits\Filament\BlockAccessInConflict;
+use Boy132\MinecraftModrinth\Contracts\ProjectSourceInterface;
 use Boy132\MinecraftModrinth\Enums\MinecraftLoader;
 use Boy132\MinecraftModrinth\Enums\ModrinthProjectType;
+use Boy132\MinecraftModrinth\Enums\ProjectSourceKey;
 use Boy132\MinecraftModrinth\Facades\MinecraftModrinth;
+use Boy132\MinecraftModrinth\Support\ProjectSourceRegistry;
 use Exception;
 use Filament\Actions\Action;
 use Filament\Facades\Filament;
+use Filament\Forms\Components\TextInput;
 use Filament\Infolists\Components\TextEntry;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
@@ -39,11 +43,14 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
     use HasTabs;
     use InteractsWithTable;
 
-    /** @var array<int, array{project_id: string, project_slug: string, project_title: string, version_id: string, version_number: string, filename: string, installed_at: string, author?: string}>|null */
+    /** @var array<int, array{source: string, project_id: string, project_slug: string, project_title: string, version_id: string, version_number: string, filename: string, installed_at: string, author?: string}>|null */
     protected ?array $installedModsMetadata = null;
 
-    /** @var array<string, array<int, mixed>> Cache for version data by project_id */
+    /** @var array<string, array<int, mixed>> Cache for version data by "source:project_id" */
     protected array $versionsCache = [];
+
+    /** @var array<int, ProjectSourceInterface>|null */
+    protected ?array $availableSources = null;
 
     /** @var array<string> */
     public array $unknownFiles = [];
@@ -176,16 +183,99 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
         return false;
     }
 
-    /** @return array<string, Tab> */
-    public function getTabs(): array
+    /**
+     * Sources enabled for this egg (via feature flags) that support the
+     * current page's project type. An egg with no source feature flags set
+     * (every egg before this feature existed) resolves to Modrinth only.
+     *
+     * @return array<int, ProjectSourceInterface>
+     */
+    protected function getAvailableSources(): array
     {
-        return [
-            'all' => Tab::make(trans('pelican-minecraft-modrinth::strings.page.view_all')),
-            'installed' => Tab::make(trans('pelican-minecraft-modrinth::strings.page.view_installed')),
-        ];
+        if ($this->availableSources !== null) {
+            return $this->availableSources;
+        }
+
+        /** @var Server $server */
+        $server = Filament::getTenant();
+        $type = static::detectProjectType($server);
+
+        return $this->availableSources = $type
+            ? app(ProjectSourceRegistry::class)->availableFor($server, $type)
+            : [];
     }
 
-    /** @return array<int, array{project_id: string, project_slug: string, project_title: string, version_id: string, version_number: string, filename: string, installed_at: string}> */
+    /**
+     * The source backing the currently active tab. When only one source is
+     * available (the common, backward-compatible case), it's used regardless
+     * of the tab key, since the tab is the generic "all" tab rather than a
+     * per-source one.
+     */
+    protected function getCurrentSource(): ?ProjectSourceInterface
+    {
+        $sources = $this->getAvailableSources();
+
+        if (count($sources) <= 1) {
+            return $sources[0] ?? null;
+        }
+
+        foreach ($sources as $source) {
+            if ($source->getKey()->value === $this->activeTab) {
+                return $source;
+            }
+        }
+
+        return null;
+    }
+
+    protected function getSourceLabel(?string $sourceKey): string
+    {
+        if (!$sourceKey) {
+            return '';
+        }
+
+        $key = ProjectSourceKey::tryFrom($sourceKey);
+        $source = $key ? app(ProjectSourceRegistry::class)->get($key) : null;
+
+        return $source?->getLabel() ?? ucfirst($sourceKey);
+    }
+
+    /**
+     * One tab per available source (when more than one is enabled for this
+     * egg), each showing a "needs configuration" badge if isConfigured() is
+     * false, plus the "Installed" tab. When only Modrinth is available (the
+     * default for every egg that hasn't opted into extra sources), this
+     * collapses back to the original "All" / "Installed" tabs unchanged.
+     *
+     * @return array<string, Tab>
+     */
+    public function getTabs(): array
+    {
+        $sources = $this->getAvailableSources();
+        $tabs = [];
+
+        if (count($sources) <= 1) {
+            $tabs['all'] = Tab::make(trans('pelican-minecraft-modrinth::strings.page.view_all'));
+        } else {
+            foreach ($sources as $source) {
+                $tab = Tab::make($source->getLabel());
+
+                if (!$source->isConfigured()) {
+                    $tab = $tab->badge('!')
+                        ->badgeColor('warning')
+                        ->badgeTooltip(trans('pelican-minecraft-modrinth::strings.page.source_not_configured'));
+                }
+
+                $tabs[$source->getKey()->value] = $tab;
+            }
+        }
+
+        $tabs['installed'] = Tab::make(trans('pelican-minecraft-modrinth::strings.page.view_installed'));
+
+        return $tabs;
+    }
+
+    /** @return array<int, array{source: string, project_id: string, project_slug: string, project_title: string, version_id: string, version_number: string, filename: string, installed_at: string}> */
     protected function getInstalledModsMetadata(): array
     {
         if ($this->installedModsMetadata === null) {
@@ -200,13 +290,14 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
         return $this->installedModsMetadata;
     }
 
-    /** @return array{project_id: string, project_slug: string, project_title: string, version_id: string, version_number: string, filename: string, installed_at: string, author?: string}|null */
-    protected function getInstalledMod(string $projectId): ?array
+    /** @return array{source: string, project_id: string, project_slug: string, project_title: string, version_id: string, version_number: string, filename: string, installed_at: string, author?: string}|null */
+    protected function getInstalledMod(string $projectId, string $sourceKey = ''): ?array
     {
+        $sourceKey = $sourceKey !== '' ? $sourceKey : ProjectSourceKey::Modrinth->value;
         $installedMods = $this->getInstalledModsMetadata();
 
         foreach ($installedMods as $mod) {
-            if ($mod['project_id'] === $projectId) {
+            if ($mod['project_id'] === $projectId && ($mod['source'] ?? ProjectSourceKey::Modrinth->value) === $sourceKey) {
                 return $mod;
             }
         }
@@ -215,15 +306,20 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
     }
 
     /** @return array<int, mixed> */
-    protected function getCachedVersions(string $projectId): array
+    protected function getCachedVersions(string $projectId, string $sourceKey): array
     {
-        if (!isset($this->versionsCache[$projectId])) {
+        $cacheIndex = "$sourceKey:$projectId";
+
+        if (!isset($this->versionsCache[$cacheIndex])) {
             /** @var Server $server */
             $server = Filament::getTenant();
-            $this->versionsCache[$projectId] = MinecraftModrinth::getModrinthVersions($projectId, $server, static::detectProjectType($server));
+            $type = static::detectProjectType($server);
+            $source = app(ProjectSourceRegistry::class)->get(ProjectSourceKey::tryFrom($sourceKey) ?? ProjectSourceKey::Modrinth);
+
+            $this->versionsCache[$cacheIndex] = ($source && $type) ? $source->getVersions($projectId, $server, $type) : [];
         }
 
-        return $this->versionsCache[$projectId];
+        return $this->versionsCache[$cacheIndex];
     }
 
     protected function getCachedDatapackWorldName(Server $server, DaemonFileRepository $fileRepository): string
@@ -262,6 +358,30 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
         return basename($filename);
     }
 
+    /** @param array<string, mixed> $record */
+    protected function getExternalProjectUrl(array $record): ?string
+    {
+        $sourceKey = $record['source'] ?? null;
+        $slug = $record['slug'] ?? null;
+
+        if (!$sourceKey || !$slug) {
+            return null;
+        }
+
+        /** @var Server $server */
+        $server = Filament::getTenant();
+        $type = static::detectProjectType($server);
+        $projectType = $type?->value ?? ($record['project_type'] ?? 'mod');
+
+        return match ($sourceKey) {
+            ProjectSourceKey::Modrinth->value => "https://modrinth.com/{$projectType}/{$slug}",
+            ProjectSourceKey::CurseForge->value => 'https://www.curseforge.com/minecraft/'.($projectType === 'plugin' ? 'bukkit-plugins' : 'mc-mods')."/{$slug}",
+            ProjectSourceKey::Hangar->value => empty($record['author']) ? null : "https://hangar.papermc.io/{$record['author']}/{$slug}",
+            ProjectSourceKey::GitHubReleases->value => "https://github.com/{$slug}",
+            default => null,
+        };
+    }
+
     /**
      * @param array<string, mixed> $record
      * @param array<string, mixed> $versionData
@@ -286,6 +406,8 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
             throw new Exception('Server does not support Modrinth mods or plugins');
         }
 
+        $sourceKey = ProjectSourceKey::tryFrom($record['source'] ?? '') ?? ProjectSourceKey::Modrinth;
+
         $folder = MinecraftModrinth::getProjectFolder($server, $fileRepository, $type);
 
         $fileRepository->setServer($server)->pull($primaryFile['url'], $folder);
@@ -300,7 +422,8 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
             $versionData['version_number'],
             $safeNewFilename,
             $record['author'] ?? null,
-            $type
+            $type,
+            $sourceKey
         );
 
         if (!$saved) {
@@ -348,7 +471,8 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     $installedMod['version_number'],
                     $oldFilename,
                     $installedMod['author'] ?? null,
-                    $type
+                    $type,
+                    ProjectSourceKey::tryFrom($installedMod['source'] ?? '') ?? $sourceKey
                 )) {
                     report(new Exception('Failed to restore old mod metadata during rollback'));
                 }
@@ -371,6 +495,8 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
         $updatedCount = 0;
         $failedCount = 0;
         $installedMods = $this->getInstalledModsMetadata();
+        $registry = app(ProjectSourceRegistry::class);
+        $type = static::detectProjectType($server);
 
         foreach ($installedMods as $installedMod) {
             try {
@@ -378,7 +504,14 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     continue;
                 }
 
-                $versions = MinecraftModrinth::getModrinthVersions($installedMod['project_id'], $server, static::detectProjectType($server));
+                $sourceKey = ProjectSourceKey::tryFrom($installedMod['source'] ?? '') ?? ProjectSourceKey::Modrinth;
+                $source = $registry->get($sourceKey);
+
+                if (!$source || !$type) {
+                    continue;
+                }
+
+                $versions = $source->getVersions($installedMod['project_id'], $server, $type);
                 if (empty($versions) || !isset($versions[0]['id'], $versions[0]['version_number'], $versions[0]['files'])) {
                     continue;
                 }
@@ -398,6 +531,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     'slug' => $installedMod['project_slug'],
                     'title' => $installedMod['project_title'],
                     'author' => $installedMod['author'] ?? null,
+                    'source' => $sourceKey->value,
                 ];
 
                 $this->performInstallOrUpdate($server, $fileRepository, $record, $latestVersion, $primaryFile, $installedMod);
@@ -426,7 +560,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
      */
     private function getUninstallFilename(array $record): string
     {
-        if (($record['not_on_modrinth'] ?? false) === true) {
+        if (($record['untracked'] ?? false) === true) {
             return $this->validateFilename((string) ($record['title'] ?? ''));
         }
 
@@ -434,7 +568,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
             throw new Exception('Missing project ID for uninstall');
         }
 
-        $installedMod = $this->getInstalledMod($record['project_id']);
+        $installedMod = $this->getInstalledMod($record['project_id'], $record['source'] ?? ProjectSourceKey::Modrinth->value);
 
         if (!$installedMod) {
             throw new Exception('Mod not found in metadata');
@@ -452,6 +586,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
             ->records(function (?string $search, int $page) {
                 /** @var Server $server */
                 $server = Filament::getTenant();
+                $type = static::detectProjectType($server);
 
                 if ($this->activeTab === 'installed') {
                     $perPage = 20;
@@ -464,7 +599,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     $metadataBefore = count($installedMods);
 
                     try {
-                        $this->unknownFiles = MinecraftModrinth::scanAndImportMods($server, $fileRepository, static::detectProjectType($server));
+                        $this->unknownFiles = MinecraftModrinth::scanAndImportMods($server, $fileRepository, $type);
                         $unknownFiles = $this->unknownFiles;
 
                         $this->installedModsMetadata = null;
@@ -480,13 +615,10 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     } catch (Exception $exception) {
                         report($exception);
 
-                        $message = strtolower($exception->getMessage());
-                        if (str_contains($message, 'modrinth')) {
-                            Notification::make()
-                                ->title(trans('pelican-minecraft-modrinth::strings.notifications.scan_failed'))
-                                ->danger()
-                                ->send();
-                        }
+                        Notification::make()
+                            ->title(trans('pelican-minecraft-modrinth::strings.notifications.scan_failed'))
+                            ->danger()
+                            ->send();
 
                         $this->unknownFiles = [];
                     }
@@ -501,13 +633,9 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                         $unknownFiles = array_values(array_filter($unknownFiles, fn (string $filename) => str_contains(strtolower($filename), $searchLower)));
                     }
 
-                    $projects = [];
-                    if (!empty($installedMods)) {
-                        $installedPages = (int) ceil(count($installedMods) / $perPage);
-                        for ($installedPage = 1; $installedPage <= $installedPages; $installedPage++) {
-                            $projects = array_merge($projects, MinecraftModrinth::getInstalledModsFromModrinth($installedMods, $installedPage));
-                        }
-                    }
+                    $projects = !empty($installedMods)
+                        ? app(ProjectSourceRegistry::class)->hydrateInstalled($installedMods)
+                        : [];
 
                     foreach ($unknownFiles as $filename) {
                         $projects[] = [
@@ -519,7 +647,8 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                             'author' => null,
                             'downloads' => null,
                             'date_modified' => null,
-                            'not_on_modrinth' => true,
+                            'source' => null,
+                            'untracked' => true,
                         ];
                     }
 
@@ -528,14 +657,44 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     $pagedProjects = array_slice($projects, $offset, $perPage);
 
                     return new LengthAwarePaginator($pagedProjects, $totalCount, $perPage, $page);
-                } else {
-                    $response = MinecraftModrinth::getModrinthProjects($server, $page, $search, static::detectProjectType($server));
-
-                    return new LengthAwarePaginator($response['hits'], $response['total_hits'], 20, $page);
                 }
+
+                $currentSource = $this->getCurrentSource();
+
+                if (!$type || !$currentSource || !$currentSource->isConfigured() || !$currentSource->supportsSearch()) {
+                    return new LengthAwarePaginator([], 0, 20, $page);
+                }
+
+                $response = $currentSource->search($server, $type, $page, $search);
+
+                $hits = array_map(function (array $hit) use ($currentSource) {
+                    $hit['source'] = $currentSource->getKey()->value;
+
+                    return $hit;
+                }, $response['hits']);
+
+                return new LengthAwarePaginator($hits, $response['total_hits'], 20, $page);
             })
             ->paginated([20])
             ->scrollToTopOnPageChange()
+            ->emptyStateHeading(function () {
+                $currentSource = $this->getCurrentSource();
+
+                if ($this->activeTab !== 'installed' && $currentSource && !$currentSource->isConfigured()) {
+                    return trans('pelican-minecraft-modrinth::strings.page.source_not_configured_heading');
+                }
+
+                return null;
+            })
+            ->emptyStateDescription(function () {
+                $currentSource = $this->getCurrentSource();
+
+                if ($this->activeTab !== 'installed' && $currentSource && !$currentSource->isConfigured()) {
+                    return trans('pelican-minecraft-modrinth::strings.page.source_not_configured');
+                }
+
+                return null;
+            })
             ->columns([
                 ImageColumn::make('icon_url')
                     ->label(''),
@@ -544,7 +703,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     ->wrap()
                     ->lineClamp(1)
                     ->description(function (array $record): ?string {
-                        if ($record['not_on_modrinth'] ?? false) {
+                        if ($record['untracked'] ?? false) {
                             return trans('pelican-minecraft-modrinth::strings.badges.not_on_modrinth');
                         }
 
@@ -555,8 +714,21 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
                         return (strlen($description) > 120) ? substr($description, 0, 120).'...' : $description;
                     }),
+                TextColumn::make('source')
+                    ->label(trans('pelican-minecraft-modrinth::strings.table.columns.source'))
+                    ->badge()
+                    ->formatStateUsing(fn (?string $state) => $this->getSourceLabel($state))
+                    ->color(fn (?string $state) => match ($state) {
+                        'modrinth' => 'success',
+                        'curseforge' => 'warning',
+                        'hangar' => 'info',
+                        'github_releases' => 'gray',
+                        default => 'gray',
+                    })
+                    ->visible(fn () => $this->activeTab === 'installed' && count($this->getAvailableSources()) > 1)
+                    ->toggleable(),
                 TextColumn::make('author')
-                    ->url(fn ($state) => "https://modrinth.com/user/$state", true)
+                    ->url(fn (array $record, $state) => (($record['source'] ?? null) === ProjectSourceKey::Modrinth->value && $state) ? "https://modrinth.com/user/$state" : null, true)
                     ->toggleable(),
                 TextColumn::make('downloads')
                     ->icon('tabler-download')
@@ -569,15 +741,11 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     ->toggleable(),
             ])
             ->recordUrl(function (array $record) {
-                if (!empty($record['unavailable']) || ($record['not_on_modrinth'] ?? false)) {
+                if (!empty($record['unavailable']) || ($record['untracked'] ?? false)) {
                     return null;
                 }
 
-                /** @var Server $server */
-                $server = Filament::getTenant();
-                $projectType = static::detectProjectType($server)?->value ?? $record['project_type'];
-
-                return "https://modrinth.com/{$projectType}/{$record['slug']}";
+                return $this->getExternalProjectUrl($record);
             }, true)
             ->recordActions([
                 Action::make('versions')
@@ -586,12 +754,13 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     ->icon('tabler-list')
                     ->color('info')
                     ->tooltip(trans('pelican-minecraft-modrinth::strings.actions.versions'))
-                    ->hidden(fn (array $record): bool => $record['not_on_modrinth'] ?? false)
+                    ->hidden(fn (array $record): bool => $record['untracked'] ?? false)
                     ->modalSubmitAction(false)
                     ->schema(function (array $record) {
-                        $versions = $this->getCachedVersions($record['project_id']);
+                        $sourceKey = $record['source'] ?? ProjectSourceKey::Modrinth->value;
+                        $versions = $this->getCachedVersions($record['project_id'], $sourceKey);
 
-                        $installedMod = $this->getInstalledMod($record['project_id']);
+                        $installedMod = $this->getInstalledMod($record['project_id'], $sourceKey);
                         $installedVersionId = $installedMod['version_id'] ?? null;
 
                         $sections = [];
@@ -638,7 +807,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                                 $headerAction = Action::make('install_version_' . $versionIndex)
                                     ->label(trans('pelican-minecraft-modrinth::strings.actions.install'))
                                     ->icon('tabler-download')
-                                    ->action(function (DaemonFileRepository $fileRepository) use ($record, $versionData, $primaryFile) {
+                                    ->action(function (DaemonFileRepository $fileRepository) use ($record, $versionData, $primaryFile, $sourceKey) {
                                         try {
                                             /** @var Server $server */
                                             $server = Filament::getTenant();
@@ -651,7 +820,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                                                 throw new Exception('No downloadable file found');
                                             }
 
-                                            $installedMod = $this->getInstalledMod($record['project_id']);
+                                            $installedMod = $this->getInstalledMod($record['project_id'], $sourceKey);
 
                                             $this->performInstallOrUpdate($server, $fileRepository, $record, $versionData, $primaryFile, $installedMod);
 
@@ -706,22 +875,28 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     ->icon('tabler-download')
                     ->color('success')
                     ->tooltip(trans('pelican-minecraft-modrinth::strings.actions.install_latest'))
-                    ->hidden(fn (array $record): bool => $record['not_on_modrinth'] ?? false)
+                    ->hidden(fn (array $record): bool => $record['untracked'] ?? false)
                     ->visible(function (array $record) {
                         if (empty($record['project_id'])) {
                             return false;
                         }
 
-                        $installedMod = $this->getInstalledMod($record['project_id']);
-
-                        return is_null($installedMod);
+                        return is_null($this->getInstalledMod($record['project_id'], $record['source'] ?? ProjectSourceKey::Modrinth->value));
                     })
                     ->action(function (array $record, DaemonFileRepository $fileRepository) {
                         try {
                             /** @var Server $server */
                             $server = Filament::getTenant();
+                            $type = static::detectProjectType($server);
 
-                            $versions = MinecraftModrinth::getModrinthVersions($record['project_id'], $server, static::detectProjectType($server));
+                            $sourceKey = ProjectSourceKey::tryFrom($record['source'] ?? '') ?? ProjectSourceKey::Modrinth;
+                            $source = app(ProjectSourceRegistry::class)->get($sourceKey);
+
+                            if (!$source || !$type) {
+                                throw new Exception('Source unavailable');
+                            }
+
+                            $versions = $source->getVersions($record['project_id'], $server, $type);
 
                             if (empty($versions)) {
                                 throw new Exception('No compatible versions found');
@@ -771,19 +946,20 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     ->icon('tabler-refresh')
                     ->color('warning')
                     ->tooltip(trans('pelican-minecraft-modrinth::strings.actions.update'))
-                    ->hidden(fn (array $record): bool => $record['not_on_modrinth'] ?? false)
+                    ->hidden(fn (array $record): bool => $record['untracked'] ?? false)
                     ->visible(function (array $record) {
                         if (empty($record['project_id'])) {
                             return false;
                         }
 
-                        $installedMod = $this->getInstalledMod($record['project_id']);
+                        $sourceKey = $record['source'] ?? ProjectSourceKey::Modrinth->value;
+                        $installedMod = $this->getInstalledMod($record['project_id'], $sourceKey);
 
                         if (is_null($installedMod)) {
                             return false;
                         }
 
-                        $versions = $this->getCachedVersions($record['project_id']);
+                        $versions = $this->getCachedVersions($record['project_id'], $sourceKey);
 
                         if (empty($versions)) {
                             return false;
@@ -794,8 +970,9 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     ->requiresConfirmation()
                     ->modalHeading(trans('pelican-minecraft-modrinth::strings.modals.update_heading'))
                     ->modalDescription(function (array $record) {
-                        $installedMod = $this->getInstalledMod($record['project_id']);
-                        $versions = $this->getCachedVersions($record['project_id']);
+                        $sourceKey = $record['source'] ?? ProjectSourceKey::Modrinth->value;
+                        $installedMod = $this->getInstalledMod($record['project_id'], $sourceKey);
+                        $versions = $this->getCachedVersions($record['project_id'], $sourceKey);
 
                         return trans('pelican-minecraft-modrinth::strings.modals.update_description', [
                             'old_version' => $installedMod['version_number'] ?? 'unknown',
@@ -806,14 +983,22 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                         try {
                             /** @var Server $server */
                             $server = Filament::getTenant();
+                            $type = static::detectProjectType($server);
 
-                            $installedMod = $this->getInstalledMod($record['project_id']);
+                            $sourceKey = ProjectSourceKey::tryFrom($record['source'] ?? '') ?? ProjectSourceKey::Modrinth;
+                            $installedMod = $this->getInstalledMod($record['project_id'], $sourceKey->value);
 
                             if (!$installedMod) {
                                 throw new Exception('Mod not found in metadata');
                             }
 
-                            $versions = MinecraftModrinth::getModrinthVersions($record['project_id'], $server, static::detectProjectType($server));
+                            $source = app(ProjectSourceRegistry::class)->get($sourceKey);
+
+                            if (!$source || !$type) {
+                                throw new Exception('Source unavailable');
+                            }
+
+                            $versions = $source->getVersions($record['project_id'], $server, $type);
 
                             if (empty($versions)) {
                                 throw new Exception('No compatible versions found');
@@ -863,19 +1048,20 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     ->color('success')
                     ->tooltip(trans('pelican-minecraft-modrinth::strings.actions.installed'))
                     ->disabled()
-                    ->hidden(fn (array $record): bool => $record['not_on_modrinth'] ?? false)
+                    ->hidden(fn (array $record): bool => $record['untracked'] ?? false)
                     ->visible(function (array $record) {
                         if (empty($record['project_id'])) {
                             return false;
                         }
 
-                        $installedMod = $this->getInstalledMod($record['project_id']);
+                        $sourceKey = $record['source'] ?? ProjectSourceKey::Modrinth->value;
+                        $installedMod = $this->getInstalledMod($record['project_id'], $sourceKey);
 
                         if (is_null($installedMod)) {
                             return false;
                         }
 
-                        $versions = $this->getCachedVersions($record['project_id']);
+                        $versions = $this->getCachedVersions($record['project_id'], $sourceKey);
 
                         if (empty($versions)) {
                             return true;
@@ -890,7 +1076,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     ->color('danger')
                     ->tooltip(trans('pelican-minecraft-modrinth::strings.actions.uninstall'))
                     ->visible(function (array $record) {
-                        if (($record['not_on_modrinth'] ?? false) === true) {
+                        if (($record['untracked'] ?? false) === true) {
                             return true;
                         }
 
@@ -898,7 +1084,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                             return false;
                         }
 
-                        return !is_null($this->getInstalledMod($record['project_id']));
+                        return !is_null($this->getInstalledMod($record['project_id'], $record['source'] ?? ProjectSourceKey::Modrinth->value));
                     })
                     ->requiresConfirmation()
                     ->modalHeading(fn (array $record) => trans('pelican-minecraft-modrinth::strings.modals.uninstall_heading'))
@@ -929,24 +1115,30 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                                 array_filter($this->unknownFiles, fn (string $filename) => strtolower($filename) !== strtolower($safeFilename))
                             );
 
+                            $sourceKey = ProjectSourceKey::tryFrom($record['source'] ?? '') ?? ProjectSourceKey::Modrinth;
+
                             $metadataRemoved = true;
                             if (!empty($record['project_id'])) {
-                                $metadataRemoved = MinecraftModrinth::removeModMetadata($server, $fileRepository, $record['project_id'], $type);
+                                $metadataRemoved = MinecraftModrinth::removeModMetadata($server, $fileRepository, $record['project_id'], $type, $sourceKey);
                             }
 
                             if (!$metadataRemoved) {
                                 Log::warning('Failed to remove mod metadata after successful file deletion', [
                                     'project_id' => $record['project_id'],
+                                    'source' => $sourceKey->value,
                                     'server_id' => $server->id,
                                 ]);
 
                                 if (is_array($this->installedModsMetadata)) {
                                     $this->installedModsMetadata = array_values(
-                                        array_filter($this->installedModsMetadata, fn ($mod) => $mod['project_id'] !== $record['project_id'])
+                                        array_filter(
+                                            $this->installedModsMetadata,
+                                            fn ($mod) => !($mod['project_id'] === $record['project_id'] && ($mod['source'] ?? ProjectSourceKey::Modrinth->value) === $sourceKey->value)
+                                        )
                                     );
                                 }
 
-                                unset($this->versionsCache[$record['project_id']]);
+                                unset($this->versionsCache["{$sourceKey->value}:{$record['project_id']}"]);
                             } else {
                                 $this->installedModsMetadata = null;
                                 $this->versionsCache = [];
@@ -997,11 +1189,87 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
         $fileRepository = app(DaemonFileRepository::class);
         $folder = MinecraftModrinth::getProjectFolder($server, $fileRepository, $type);
 
+        $githubSource = app(ProjectSourceRegistry::class)->get(ProjectSourceKey::GitHubReleases);
+        $availableSourceKeys = array_map(fn (ProjectSourceInterface $source) => $source->getKey()->value, $this->getAvailableSources());
+        $githubAvailable = $githubSource
+            && $githubSource->supportsProjectType($type)
+            && in_array(ProjectSourceKey::GitHubReleases->value, $availableSourceKeys, true);
+
         return [
             Action::make('open_folder')
                 ->tooltip(fn () => trans('pelican-minecraft-modrinth::strings.page.open_folder', ['folder' => $folder]))
                 ->icon('tabler-folder-open')
                 ->url(fn () => ListFiles::getUrl(['path' => $folder]), true),
+            Action::make('track_github_repo')
+                ->label(trans('pelican-minecraft-modrinth::strings.actions.track_github_repo'))
+                ->icon('tabler-brand-github')
+                ->disabled(fn () => !$githubSource?->isConfigured())
+                ->tooltip(fn () => $githubSource?->isConfigured() ? null : trans('pelican-minecraft-modrinth::strings.page.source_not_configured'))
+                ->schema([
+                    TextInput::make('repository')
+                        ->label(trans('pelican-minecraft-modrinth::strings.page.github_repo_label'))
+                        ->placeholder('owner/repo')
+                        ->helperText(trans('pelican-minecraft-modrinth::strings.page.github_repo_helper'))
+                        ->required(),
+                ])
+                ->action(function (array $data, DaemonFileRepository $fileRepository) use ($server, $type, $githubSource) {
+                    try {
+                        if (!$githubSource) {
+                            throw new Exception('GitHub Releases source not available');
+                        }
+
+                        $project = $githubSource->resolveProjectByIdentifier(trim($data['repository']));
+
+                        if (!$project) {
+                            throw new Exception('Repository not found');
+                        }
+
+                        $versions = $githubSource->getVersions($project['project_id'], $server, $type);
+
+                        if (empty($versions) || !isset($versions[0]['id'], $versions[0]['version_number'], $versions[0]['files'])) {
+                            throw new Exception('No installable release found for this repository');
+                        }
+
+                        $latestVersion = $versions[0];
+                        $primaryFile = $this->getPrimaryFile($latestVersion['files']);
+
+                        if (!$primaryFile) {
+                            throw new Exception('No downloadable file found');
+                        }
+
+                        $record = [
+                            'project_id' => $project['project_id'],
+                            'slug' => $project['slug'],
+                            'title' => $project['title'],
+                            'author' => $project['author'] ?? null,
+                            'source' => ProjectSourceKey::GitHubReleases->value,
+                        ];
+
+                        $this->performInstallOrUpdate($server, $fileRepository, $record, $latestVersion, $primaryFile);
+
+                        $this->installedModsMetadata = null;
+                        $this->versionsCache = [];
+                        $this->js('$wire.$refresh()');
+
+                        Notification::make()
+                            ->title(trans('pelican-minecraft-modrinth::strings.notifications.install_success'))
+                            ->body(trans('pelican-minecraft-modrinth::strings.notifications.install_success_body', [
+                                'name' => $project['title'],
+                                'version' => $latestVersion['version_number'],
+                            ]))
+                            ->success()
+                            ->send();
+                    } catch (Exception $exception) {
+                        report($exception);
+
+                        Notification::make()
+                            ->title(trans('pelican-minecraft-modrinth::strings.notifications.install_failed'))
+                            ->body(trans('pelican-minecraft-modrinth::strings.notifications.install_failed_body'))
+                            ->danger()
+                            ->send();
+                    }
+                })
+                ->visible(fn () => $githubAvailable),
             Action::make('update_all')
                 ->label(fn () => trans(match ($type) {
                     ModrinthProjectType::Plugin => 'pelican-minecraft-modrinth::strings.actions.update_all_plugins',
