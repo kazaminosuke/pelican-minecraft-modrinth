@@ -22,6 +22,7 @@ use Filament\Pages\Page;
 use Filament\Resources\Concerns\HasTabs;
 use Filament\Schemas\Components\EmbeddedTable;
 use Filament\Schemas\Components\Grid;
+use Filament\Schemas\Components\Group;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Components\Tabs\Tab;
 use Filament\Schemas\Schema;
@@ -40,7 +41,9 @@ use Illuminate\Support\Facades\Log;
 class MinecraftModrinthProjectPage extends Page implements HasTable
 {
     use BlockAccessInConflict;
-    use HasTabs;
+    use HasTabs {
+        HasTabs::updatedActiveTab as protected baseUpdatedActiveTab;
+    }
     use InteractsWithTable;
 
     /** @var array<int, array{source: string, project_id: string, project_slug: string, project_title: string, version_id: string, version_number: string, filename: string, installed_at: string, author?: string}>|null */
@@ -111,11 +114,13 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
     public function updatedActiveTab(?string $activeTab): void
     {
-        // Each tab (source or "installed") paginates its own independent result
-        // set, so a page number from the previous tab has no meaning here and
-        // must not carry over (e.g. leaving Modrinth on page 909 and switching
-        // to a CurseForge tab with far fewer results).
-        $this->resetPage();
+        // HasTabs::updatedActiveTab() (aliased above) already resets the table's
+        // page - each tab (source or "installed") paginates its own independent
+        // result set, so a page number from the previous tab has no meaning here
+        // (e.g. leaving Modrinth on page 909 and switching to a CurseForge tab
+        // with far fewer results) - plus resets the column manager state. It was
+        // being silently dropped by this method overriding it without calling it.
+        $this->baseUpdatedActiveTab();
 
         if ($activeTab !== 'installed') {
             return;
@@ -1342,61 +1347,63 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
         return $schema
             ->components([
-                Grid::make($type === ModrinthProjectType::Datapack ? 4 : 3)
-                    ->schema([
-                        TextEntry::make('Minecraft Version')
-                            ->state(fn () => MinecraftModrinth::getMinecraftVersion($server) ?? trans('pelican-minecraft-modrinth::strings.page.unknown'))
-                            ->badge()
-                            ->size(TextSize::Large),
-                        TextEntry::make('World')
-                            ->state(fn (DaemonFileRepository $fileRepository) => $this->getCachedDatapackWorldName($server, $fileRepository))
-                            ->badge()
-                            ->size(TextSize::Large)
-                            ->visible(fn () => $type === ModrinthProjectType::Datapack),
-                        TextEntry::make('Loader')
-                            ->state(fn () => MinecraftLoader::fromServer($server)?->getLabel() ?? trans('pelican-minecraft-modrinth::strings.page.unknown'))
-                            ->icon(function () use ($server) {
-                                $loader = MinecraftLoader::fromServer($server);
-                                if (!$loader) {
-                                    return null;
-                                }
-                                $name = strtolower($loader->name);
-                                $path = plugin_path('pelican-minecraft-modrinth', 'resources/icons/loaders/' . $name . '.svg');
+                Group::make([
+                    Grid::make($type === ModrinthProjectType::Datapack ? 4 : 3)
+                        ->schema([
+                            TextEntry::make('Minecraft Version')
+                                ->state(fn () => MinecraftModrinth::getMinecraftVersion($server) ?? trans('pelican-minecraft-modrinth::strings.page.unknown'))
+                                ->badge()
+                                ->size(TextSize::Large),
+                            TextEntry::make('World')
+                                ->state(fn (DaemonFileRepository $fileRepository) => $this->getCachedDatapackWorldName($server, $fileRepository))
+                                ->badge()
+                                ->size(TextSize::Large)
+                                ->visible(fn () => $type === ModrinthProjectType::Datapack),
+                            TextEntry::make('Loader')
+                                ->state(fn () => MinecraftLoader::fromServer($server)?->getLabel() ?? trans('pelican-minecraft-modrinth::strings.page.unknown'))
+                                ->icon(function () use ($server) {
+                                    $loader = MinecraftLoader::fromServer($server);
+                                    if (!$loader) {
+                                        return null;
+                                    }
+                                    $name = strtolower($loader->name);
+                                    $path = plugin_path('pelican-minecraft-modrinth', 'resources/icons/loaders/' . $name . '.svg');
 
-                                return file_exists($path) ? 'mcloader-' . $name : null;
-                            })
-                            ->badge()
-                            ->size(TextSize::Large)
-                            ->extraAttributes(['class' => 'mcloader-badge']),
-                        TextEntry::make('installed')
-                            ->label(fn () => trans('pelican-minecraft-modrinth::strings.page.installed', ['type' => $type?->getLabel() ?? 'Modrinth']))
-                            ->state(function (DaemonFileRepository $fileRepository) use ($server, $type) {
-                                try {
-                                    if (!$type) {
+                                    return file_exists($path) ? 'mcloader-' . $name : null;
+                                })
+                                ->badge()
+                                ->size(TextSize::Large)
+                                ->extraAttributes(['class' => 'mcloader-badge']),
+                            TextEntry::make('installed')
+                                ->label(fn () => trans('pelican-minecraft-modrinth::strings.page.installed', ['type' => $type?->getLabel() ?? 'Modrinth']))
+                                ->state(function (DaemonFileRepository $fileRepository) use ($server, $type) {
+                                    try {
+                                        if (!$type) {
+                                            return trans('pelican-minecraft-modrinth::strings.page.unknown');
+                                        }
+
+                                        $files = $fileRepository->setServer($server)->getDirectory(MinecraftModrinth::getProjectFolder($server, $fileRepository, $type));
+
+                                        if (isset($files['error'])) {
+                                            throw new Exception($files['error']);
+                                        }
+
+                                        $extension = $type->getFileExtension();
+
+                                        return collect($files)
+                                            ->filter(fn ($file) => str($file['name'])->lower()->endsWith($extension))
+                                            ->count();
+                                    } catch (Exception $exception) {
+                                        report($exception);
+
                                         return trans('pelican-minecraft-modrinth::strings.page.unknown');
                                     }
-
-                                    $files = $fileRepository->setServer($server)->getDirectory(MinecraftModrinth::getProjectFolder($server, $fileRepository, $type));
-
-                                    if (isset($files['error'])) {
-                                        throw new Exception($files['error']);
-                                    }
-
-                                    $extension = $type->getFileExtension();
-
-                                    return collect($files)
-                                        ->filter(fn ($file) => str($file['name'])->lower()->endsWith($extension))
-                                        ->count();
-                                } catch (Exception $exception) {
-                                    report($exception);
-
-                                    return trans('pelican-minecraft-modrinth::strings.page.unknown');
-                                }
-                            })
-                            ->badge()
-                            ->size(TextSize::Large),
-                    ]),
-                $this->getTabsContentComponent(),
+                                })
+                                ->badge()
+                                ->size(TextSize::Large),
+                        ]),
+                    $this->getTabsContentComponent(),
+                ])->extraAttributes(['class' => 'mmr-sticky-header']),
                 EmbeddedTable::make(),
             ]);
     }

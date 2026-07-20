@@ -34,7 +34,18 @@ class MinecraftModrinthPlugin implements HasPluginSettings, Plugin
 
         $panel->renderHook(
             PanelsRenderHook::HEAD_END,
-            fn () => new HtmlString('<style>.mcloader-badge .fi-icon{width:1em!important;height:1em!important;}</style>'),
+            fn () => new HtmlString(
+                '<style>'
+                .'.mcloader-badge .fi-icon{width:1em!important;height:1em!important;}'
+                // Keeps the Minecraft Version/Loader/Installed summary and the
+                // source tabs pinned below Filament's topbar (which is itself
+                // sticky, min-h-16 = 4rem, z-30) while the mod/plugin table
+                // scrolls underneath, so they stay visible on long lists (e.g.
+                // large modpacks) and when switching between source tabs.
+                .'.mmr-sticky-header{position:sticky;top:4rem;z-index:20;background-color:#fff;padding-bottom:.75rem;}'
+                .'.dark .mmr-sticky-header{background-color:rgb(17 24 39);}'
+                .'</style>'
+            ),
         );
     }
 
