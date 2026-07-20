@@ -43,12 +43,16 @@ class MinecraftModrinthPlugin implements HasPluginSettings, Plugin
                 // pagination controls, both of which stay outside this rule's
                 // reach) so the Minecraft Version/Loader/Installed summary and
                 // source tabs above it never move, on long lists (e.g. large
-                // modpacks) and when switching between source tabs. The height is
-                // viewport-relative rather than a fixed pixel value so it adapts
-                // to the window size; 20rem approximates the space used by
-                // Filament's topbar plus this page's own header/tabs/padding
-                // above the table - adjust if it's off in practice.
-                .'.mmr-table-scroll-ctn .fi-ta-content-ctn{max-height:calc(100vh - 20rem);min-height:24rem;overflow-y:auto;}'
+                // modpacks) and when switching between source tabs. max-height is
+                // NOT set here: a CSS calc() estimate of the space above the
+                // table proved too fragile (it left the page itself scrollable in
+                // addition to the table) since that space depends on the topbar,
+                // sidebar mode, and this page's own header wrapping - it's set
+                // dynamically instead, in pixels, by the x-init script on this
+                // element's wrapper (see MinecraftModrinthProjectPage::content()),
+                // which measures the actual remaining viewport space. min-height
+                // is a floor for the moment before that script runs.
+                .'.mmr-table-scroll-ctn .fi-ta-content-ctn{min-height:15rem;overflow-y:auto;}'
                 // Keeps the column header row (Title/Author/Downloads/Modified)
                 // pinned to the top of that scrolling area as rows scroll past
                 // underneath it; its own background (set by Filament) keeps rows

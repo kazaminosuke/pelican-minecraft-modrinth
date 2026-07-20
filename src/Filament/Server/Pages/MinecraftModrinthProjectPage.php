@@ -1404,7 +1404,31 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                 $this->getTabsContentComponent(),
                 Group::make([
                     EmbeddedTable::make(),
-                ])->extraAttributes(['class' => 'mmr-table-scroll-ctn']),
+                ])->extraAttributes([
+                    'class' => 'mmr-table-scroll-ctn',
+                    'x-data' => '{}',
+                    // A CSS calc() estimate of "space above the table" is inherently
+                    // fragile (topbar/sidebar height, and this page's own header
+                    // wrapping, all vary), and getting it wrong causes the page
+                    // itself to scroll in addition to the table - measure the
+                    // actual remaining viewport space instead, so the table always
+                    // fits exactly regardless of layout specifics. Re-measures on
+                    // window resize; $cleanup removes the listener when Livewire
+                    // replaces this element.
+                    'x-init' => <<<'JS'
+                        let mmrResize = () => {
+                            let ctn = $el.querySelector('.fi-ta-content-ctn');
+                            if (!ctn) return;
+                            let top = ctn.getBoundingClientRect().top;
+                            let available = window.innerHeight - top - 24;
+                            ctn.style.maxHeight = Math.max(available, 240) + 'px';
+                        };
+                        mmrResize();
+                        setTimeout(mmrResize, 250);
+                        window.addEventListener('resize', mmrResize);
+                        $cleanup(() => window.removeEventListener('resize', mmrResize));
+                        JS,
+                ]),
             ]);
     }
 }
