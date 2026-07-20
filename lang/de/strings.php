@@ -12,6 +12,8 @@ return [
         'nav_sort_helper' => 'Sortierreihenfolge im Seitenmenü. Niedrigere Zahlen erscheinen weiter oben.',
         'curseforge_api_key' => 'CurseForge-API-Schlüssel',
         'curseforge_api_key_helper' => 'Optional. Erforderlich, um CurseForge als Mod-/Plugin-Quelle zu aktivieren. Schlüssel in der CurseForge Core API-Konsole (console.curseforge.com) erstellen.',
+        'github_token' => 'GitHub-Token',
+        'github_token_helper' => 'Optional. Nicht erforderlich, um GitHub Releases als Quelle zu nutzen, erhöht aber das API-Ratenlimit. Fine-grained Personal Access Token ohne zusätzliche Berechtigungen unter github.com/settings/tokens erstellen.',
         'settings_saved' => 'Einstellungen gespeichert',
     ],
 

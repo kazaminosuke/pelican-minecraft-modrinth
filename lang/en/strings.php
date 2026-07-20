@@ -12,6 +12,8 @@ return [
         'nav_sort_helper' => 'Sort order in the side menu. Lower numbers appear higher.',
         'curseforge_api_key' => 'CurseForge API Key',
         'curseforge_api_key_helper' => 'Optional. Required to enable CurseForge as a mod/plugin source. Generate a key in the CurseForge Core API console (console.curseforge.com).',
+        'github_token' => 'GitHub Token',
+        'github_token_helper' => 'Optional. Not required to use GitHub Releases as a source, but raises the API rate limit. Generate a fine-grained personal access token with no extra permissions at github.com/settings/tokens.',
         'settings_saved' => 'Settings saved',
     ],
 

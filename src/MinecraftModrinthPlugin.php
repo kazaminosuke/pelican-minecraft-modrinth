@@ -58,6 +58,12 @@ class MinecraftModrinthPlugin implements HasPluginSettings, Plugin
                 ->password()
                 ->revealable()
                 ->default(fn () => config('pelican-minecraft-modrinth.curseforge_api_key')),
+            TextInput::make('github_token')
+                ->label(trans('pelican-minecraft-modrinth::strings.settings.github_token'))
+                ->helperText(trans('pelican-minecraft-modrinth::strings.settings.github_token_helper'))
+                ->password()
+                ->revealable()
+                ->default(fn () => config('pelican-minecraft-modrinth.github_token')),
         ];
     }
 
@@ -67,6 +73,7 @@ class MinecraftModrinthPlugin implements HasPluginSettings, Plugin
             'LATEST_MINECRAFT_VERSION' => $data['latest_minecraft_version'],
             'MINECRAFT_MODRINTH_NAV_SORT' => $data['nav_sort'],
             'CURSEFORGE_API_KEY' => $data['curseforge_api_key'] ?? '',
+            'GITHUB_TOKEN' => $data['github_token'] ?? '',
         ]);
 
         Notification::make()
