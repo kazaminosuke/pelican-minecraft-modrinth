@@ -226,23 +226,9 @@ class MinecraftModrinthService
             return [];
         }
 
-        $folder = $this->getProjectFolder($server, $fileRepository, $type);
-        $fileContents = []; // [filename => raw content]
-
-        foreach ($unknownFiles as $filename) {
-            try {
-                $fileContents[$filename] = $fileRepository->setServer($server)->getContent("{$folder}/{$filename}");
-            } catch (Exception $exception) {
-                report($exception);
-            }
-        }
-
-        if (empty($fileContents)) {
-            return $unknownFiles;
-        }
-
         $matchedFilenames = [];
-        $remainingFilenames = array_keys($fileContents);
+        $remainingFilenames = $unknownFiles;
+        $folder = $this->getProjectFolder($server, $fileRepository, $type);
 
         foreach ($this->getHashLookupSourcesInPriorityOrder() as $hashSource) {
             if (empty($remainingFilenames)) {
@@ -261,7 +247,11 @@ class MinecraftModrinthService
 
             $hashMap = []; // [filename => hash]
             foreach ($remainingFilenames as $filename) {
-                $hashMap[$filename] = $this->computeFileHash($algorithm, $fileContents[$filename]);
+                try {
+                    $hashMap[$filename] = $this->computeDaemonFileHash($fileRepository, $server, "{$folder}/{$filename}", $algorithm);
+                } catch (Exception $exception) {
+                    report($exception);
+                }
             }
 
             $versionsByHash = $hashSource->findVersionsByHash($hashMap);
@@ -358,18 +348,41 @@ class MinecraftModrinthService
     }
 
     /**
-     * Computes the hash a given source's findVersionsByHash() expects, from
-     * file content that's already been read once (avoids re-fetching the same
-     * file from the daemon for each source tried).
+     * Streams a daemon file into the hash algorithm expected by a source.
      */
-    protected function computeFileHash(string $algorithm, string $content): string
+    protected function computeDaemonFileHash(DaemonFileRepository $fileRepository, Server $server, string $path, string $algorithm): string
     {
-        return match ($algorithm) {
-            'sha512' => hash('sha512', $content),
-            'sha256' => hash('sha256', $content),
-            'murmur2' => (string) CurseForgeFingerprint::hash($content),
-            default => '',
-        };
+        if ($algorithm === 'murmur2') {
+            return (string) CurseForgeFingerprint::hashStream(fn () => $this->openDaemonFileStream($fileRepository, $server, $path));
+        }
+
+        if (!in_array($algorithm, ['sha512', 'sha256'], true)) {
+            return '';
+        }
+
+        $stream = $this->openDaemonFileStream($fileRepository, $server, $path);
+        $hash = hash_init($algorithm);
+
+        try {
+            while (!$stream->eof()) {
+                $chunk = $stream->read(1024 * 1024);
+                if ($chunk !== '') {
+                    hash_update($hash, $chunk);
+                }
+            }
+        } finally {
+            $stream->close();
+        }
+
+        return hash_final($hash);
+    }
+
+    /** Opens a Wings response without converting its body into a string. */
+    protected function openDaemonFileStream(DaemonFileRepository $fileRepository, Server $server, string $path): object
+    {
+        $response = $fileRepository->setServer($server)->getHttpClient()->withOptions(['stream' => true])->get("/api/servers/{$server->uuid}/files/contents", ['file' => $path]);
+
+        return $response->toPsrResponse()->getBody();
     }
 
     /**
