@@ -16,10 +16,13 @@ return [
         'github_token_helper' => 'Optional. Nicht erforderlich, um GitHub Releases als Quelle zu nutzen, erhöht aber das API-Ratenlimit. Fine-grained Personal Access Token ohne zusätzliche Berechtigungen unter github.com/settings/tokens erstellen.',
         'settings_saved' => 'Einstellungen gespeichert',
         'clear_cache' => 'Cache leeren',
-        'clear_cache_helper' => 'Leert die zwischengespeicherten Anzeigedaten installierter Mods sowie die Hangar-Hash-Treffer für alle Server und setzt die Scan-Nachverfolgungsdatei jedes Servers zurück (bereits erfasste Mods werden dadurch erneut gegen alle Quellen abgeglichen, nicht nur neu gefundene - nützlich nach dem Aktivieren einer neuen Quelle wie CurseForge). Das erneute Scannen erfolgt automatisch beim nächsten Laden des Installiert-Tabs jedes Servers. Es werden keine Mod-Dateien deinstalliert oder verändert.',
-        'clear_cache_confirmation_heading' => 'Cache und Scan-Daten für alle Server leeren?',
-        'clear_cache_confirmation_description' => 'Dadurch ruft der Installiert-Tab jedes Servers beim nächsten Laden die Anzeigedaten erneut ab, und die Scan-Nachverfolgungsdatei jedes Servers wird gelöscht, sodass bereits erfasste Mods ebenfalls neu gegen alle Quellen abgeglichen werden. Das erneute Scannen erfolgt automatisch beim nächsten Besuch, nicht sofort. Es werden keine Mod-Dateien deinstalliert oder verändert. Um dies nur für einen einzelnen Server zu tun, nutze stattdessen „Scan-Daten zurücksetzen" auf der Mod/Plugin-Seite dieses Servers.',
+        'clear_cache_helper' => 'Leert zwischengespeicherte Anzeigedaten installierter Mods und setzt die Scan-Nachverfolgung zurück, sodass bereits erfasste Mods erneut gegen alle Quellen abgeglichen werden, nicht nur neu gefundene - nützlich nach dem Aktivieren einer neuen Quelle wie CurseForge. Wähle einen einzelnen Server für ein sofortiges erneutes Scannen, oder „Alle Server", um alles auf einmal zu leeren (das erneute Scannen erfolgt dann automatisch beim nächsten Laden des Installiert-Tabs jedes Servers, nicht sofort). Es werden keine Mod-Dateien deinstalliert oder verändert.',
+        'clear_cache_confirmation_heading' => 'Cache und Scan-Daten leeren',
+        'clear_cache_confirmation_description' => 'Bei Auswahl eines einzelnen Servers werden nur dessen Cache geleert und sofort neu gescannt. Bei Auswahl von „Alle Server" werden Cache und Scan-Nachverfolgungsdatei aller Server geleert, aber nicht sofort neu gescannt - jeder Server scannt automatisch beim nächsten Laden seines Installiert-Tabs neu. In beiden Fällen werden keine Mod-Dateien deinstalliert oder verändert.',
+        'clear_cache_server_label' => 'Server',
+        'clear_cache_all_servers' => 'Alle Server',
         'cache_cleared' => 'Cache für :count Server geleert',
+        'cache_cleared_single' => 'Cache für :name geleert und neu gescannt',
     ],
 
     'page' => [
@@ -70,8 +73,6 @@ return [
         'uninstall' => 'Deinstallieren',
         'versions' => 'Versionsauswahl',
         'track_github_repo' => 'GitHub-Repository verfolgen',
-        'reset_metadata' => 'Scan-Daten zurücksetzen',
-        'reset_metadata_tooltip' => 'Löscht die Nachverfolgungsdatei installierter Mods dieses Servers und scannt neu von Grund auf',
     ],
 
     'badges' => [
@@ -83,8 +84,6 @@ return [
         'update_description' => 'Dies ersetzt Version :old_version durch Version :new_version. Die alte Datei wird gelöscht.',
         'uninstall_heading' => 'Mod/Plugin deinstallieren',
         'uninstall_description' => 'Möchtest du :name wirklich deinstallieren? Dies wird die Datei dauerhaft von deinem Server löschen.',
-        'reset_metadata_heading' => 'Scan-Daten für diesen Server zurücksetzen?',
-        'reset_metadata_description' => 'Dies löscht die Datei, die nachverfolgt, welche installierten Mods/Plugins bereits einer Quelle zugeordnet wurden, und scannt danach sofort neu von Grund auf. Nützlich, wenn ein Mod der falschen Quelle zugeordnet wurde (z. B. bevor er auf einer neu hinzugefügten Quelle verfügbar war) und neu bewertet werden muss. Es werden keine Mod-Dateien deinstalliert oder verändert.',
     ],
 
     'notifications' => [

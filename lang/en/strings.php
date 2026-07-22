@@ -16,10 +16,13 @@ return [
         'github_token_helper' => 'Optional. Not required to use GitHub Releases as a source, but raises the API rate limit. Generate a fine-grained personal access token with no extra permissions at github.com/settings/tokens.',
         'settings_saved' => 'Settings saved',
         'clear_cache' => 'Clear cache',
-        'clear_cache_helper' => 'Clears the cached installed-mod display data and Hangar hash-match results for every server, and resets every server\'s scan tracking file (so already-tracked mods are re-evaluated against all sources, not just newly found ones - useful after enabling a new source like CurseForge). Re-scanning happens automatically the next time each server\'s Installed tab is loaded. Does not uninstall or change any mod files.',
-        'clear_cache_confirmation_heading' => 'Clear cache and scan data for every server?',
-        'clear_cache_confirmation_description' => 'This forces every server\'s Installed tab to re-fetch display data on next load, and deletes every server\'s scan tracking file so already-tracked mods are re-matched against all sources too. Re-scanning happens automatically on next visit, not immediately. It does not uninstall or change any mod files. To do this for just one server, use "Reset scan data" on that server\'s Mod/Plugin page instead.',
+        'clear_cache_helper' => 'Clears cached installed-mod display data and resets scan tracking, so already-tracked mods are re-evaluated against all sources instead of only newly found ones - useful after enabling a new source like CurseForge. Choose a single server for an immediate re-scan, or "All servers" to clear everything at once (re-scanning then happens automatically the next time each server\'s Installed tab is loaded, not immediately). Does not uninstall or change any mod files.',
+        'clear_cache_confirmation_heading' => 'Clear cache and scan data',
+        'clear_cache_confirmation_description' => 'Choosing a single server clears and immediately re-scans just that server. Choosing "All servers" clears every server\'s cache and scan tracking file, but does not re-scan them immediately - each one re-scans automatically the next time its Installed tab is loaded. Neither option uninstalls or changes any mod files.',
+        'clear_cache_server_label' => 'Server',
+        'clear_cache_all_servers' => 'All servers',
         'cache_cleared' => 'Cache cleared for :count server(s)',
+        'cache_cleared_single' => 'Cache cleared and re-scanned for :name',
     ],
 
     'page' => [
@@ -70,8 +73,6 @@ return [
         'uninstall' => 'Uninstall',
         'versions' => 'Version Selection',
         'track_github_repo' => 'Track GitHub Repository',
-        'reset_metadata' => 'Reset scan data',
-        'reset_metadata_tooltip' => 'Deletes this server\'s installed-mods tracking file and re-scans from scratch',
     ],
 
     'badges' => [
@@ -83,8 +84,6 @@ return [
         'update_description' => 'This will replace version :old_version with version :new_version. The old file will be deleted.',
         'uninstall_heading' => 'Uninstall Mod/Plugin',
         'uninstall_description' => 'Are you sure you want to uninstall :name? This will permanently delete the file from your server.',
-        'reset_metadata_heading' => 'Reset scan data for this server?',
-        'reset_metadata_description' => 'This deletes the file that tracks which installed mods/plugins have already been matched to a source, then immediately re-scans from scratch. Useful if a mod was matched to the wrong source (e.g. before it was available on a newly added source) and needs to be re-evaluated. It does not uninstall or change any actual mod files.',
     ],
 
     'notifications' => [

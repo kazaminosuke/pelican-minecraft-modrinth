@@ -1485,38 +1485,6 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     $this->redirect(static::getUrl());
                 })
                 ->visible(fn () => static::detectProjectType($server) !== null),
-            // Unlike scan_mods above (which only re-checks files that aren't
-            // already tracked), this wipes the tracking file entirely, so
-            // already-tracked mods are re-evaluated too - needed when an
-            // entry was matched to the wrong source (most commonly: matched
-            // to Modrinth by a legacy pre-multi-source scan, before this
-            // egg had CurseForge/Hangar enabled) and scan_mods' "only
-            // unknown files" logic would never revisit it.
-            Action::make('reset_installed_metadata')
-                ->label(trans('pelican-minecraft-modrinth::strings.actions.reset_metadata'))
-                ->tooltip(trans('pelican-minecraft-modrinth::strings.actions.reset_metadata_tooltip'))
-                ->icon('tabler-trash')
-                ->color('danger')
-                ->requiresConfirmation()
-                ->modalHeading(trans('pelican-minecraft-modrinth::strings.modals.reset_metadata_heading'))
-                ->modalDescription(trans('pelican-minecraft-modrinth::strings.modals.reset_metadata_description'))
-                ->action(function (DaemonFileRepository $fileRepository) use ($server, $type) {
-                    try {
-                        MinecraftModrinth::resetInstalledMods($server, $fileRepository, $type);
-                    } catch (Exception $exception) {
-                        report($exception);
-
-                        Notification::make()
-                            ->title(trans('pelican-minecraft-modrinth::strings.notifications.reset_metadata_failed'))
-                            ->danger()
-                            ->send();
-
-                        return;
-                    }
-
-                    $this->redirect(static::getUrl());
-                })
-                ->visible(fn () => static::detectProjectType($server) !== null && $this->activeTab === 'installed'),
         ];
     }
 

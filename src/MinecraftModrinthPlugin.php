@@ -13,6 +13,7 @@ use Boy132\MinecraftModrinth\Support\CacheVersion;
 use Exception;
 use Filament\Actions\Action;
 use Filament\Contracts\Plugin;
+use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
 use Filament\Panel;
@@ -112,41 +113,39 @@ class MinecraftModrinthPlugin implements HasPluginSettings, Plugin
                     ->label(trans('pelican-minecraft-modrinth::strings.settings.clear_cache'))
                     ->color('danger')
                     ->icon('tabler-trash')
-                    ->requiresConfirmation()
                     ->modalHeading(trans('pelican-minecraft-modrinth::strings.settings.clear_cache_confirmation_heading'))
                     ->modalDescription(trans('pelican-minecraft-modrinth::strings.settings.clear_cache_confirmation_description'))
-                    ->action(function () {
-                        $serverCount = CacheVersion::bumpAllHydration();
-                        CacheVersion::bumpHangarHash();
-
+                    // A schema already makes this action open a confirmation
+                    // modal (with the heading/description above) before
+                    // running, the same as requiresConfirmation() would - so
+                    // that isn't also needed here, which would risk stacking
+                    // a second, redundant confirmation step in front of it.
+                    ->schema([
+                        Select::make('server_id')
+                            ->label(trans('pelican-minecraft-modrinth::strings.settings.clear_cache_server_label'))
+                            ->native(false)
+                            ->required()
+                            ->default('all')
+                            // Array union (+), NOT spread (...) - spread
+                            // renumbers integer keys sequentially (0, 1, 2...)
+                            // instead of preserving them, which would silently
+                            // replace every server's real id with an unrelated
+                            // sequential number as this Select's option value.
+                            ->options(fn () => ['all' => trans('pelican-minecraft-modrinth::strings.settings.clear_cache_all_servers')]
+                                + Server::query()->orderBy('name')->pluck('name', 'id')->all()),
+                    ])
+                    ->action(function (array $data) {
                         $service = app(MinecraftModrinthService::class);
                         /** @var DaemonFileRepository $fileRepository */
                         $fileRepository = app(DaemonFileRepository::class);
 
-                        // Metadata deletion needs each server's egg loaded (to
-                        // resolve its project type), unlike the cheap id-only
-                        // query bumpAllHydration() above does - a second query
-                        // here is fine given how infrequently this action runs.
-                        foreach (Server::query()->with('egg')->get() as $server) {
-                            try {
-                                $type = ModrinthProjectType::fromServer($server);
+                        if (($data['server_id'] ?? 'all') === 'all') {
+                            self::clearAllServers($service, $fileRepository);
 
-                                if ($type) {
-                                    $service->clearInstalledModsMetadata($server, $fileRepository, $type);
-                                }
-
-                                if (ModrinthProjectType::supportsDatapacks($server)) {
-                                    $service->clearInstalledModsMetadata($server, $fileRepository, ModrinthProjectType::Datapack);
-                                }
-                            } catch (Exception $exception) {
-                                report($exception);
-                            }
+                            return;
                         }
 
-                        Notification::make()
-                            ->title(trans('pelican-minecraft-modrinth::strings.settings.cache_cleared', ['count' => $serverCount]))
-                            ->success()
-                            ->send();
+                        self::clearSingleServer($service, $fileRepository, (int) $data['server_id']);
                     }),
             ])->belowContent(trans('pelican-minecraft-modrinth::strings.settings.clear_cache_helper')),
         ];
@@ -163,6 +162,95 @@ class MinecraftModrinthPlugin implements HasPluginSettings, Plugin
 
         Notification::make()
             ->title(trans('pelican-minecraft-modrinth::strings.settings.settings_saved'))
+            ->success()
+            ->send();
+    }
+
+    /**
+     * Clears every server's installed-mods metadata/caches, plus the two
+     * caches that aren't per-server at all (hydration display data has no
+     * single global scope, but the Hangar hash-match cache does - see
+     * CacheVersion). Deliberately does NOT re-scan every server
+     * synchronously from this one request - doing that for every server,
+     * each potentially hundreds of mods, in a single web request risks a
+     * real timeout. Re-scanning instead happens lazily, the normal way, the
+     * next time each server's Installed tab is loaded.
+     */
+    private static function clearAllServers(MinecraftModrinthService $service, DaemonFileRepository $fileRepository): void
+    {
+        $serverCount = CacheVersion::bumpAllHydration();
+        CacheVersion::bumpHangarHash();
+
+        // Metadata deletion needs each server's egg loaded (to resolve its
+        // project type), unlike the cheap id-only query bumpAllHydration()
+        // above does - a second query here is fine given how infrequently
+        // this action runs.
+        foreach (Server::query()->with('egg')->get() as $server) {
+            try {
+                $type = ModrinthProjectType::fromServer($server);
+
+                if ($type) {
+                    $service->clearInstalledModsMetadata($server, $fileRepository, $type);
+                }
+
+                if (ModrinthProjectType::supportsDatapacks($server)) {
+                    $service->clearInstalledModsMetadata($server, $fileRepository, ModrinthProjectType::Datapack);
+                }
+            } catch (Exception $exception) {
+                report($exception);
+            }
+        }
+
+        Notification::make()
+            ->title(trans('pelican-minecraft-modrinth::strings.settings.cache_cleared', ['count' => $serverCount]))
+            ->success()
+            ->send();
+    }
+
+    /**
+     * Clears and immediately re-scans a single server - unlike
+     * clearAllServers(), this can afford a synchronous re-scan since it's
+     * scoped to one server's mods rather than every server's. Deliberately
+     * does not bump the Hangar hash-match cache (see CacheVersion) since
+     * that cache isn't per-server - bumping it here would affect every
+     * other server too, contradicting "just this one server".
+     */
+    private static function clearSingleServer(MinecraftModrinthService $service, DaemonFileRepository $fileRepository, int $serverId): void
+    {
+        $server = Server::query()->with('egg')->find($serverId);
+
+        if (!$server) {
+            Notification::make()
+                ->title(trans('pelican-minecraft-modrinth::strings.notifications.reset_metadata_failed'))
+                ->danger()
+                ->send();
+
+            return;
+        }
+
+        try {
+            $type = ModrinthProjectType::fromServer($server);
+
+            if ($type) {
+                $service->resetInstalledMods($server, $fileRepository, $type);
+            }
+
+            if (ModrinthProjectType::supportsDatapacks($server)) {
+                $service->resetInstalledMods($server, $fileRepository, ModrinthProjectType::Datapack);
+            }
+        } catch (Exception $exception) {
+            report($exception);
+
+            Notification::make()
+                ->title(trans('pelican-minecraft-modrinth::strings.notifications.reset_metadata_failed'))
+                ->danger()
+                ->send();
+
+            return;
+        }
+
+        Notification::make()
+            ->title(trans('pelican-minecraft-modrinth::strings.settings.cache_cleared_single', ['name' => $server->name]))
             ->success()
             ->send();
     }

@@ -1,0 +1,112 @@
+<?php
+
+return [
+    'plugin_name' => 'Modrinth',
+    'minecraft_mods' => 'Minecraft Mod',
+    'minecraft_plugins' => 'Minecraft Plugin',
+    'minecraft_datapacks' => 'Minecraft Datapack',
+
+    'settings' => [
+        'latest_minecraft_version' => '最新のMinecraftバージョン',
+        'nav_sort' => 'ナビゲーション表示順',
+        'nav_sort_helper' => 'サイドメニューでの表示順序です。数字が小さいほど上に表示されます。',
+        'curseforge_api_key' => 'CurseForge APIキー',
+        'curseforge_api_key_helper' => '任意項目です。CurseForgeをMod/Pluginのソースとして有効にする場合に必要です。CurseForge Core APIコンソール(console.curseforge.com)でキーを発行してください。',
+        'github_token' => 'GitHubトークン',
+        'github_token_helper' => '任意項目です。GitHub ReleasesをソースとしてMod/Pluginを利用する場合、トークンがなくても使用できますが、設定するとAPIのレート制限が緩和されます。github.com/settings/tokensで、追加の権限を付与しないfine-grainedなpersonal access tokenを発行してください。',
+        'settings_saved' => '設定を保存しました',
+        'clear_cache' => 'キャッシュをクリア',
+        'clear_cache_helper' => 'インストール済みMod表示データのキャッシュをクリアし、スキャンの追跡状態をリセットします。これにより、既に追跡済みのModも(新しく見つかったものだけでなく)全ソースに対して再評価されるようになります。CurseForgeなど新しいソースを有効にした後に便利です。単一のサーバーを選ぶとその場で即座に再スキャンされ、「全サーバー」を選ぶと一括でクリアされます(この場合、再スキャンは各サーバーのInstalledタブを次回開いたときに自動的に行われ、即座には行われません)。Modファイル自体の削除・変更は行いません。',
+        'clear_cache_confirmation_heading' => 'キャッシュとスキャンデータをクリアしますか?',
+        'clear_cache_confirmation_description' => '単一のサーバーを選んだ場合は、そのサーバーのみをクリアし即座に再スキャンします。「全サーバー」を選んだ場合は、全サーバーのキャッシュとスキャン追跡ファイルをクリアしますが、即座には再スキャンしません — 各サーバーは次回Installedタブを開いたときに自動的に再スキャンされます。いずれの場合もModファイルの削除・変更は行いません。',
+        'clear_cache_server_label' => 'サーバー',
+        'clear_cache_all_servers' => '全サーバー',
+        'cache_cleared' => ':count 件のサーバーのキャッシュをクリアしました',
+        'cache_cleared_single' => ':name のキャッシュをクリアし、再スキャンしました',
+    ],
+
+    'page' => [
+        'open_folder' => ':folder フォルダを開く',
+        'minecraft_version' => 'Minecraftバージョン',
+        'loader' => 'Loader',
+        'installed' => 'インストール済み :type',
+        'unknown' => '不明',
+        'view_all' => 'すべて',
+        'view_installed' => 'インストール済み',
+        'mod_unavailable' => 'このMod/Pluginは、ソース側で既に利用できなくなっています',
+        'source_not_configured_heading' => '未設定',
+        'source_not_configured' => 'このソースを使用するには、先にプラグイン設定で設定を行ってください。',
+        'github_repo_label' => 'GitHubリポジトリ',
+        'github_repo_helper' => '追跡するリポジトリを owner/repo の形式で指定します(例: ViaVersion/ViaVersion)。最新のリリースがインストールされます。',
+    ],
+
+    'table' => [
+        'columns' => [
+            'title' => 'タイトル',
+            'source' => 'ソース',
+            'author' => '作者',
+            'downloads' => 'ダウンロード数',
+            'date_modified' => '更新日',
+        ],
+    ],
+
+    'version' => [
+        'type' => '種別',
+        'downloads' => 'ダウンロード数',
+        'published' => '公開日',
+        'changelog' => '変更履歴',
+        'no_file_found' => 'ファイルが見つかりません',
+    ],
+
+    'actions' => [
+        'scan' => 'Modをスキャン',
+        'rescan_mods_for_updates' => 'Modの更新を再スキャン',
+        'rescan_plugins_for_updates' => 'Pluginの更新を再スキャン',
+        'rescan_datapacks_for_updates' => 'Datapackの更新を再スキャン',
+        'update_all_mods' => 'すべてのModを更新',
+        'update_all_plugins' => 'すべてのPluginを更新',
+        'update_all_datapacks' => 'すべてのDatapackを更新',
+        'install_latest' => '最新バージョンをインストール',
+        'install' => 'インストール',
+        'installed' => 'インストール済み',
+        'update' => '更新',
+        'uninstall' => 'アンインストール',
+        'versions' => 'バージョン選択',
+        'track_github_repo' => 'GitHubリポジトリを追跡',
+    ],
+
+    'badges' => [
+        'not_on_modrinth' => '未追跡',
+    ],
+
+    'modals' => [
+        'update_heading' => 'Mod/Pluginを更新',
+        'update_description' => 'バージョン :old_version を バージョン :new_version に置き換えます。古いファイルは削除されます。',
+        'uninstall_heading' => 'Mod/Pluginをアンインストール',
+        'uninstall_description' => ':name を本当にアンインストールしますか?サーバーからファイルが完全に削除されます。',
+    ],
+
+    'notifications' => [
+        'install_success' => 'インストールが完了しました',
+        'install_success_body' => ':name のバージョン :version を正常にインストールしました',
+        'install_failed' => 'インストールに失敗しました',
+        'install_failed_body' => 'インストール中にエラーが発生しました。もう一度お試しいただくか、問題が解決しない場合はサポートにお問い合わせください。',
+        'update_success' => '更新が完了しました',
+        'update_success_body' => 'バージョン :version に正常に更新しました',
+        'update_failed' => '更新に失敗しました',
+        'update_failed_body' => '更新中にエラーが発生しました。もう一度お試しいただくか、問題が解決しない場合はサポートにお問い合わせください。',
+        'uninstall_success' => 'アンインストールが完了しました',
+        'uninstall_success_body' => ':name を正常にアンインストールしました',
+        'uninstall_failed' => 'アンインストールに失敗しました',
+        'uninstall_failed_body' => 'アンインストール中にエラーが発生しました。もう一度お試しいただくか、問題が解決しない場合はサポートにお問い合わせください。',
+        'scan_in_progress_mods' => 'Modをスキャンしています…しばらくお待ちください。',
+        'scan_in_progress_plugins' => 'Pluginをスキャンしています…しばらくお待ちください。',
+        'scan_in_progress_datapacks' => 'Datapackをスキャンしています…しばらくお待ちください。',
+        'scan_success' => 'スキャンにより :count 件のModをインポートしました。',
+        'scan_failed' => 'スキャンに失敗しました。もう一度お試しください。',
+        'bulk_update_success' => ':count 件のアイテムを更新しました。',
+        'bulk_update_partial' => ':updated 件を更新、:failed 件が失敗しました。',
+        'bulk_update_none' => 'すべてのアイテムは既に最新です。',
+        'reset_metadata_failed' => 'リセットに失敗しました。もう一度お試しください。',
+    ],
+];
