@@ -189,6 +189,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                         spacer.className = 'mmr-pagination-previous-spacer';
                         spacer.setAttribute('aria-hidden', 'true');
                         spacer.style.cssText = `flex:0 0 ${width}px;width:${width}px;visibility:hidden;list-style:none;`;
+                        first.style.borderInlineStartWidth = '0';
 
                         items.insertBefore(spacer, first);
                     });
