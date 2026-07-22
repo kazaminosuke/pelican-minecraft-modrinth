@@ -141,7 +141,8 @@ class ProjectSourceRegistry
         $projectsMap = [];
 
         foreach (array_chunk($projectIds, 100) as $chunk) {
-            $cacheKey = "{$sourceKey}_bulk_hydrate:".md5(implode(',', $chunk));
+            logger()->debug('Hydrating installed projects chunk', ['source' => $sourceKey, 'count' => count($chunk), 'memory' => memory_get_usage(true)]);
+            $cacheKey = "{$sourceKey}_bulk_hydrate:v3:".md5(implode(',', $chunk));
 
             $chunkMap = cache()->remember($cacheKey, now()->addMinutes(30), function () use ($source, $chunk) {
                 try {
