@@ -309,7 +309,17 @@ class ModrinthSource implements ProjectSourceInterface
             $map = [];
             foreach ($projects as $project) {
                 if (isset($project['id'])) {
-                    $map[$project['id']] = $project;
+                    $map[$project['id']] = [
+                        'project_id' => (string) $project['id'],
+                        'slug' => $project['slug'] ?? '',
+                        'title' => $project['title'] ?? '',
+                        'description' => $project['description'] ?? '',
+                        'icon_url' => $project['icon_url'] ?? null,
+                        'author' => null,
+                        'downloads' => (int) ($project['downloads'] ?? 0),
+                        'date_modified' => $project['updated'] ?? null,
+                        'project_type' => $project['project_type'] ?? '',
+                    ];
                 }
             }
 
