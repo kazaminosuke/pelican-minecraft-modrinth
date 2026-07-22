@@ -171,11 +171,15 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                 const resizeTables = () => {
                     document.querySelectorAll('.mmr-table-scroll-ctn .fi-pagination-items').forEach((items) => {
                         const paginationItems = Array.from(items.children);
+                        const previous = paginationItems.find((item) => item.matches('.fi-pagination-item[rel="prev"]'));
 
-                        if (
-                            items.parentElement?.classList.contains('mmr-pagination-items-ctn')
-                            || paginationItems.some((item) => item.matches('.fi-pagination-item[rel="prev"]'))
-                        ) {
+                        if (previous) {
+                            window.mmrPaginationPreviousWidth = previous.getBoundingClientRect().width;
+
+                            return;
+                        }
+
+                        if (items.parentElement?.classList.contains('mmr-pagination-items-ctn')) {
                             return;
                         }
 
@@ -188,10 +192,14 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
                         const container = document.createElement('div');
                         const spacer = document.createElement('div');
-                        const width = next.getBoundingClientRect().width;
+                        const width = window.mmrPaginationPreviousWidth ?? next.getBoundingClientRect().width;
+
+                        if (width === 0) {
+                            return;
+                        }
 
                         container.className = 'mmr-pagination-items-ctn';
-                        container.style.cssText = 'grid-column:3;justify-self:end;display:flex;align-items:center;';
+                        container.style.cssText = 'grid-column:3;justify-self:end;display:flex;align-items:center;width:max-content;';
                         spacer.className = 'mmr-pagination-previous-spacer';
                         spacer.setAttribute('aria-hidden', 'true');
                         spacer.style.cssText = `flex:0 0 ${width}px;width:${width}px;visibility:hidden;`;
