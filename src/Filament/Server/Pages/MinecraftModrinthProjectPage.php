@@ -179,33 +179,24 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                             return;
                         }
 
-                        if (items.parentElement?.classList.contains('mmr-pagination-items-ctn')) {
+                        if (items.dataset.mmrPaginationPreviousSpace === 'true') {
                             return;
                         }
 
                         const next = paginationItems.find((item) => item.matches('.fi-pagination-item[rel="next"]'));
-                        const parent = items.parentElement;
 
-                        if (!next || !parent) {
+                        if (!next) {
                             return;
                         }
 
-                        const container = document.createElement('div');
-                        const spacer = document.createElement('div');
                         const width = window.mmrPaginationPreviousWidth ?? next.getBoundingClientRect().width;
 
                         if (width === 0) {
                             return;
                         }
 
-                        container.className = 'mmr-pagination-items-ctn';
-                        container.style.cssText = 'grid-column:3;justify-self:end;display:flex;align-items:center;width:max-content;';
-                        spacer.className = 'mmr-pagination-previous-spacer';
-                        spacer.setAttribute('aria-hidden', 'true');
-                        spacer.style.cssText = `flex:0 0 ${width}px;width:${width}px;visibility:hidden;`;
-
-                        parent.insertBefore(container, items);
-                        container.append(spacer, items);
+                        items.style.marginInlineStart = `${width}px`;
+                        items.dataset.mmrPaginationPreviousSpace = 'true';
                     });
 
                     document.querySelectorAll('.mmr-table-scroll-ctn .fi-ta-content-ctn').forEach((ctn) => {
