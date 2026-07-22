@@ -165,6 +165,10 @@ class MinecraftModrinthService
      */
     protected function performScan(Server $server, DaemonFileRepository $fileRepository, ?ModrinthProjectType $type = null): array
     {
+        // Large modpacks require several remote file reads. This applies only to
+        // the explicit installed-file scan, not to the rest of the request.
+        set_time_limit(120);
+
         $type ??= ModrinthProjectType::fromServer($server);
 
         if (!$type) {
@@ -332,7 +336,7 @@ class MinecraftModrinthService
 
     /**
      * Sources to try, in priority order, when identifying unknown files by hash
-     * during a scan. Modrinth and CurseForge resolve a hash match straight to an
+     * during a scan. CurseForge and Modrinth resolve a hash match straight to an
      * exact version. Hangar's hash endpoint only identifies the parent project
      * and needs an expensive follow-up scan of that project's versions to pin
      * down the exact file (see HangarSource::findVersionEntryByHash()), so it's
@@ -344,7 +348,7 @@ class MinecraftModrinthService
      */
     protected function getHashLookupSourcesInPriorityOrder(): array
     {
-        return [$this->source, $this->curseForgeSource, $this->hangarSource];
+        return [$this->curseForgeSource, $this->source, $this->hangarSource];
     }
 
     /**

@@ -68,9 +68,17 @@ class ProjectSourceRegistry
         $server->loadMissing('egg');
         $features = $server->egg->features ?? [];
 
-        $enabled = [$this->sources[ProjectSourceKey::Modrinth->value]];
+        $enabled = [];
 
-        foreach ([ProjectSourceKey::CurseForge, ProjectSourceKey::Hangar, ProjectSourceKey::GitHubReleases] as $key) {
+        // Keep the catalog tabs and automatic hash lookup aligned: when an egg
+        // enables CurseForge, it is shown and scanned before Modrinth.
+        if (in_array(ProjectSourceKey::CurseForge->value, $features, true)) {
+            $enabled[] = $this->sources[ProjectSourceKey::CurseForge->value];
+        }
+
+        $enabled[] = $this->sources[ProjectSourceKey::Modrinth->value];
+
+        foreach ([ProjectSourceKey::Hangar, ProjectSourceKey::GitHubReleases] as $key) {
             if (in_array($key->value, $features, true)) {
                 $enabled[] = $this->sources[$key->value];
             }
