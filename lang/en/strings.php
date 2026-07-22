@@ -29,6 +29,7 @@ return [
         'open_folder' => 'Open :folder folder',
         'minecraft_version' => 'Minecraft Version',
         'loader' => 'Loader',
+        'world' => 'World',
         'installed' => 'Installed :type',
         'unknown' => 'Unknown',
         'view_all' => 'All',

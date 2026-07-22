@@ -28,7 +28,8 @@ return [
     'page' => [
         'open_folder' => ':folder フォルダを開く',
         'minecraft_version' => 'Minecraftバージョン',
-        'loader' => 'Loader',
+        'loader' => 'ローダー',
+        'world' => 'ワールド',
         'installed' => 'インストール済み :type',
         'unknown' => '不明',
         'view_all' => 'すべて',

@@ -860,6 +860,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                 ImageColumn::make('icon_url')
                     ->label(''),
                 TextColumn::make('title')
+                    ->label(trans('pelican-minecraft-modrinth::strings.table.columns.title'))
                     ->searchable()
                     ->wrap()
                     ->lineClamp(1)
@@ -889,13 +890,16 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     ->visible(fn () => $this->activeTab === 'installed' && count($this->getAvailableSources()) > 1)
                     ->toggleable(),
                 TextColumn::make('author')
+                    ->label(trans('pelican-minecraft-modrinth::strings.table.columns.author'))
                     ->url(fn (array $record, $state) => (($record['source'] ?? null) === ProjectSourceKey::Modrinth->value && $state) ? "https://modrinth.com/user/$state" : null, true)
                     ->toggleable(),
                 TextColumn::make('downloads')
+                    ->label(trans('pelican-minecraft-modrinth::strings.table.columns.downloads'))
                     ->icon('tabler-download')
                     ->numeric()
                     ->toggleable(),
                 TextColumn::make('date_modified')
+                    ->label(trans('pelican-minecraft-modrinth::strings.table.columns.date_modified'))
                     ->icon('tabler-calendar')
                     ->formatStateUsing(fn ($state) => $state ? Carbon::parse($state, 'UTC')->diffForHumans() : '')
                     ->tooltip(fn ($state) => $state ? Carbon::parse($state, 'UTC')->timezone(user()->timezone ?? 'UTC')->format($table->getDefaultDateTimeDisplayFormat()) : '')
@@ -1358,6 +1362,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
         return [
             Action::make('open_folder')
+                ->label(fn () => trans('pelican-minecraft-modrinth::strings.page.open_folder', ['folder' => $folder]))
                 ->tooltip(fn () => trans('pelican-minecraft-modrinth::strings.page.open_folder', ['folder' => $folder]))
                 ->icon('tabler-folder-open')
                 ->url(fn () => ListFiles::getUrl(['path' => $folder]), true),
@@ -1500,16 +1505,19 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                 Grid::make($type === ModrinthProjectType::Datapack ? 4 : 3)
                     ->extraAttributes(['class' => 'mmr-page-header'])
                     ->schema([
-                        TextEntry::make('Minecraft Version')
+                        TextEntry::make('minecraft_version')
+                            ->label(trans('pelican-minecraft-modrinth::strings.page.minecraft_version'))
                             ->state(fn () => MinecraftModrinth::getMinecraftVersion($server) ?? trans('pelican-minecraft-modrinth::strings.page.unknown'))
                             ->badge()
                             ->size(TextSize::Large),
-                        TextEntry::make('World')
+                        TextEntry::make('world')
+                            ->label(trans('pelican-minecraft-modrinth::strings.page.world'))
                             ->state(fn (DaemonFileRepository $fileRepository) => $this->getCachedDatapackWorldName($server, $fileRepository))
                             ->badge()
                             ->size(TextSize::Large)
                             ->visible(fn () => $type === ModrinthProjectType::Datapack),
-                        TextEntry::make('Loader')
+                        TextEntry::make('loader')
+                            ->label(trans('pelican-minecraft-modrinth::strings.page.loader'))
                             ->state(fn () => MinecraftLoader::fromServer($server)?->getLabel() ?? trans('pelican-minecraft-modrinth::strings.page.unknown'))
                             ->icon(function () use ($server) {
                                 $loader = MinecraftLoader::fromServer($server);
