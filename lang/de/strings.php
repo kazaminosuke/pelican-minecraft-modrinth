@@ -16,9 +16,9 @@ return [
         'github_token_helper' => 'Optional. Nicht erforderlich, um GitHub Releases als Quelle zu nutzen, erhöht aber das API-Ratenlimit. Fine-grained Personal Access Token ohne zusätzliche Berechtigungen unter github.com/settings/tokens erstellen.',
         'settings_saved' => 'Einstellungen gespeichert',
         'clear_cache' => 'Cache leeren',
-        'clear_cache_helper' => 'Leert die zwischengespeicherten Anzeigedaten installierter Mods sowie die Hangar-Hash-Treffer für alle Server, sodass beim nächsten Laden erneut von jeder Quelle abgerufen wird. Installierte Mods selbst bleiben unberührt.',
-        'clear_cache_confirmation_heading' => 'Cache leeren?',
-        'clear_cache_confirmation_description' => 'Dadurch ruft der Installiert-Tab jedes Servers beim nächsten Laden die Anzeigedaten erneut von Modrinth/CurseForge/Hangar/GitHub ab. Es werden keine Mods deinstalliert oder verändert.',
+        'clear_cache_helper' => 'Leert die zwischengespeicherten Anzeigedaten installierter Mods sowie die Hangar-Hash-Treffer für alle Server und setzt die Scan-Nachverfolgungsdatei jedes Servers zurück (bereits erfasste Mods werden dadurch erneut gegen alle Quellen abgeglichen, nicht nur neu gefundene - nützlich nach dem Aktivieren einer neuen Quelle wie CurseForge). Das erneute Scannen erfolgt automatisch beim nächsten Laden des Installiert-Tabs jedes Servers. Es werden keine Mod-Dateien deinstalliert oder verändert.',
+        'clear_cache_confirmation_heading' => 'Cache und Scan-Daten für alle Server leeren?',
+        'clear_cache_confirmation_description' => 'Dadurch ruft der Installiert-Tab jedes Servers beim nächsten Laden die Anzeigedaten erneut ab, und die Scan-Nachverfolgungsdatei jedes Servers wird gelöscht, sodass bereits erfasste Mods ebenfalls neu gegen alle Quellen abgeglichen werden. Das erneute Scannen erfolgt automatisch beim nächsten Besuch, nicht sofort. Es werden keine Mod-Dateien deinstalliert oder verändert. Um dies nur für einen einzelnen Server zu tun, nutze stattdessen „Scan-Daten zurücksetzen" auf der Mod/Plugin-Seite dieses Servers.',
         'cache_cleared' => 'Cache für :count Server geleert',
     ],
 
@@ -70,6 +70,8 @@ return [
         'uninstall' => 'Deinstallieren',
         'versions' => 'Versionsauswahl',
         'track_github_repo' => 'GitHub-Repository verfolgen',
+        'reset_metadata' => 'Scan-Daten zurücksetzen',
+        'reset_metadata_tooltip' => 'Löscht die Nachverfolgungsdatei installierter Mods dieses Servers und scannt neu von Grund auf',
     ],
 
     'badges' => [
@@ -81,6 +83,8 @@ return [
         'update_description' => 'Dies ersetzt Version :old_version durch Version :new_version. Die alte Datei wird gelöscht.',
         'uninstall_heading' => 'Mod/Plugin deinstallieren',
         'uninstall_description' => 'Möchtest du :name wirklich deinstallieren? Dies wird die Datei dauerhaft von deinem Server löschen.',
+        'reset_metadata_heading' => 'Scan-Daten für diesen Server zurücksetzen?',
+        'reset_metadata_description' => 'Dies löscht die Datei, die nachverfolgt, welche installierten Mods/Plugins bereits einer Quelle zugeordnet wurden, und scannt danach sofort neu von Grund auf. Nützlich, wenn ein Mod der falschen Quelle zugeordnet wurde (z. B. bevor er auf einer neu hinzugefügten Quelle verfügbar war) und neu bewertet werden muss. Es werden keine Mod-Dateien deinstalliert oder verändert.',
     ],
 
     'notifications' => [
@@ -104,5 +108,6 @@ return [
         'bulk_update_success' => ':count Element(e) aktualisiert.',
         'bulk_update_partial' => ':updated aktualisiert, :failed fehlgeschlagen.',
         'bulk_update_none' => 'Alle Elemente sind bereits aktuell.',
+        'reset_metadata_failed' => 'Zurücksetzen fehlgeschlagen. Bitte versuche es erneut.',
     ],
 ];

@@ -102,6 +102,61 @@ class MinecraftModrinthService
         return "{$this->source->getKey()->value}_hash_scan:{$server->id}:".($resolvedType?->value ?? 'unknown');
     }
 
+    /**
+     * Deletes this server's installed-mods metadata file - both the current
+     * (.pelican-mod-manager.json) and legacy (.modrinth-metadata.json)
+     * filenames, since either could be the one actually in use - and clears
+     * the caches that would otherwise keep serving stale results
+     * afterwards: the hydration display cache and the 10-minute
+     * scanAndImportMods() cache. Without clearing the latter, the very next
+     * "Installed" tab load would silently reuse a cached pre-deletion scan
+     * result instead of noticing every file is now unknown again, which is
+     * exactly what was observed when this file was deleted by hand.
+     *
+     * Deleting the metadata file does not, by itself, cause anything to be
+     * re-scanned - see resetInstalledMods() for that.
+     *
+     * @throws Exception
+     */
+    public function clearInstalledModsMetadata(Server $server, DaemonFileRepository $fileRepository, ?ModrinthProjectType $type = null): void
+    {
+        $type ??= ModrinthProjectType::fromServer($server);
+        $folder = $this->resolveMetadataFolder($server, $fileRepository, $type);
+
+        try {
+            $fileRepository->setServer($server)->deleteFiles($folder, [
+                '.pelican-mod-manager.json',
+                '.modrinth-metadata.json',
+            ]);
+        } catch (Exception $exception) {
+            report($exception);
+        }
+
+        CacheVersion::bumpHydration($server);
+        cache()->forget($this->getHashScanCacheKey($server, $type));
+    }
+
+    /**
+     * Clears this server's installed-mods metadata and caches (see
+     * clearInstalledModsMetadata()) and immediately re-scans, so the
+     * Installed tab reflects a clean, freshly re-matched state right away -
+     * rather than requiring a manual "Update all mods"/rescan click to
+     * notice the metadata is gone, which is what happened before this
+     * existed.
+     *
+     * @return array<string> Filenames with no match after the fresh scan.
+     *
+     * @throws Exception
+     */
+    public function resetInstalledMods(Server $server, DaemonFileRepository $fileRepository, ?ModrinthProjectType $type = null): array
+    {
+        $type ??= ModrinthProjectType::fromServer($server);
+
+        $this->clearInstalledModsMetadata($server, $fileRepository, $type);
+
+        return $this->scanAndImportMods($server, $fileRepository, $type);
+    }
+
     public function getProjectFolder(Server $server, DaemonFileRepository $fileRepository, ?ModrinthProjectType $type = null): string
     {
         $resolvedType = $type ?? ModrinthProjectType::fromServer($server);

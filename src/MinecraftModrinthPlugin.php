@@ -3,9 +3,14 @@
 namespace Boy132\MinecraftModrinth;
 
 use App\Contracts\Plugins\HasPluginSettings;
+use App\Models\Server;
+use App\Repositories\Daemon\DaemonFileRepository;
 use App\Traits\EnvironmentWriterTrait;
 use BladeUI\Icons\Factory as BladeIconsFactory;
+use Boy132\MinecraftModrinth\Enums\ModrinthProjectType;
+use Boy132\MinecraftModrinth\Services\MinecraftModrinthService;
 use Boy132\MinecraftModrinth\Support\CacheVersion;
+use Exception;
 use Filament\Actions\Action;
 use Filament\Contracts\Plugin;
 use Filament\Forms\Components\TextInput;
@@ -113,6 +118,30 @@ class MinecraftModrinthPlugin implements HasPluginSettings, Plugin
                     ->action(function () {
                         $serverCount = CacheVersion::bumpAllHydration();
                         CacheVersion::bumpHangarHash();
+
+                        $service = app(MinecraftModrinthService::class);
+                        /** @var DaemonFileRepository $fileRepository */
+                        $fileRepository = app(DaemonFileRepository::class);
+
+                        // Metadata deletion needs each server's egg loaded (to
+                        // resolve its project type), unlike the cheap id-only
+                        // query bumpAllHydration() above does - a second query
+                        // here is fine given how infrequently this action runs.
+                        foreach (Server::query()->with('egg')->get() as $server) {
+                            try {
+                                $type = ModrinthProjectType::fromServer($server);
+
+                                if ($type) {
+                                    $service->clearInstalledModsMetadata($server, $fileRepository, $type);
+                                }
+
+                                if (ModrinthProjectType::supportsDatapacks($server)) {
+                                    $service->clearInstalledModsMetadata($server, $fileRepository, ModrinthProjectType::Datapack);
+                                }
+                            } catch (Exception $exception) {
+                                report($exception);
+                            }
+                        }
 
                         Notification::make()
                             ->title(trans('pelican-minecraft-modrinth::strings.settings.cache_cleared', ['count' => $serverCount]))

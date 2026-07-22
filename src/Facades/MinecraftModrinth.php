@@ -16,6 +16,8 @@ use Illuminate\Support\Facades\Facade;
  * @method static string getHashScanCacheKey(Server $server, ?ModrinthProjectType $type = null)
  * @method static string getProjectFolder(Server $server, \App\Repositories\Daemon\DaemonFileRepository $fileRepository, ?ModrinthProjectType $type = null)
  * @method static string getDatapackWorldName(Server $server, \App\Repositories\Daemon\DaemonFileRepository $fileRepository)
+ * @method static void clearInstalledModsMetadata(Server $server, \App\Repositories\Daemon\DaemonFileRepository $fileRepository, ?ModrinthProjectType $type = null)
+ * @method static array<string> resetInstalledMods(Server $server, \App\Repositories\Daemon\DaemonFileRepository $fileRepository, ?ModrinthProjectType $type = null)
  *
  * @see MinecraftModrinthService
  */

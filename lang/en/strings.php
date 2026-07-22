@@ -16,9 +16,9 @@ return [
         'github_token_helper' => 'Optional. Not required to use GitHub Releases as a source, but raises the API rate limit. Generate a fine-grained personal access token with no extra permissions at github.com/settings/tokens.',
         'settings_saved' => 'Settings saved',
         'clear_cache' => 'Clear cache',
-        'clear_cache_helper' => 'Clears the cached installed-mod display data and Hangar hash-match results for every server, so the next load re-fetches from each source instead of using saved data. Does not touch installed mods themselves.',
-        'clear_cache_confirmation_heading' => 'Clear cache?',
-        'clear_cache_confirmation_description' => 'This forces every server\'s Installed tab to re-fetch display data from Modrinth/CurseForge/Hangar/GitHub on next load. It does not uninstall or change any mods.',
+        'clear_cache_helper' => 'Clears the cached installed-mod display data and Hangar hash-match results for every server, and resets every server\'s scan tracking file (so already-tracked mods are re-evaluated against all sources, not just newly found ones - useful after enabling a new source like CurseForge). Re-scanning happens automatically the next time each server\'s Installed tab is loaded. Does not uninstall or change any mod files.',
+        'clear_cache_confirmation_heading' => 'Clear cache and scan data for every server?',
+        'clear_cache_confirmation_description' => 'This forces every server\'s Installed tab to re-fetch display data on next load, and deletes every server\'s scan tracking file so already-tracked mods are re-matched against all sources too. Re-scanning happens automatically on next visit, not immediately. It does not uninstall or change any mod files. To do this for just one server, use "Reset scan data" on that server\'s Mod/Plugin page instead.',
         'cache_cleared' => 'Cache cleared for :count server(s)',
     ],
 
@@ -70,6 +70,8 @@ return [
         'uninstall' => 'Uninstall',
         'versions' => 'Version Selection',
         'track_github_repo' => 'Track GitHub Repository',
+        'reset_metadata' => 'Reset scan data',
+        'reset_metadata_tooltip' => 'Deletes this server\'s installed-mods tracking file and re-scans from scratch',
     ],
 
     'badges' => [
@@ -81,6 +83,8 @@ return [
         'update_description' => 'This will replace version :old_version with version :new_version. The old file will be deleted.',
         'uninstall_heading' => 'Uninstall Mod/Plugin',
         'uninstall_description' => 'Are you sure you want to uninstall :name? This will permanently delete the file from your server.',
+        'reset_metadata_heading' => 'Reset scan data for this server?',
+        'reset_metadata_description' => 'This deletes the file that tracks which installed mods/plugins have already been matched to a source, then immediately re-scans from scratch. Useful if a mod was matched to the wrong source (e.g. before it was available on a newly added source) and needs to be re-evaluated. It does not uninstall or change any actual mod files.',
     ],
 
     'notifications' => [
@@ -104,5 +108,6 @@ return [
         'bulk_update_success' => ':count item(s) updated.',
         'bulk_update_partial' => ':updated updated, :failed failed.',
         'bulk_update_none' => 'All items are already up to date.',
+        'reset_metadata_failed' => 'Reset failed. Please try again.',
     ],
 ];
