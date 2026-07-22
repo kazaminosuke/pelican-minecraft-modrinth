@@ -51,8 +51,12 @@ class MinecraftModrinthPlugin implements HasPluginSettings, Plugin
                 // dynamically instead, in pixels (or left uncapped when the
                 // content already fits), by MinecraftModrinthProjectPage's
                 // queueTableHeightRecalculation(), which measures actual layout
-                // overflow after each render. min-height is a floor for the
-                // moment before that script runs.
+                // overflow after each render. min-height here is only a floor
+                // for the moment before that script has run for the first time
+                // (avoids a flash of a collapsed table pre-measurement) - that
+                // script overrides it with an inline min-height: 0 on every
+                // run after, so a genuinely short result set isn't padded out
+                // to this floor.
                 .'.mmr-table-scroll-ctn .fi-ta-content-ctn{min-height:15rem;overflow-y:auto;}'
                 // Keeps the column header row (Title/Author/Downloads/Modified)
                 // pinned to the top of that scrolling area as rows scroll past

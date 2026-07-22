@@ -211,6 +211,16 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                         // space under the short table.
                         ctn.style.maxHeight = 'none';
 
+                        // The injected stylesheet also sets min-height: 15rem as a
+                        // floor for the brief moment before this script has run
+                        // for the first time (so the table doesn't flash collapsed
+                        // to 0 height pre-measurement). That's a class-level rule,
+                        // so once real measurement is happening, it must be beaten
+                        // with a same-element inline style - otherwise a genuinely
+                        // short result set (e.g. one row, ~80px tall) still gets
+                        // padded out to 240px by that CSS floor underneath it.
+                        ctn.style.minHeight = '0';
+
                         const documentBottom = Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);
                         const viewportBottom = window.scrollY + window.innerHeight;
                         const overflow = Math.max(documentBottom - viewportBottom, 0);
