@@ -110,6 +110,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
     public function mount(): void
     {
         $this->loadDefaultActiveTab();
+        $this->queueTableHeightRecalculation();
     }
 
     public function updatedActiveTab(?string $activeTab): void
@@ -121,6 +122,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
         // with far fewer results) - plus resets the column manager state. It was
         // being silently dropped by this method overriding it without calling it.
         $this->baseUpdatedActiveTab();
+        $this->queueTableHeightRecalculation();
 
         if ($activeTab !== 'installed') {
             return;
@@ -150,7 +152,39 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
         Notification::make()
             ->title(trans($scanInProgressKey))
             ->info()
+
             ->send();
+    }
+    /**
+     * Resize the table after Livewire has finished morphing its contents.
+     *
+     * The table wrapper remains the same DOM element when only the active tab
+     * changes, while Filament replaces the table contents below it. Alpine's
+     * x-init consequently does not run again, so this needs to be a Livewire
+     * post-update effect instead.
+     */
+    protected function queueTableHeightRecalculation(): void
+    {
+        $this->js(<<<'JS'
+            (() => {
+                const resizeTables = () => {
+                    document.querySelectorAll('.mmr-table-scroll-ctn .fi-ta-content-ctn').forEach((ctn) => {
+                        const available = window.innerHeight - ctn.getBoundingClientRect().top - 24;
+                        ctn.style.maxHeight = Math.max(available, 240) + 'px';
+                    });
+                };
+
+                if (!window.mmrResizeTables) {
+                    window.mmrResizeTables = resizeTables;
+                    window.addEventListener('resize', window.mmrResizeTables);
+                }
+
+                requestAnimationFrame(() => {
+                    window.mmrResizeTables();
+                    requestAnimationFrame(window.mmrResizeTables);
+                });
+            })()
+            JS);
     }
 
     protected function hasScanCandidates(Server $server, DaemonFileRepository $fileRepository): bool
@@ -1406,35 +1440,16 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     EmbeddedTable::make(),
                 ])->extraAttributes([
                     'class' => 'mmr-table-scroll-ctn',
-                    'x-data' => '{}',
                     // A CSS calc() estimate of "space above the table" is inherently
                     // fragile (topbar/sidebar height, and this page's own header
                     // wrapping, all vary), and getting it wrong causes the page
                     // itself to scroll in addition to the table - measure the
                     // actual remaining viewport space instead, so the table always
-                    // fits exactly regardless of layout specifics. Re-measures on
-                    // window resize. $cleanup is not available in x-init's
-                    // evaluation context (it errors as undefined there - it's
-                    // meant for custom directive teardown), so the listener
-                    // instead unsubscribes itself once it notices $el is no
-                    // longer in the document (e.g. after Livewire morphs this
-                    // element away), rather than leaking indefinitely.
-                    'x-init' => <<<'JS'
-                        let mmrResize = () => {
-                            if (!$el.isConnected) {
-                                window.removeEventListener('resize', mmrResize);
-                                return;
-                            }
-                            let ctn = $el.querySelector('.fi-ta-content-ctn');
-                            if (!ctn) return;
-                            let top = ctn.getBoundingClientRect().top;
-                            let available = window.innerHeight - top - 24;
-                            ctn.style.maxHeight = Math.max(available, 240) + 'px';
-                        };
-                        mmrResize();
-                        setTimeout(mmrResize, 250);
-                        window.addEventListener('resize', mmrResize);
-                        JS,
+                    // fits exactly regardless of layout specifics. The Livewire
+                    // component queues the calculation after the initial render
+                    // and each active-tab update; Alpine x-init would only run on
+                    // first mount because Livewire retains this wrapper while
+                    // morphing the table contents beneath it.
                 ]),
             ]);
     }
