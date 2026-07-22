@@ -169,6 +169,42 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
         $this->js(<<<'JS'
             (() => {
                 const resizeTables = () => {
+                    document.querySelectorAll('.mmr-table-scroll-ctn .fi-pagination-items').forEach((items) => {
+                        const paginationItems = Array.from(items.children);
+
+                        if (paginationItems.some((item) => item.matches('.fi-pagination-item[rel="prev"], .mmr-pagination-previous-placeholder'))) {
+                            return;
+                        }
+
+                        const next = paginationItems.find((item) => item.matches('.fi-pagination-item[rel="next"]'));
+                        const first = paginationItems.find((item) => item.matches('.fi-pagination-item'));
+
+                        if (!next || !first) {
+                            return;
+                        }
+
+                        const placeholder = next.cloneNode(true);
+                        placeholder.classList.add('mmr-pagination-previous-placeholder');
+                        placeholder.removeAttribute('rel');
+                        placeholder.removeAttribute('wire:key');
+                        placeholder.removeAttribute('wire:click');
+                        placeholder.setAttribute('aria-hidden', 'true');
+                        placeholder.style.visibility = 'hidden';
+                        placeholder.querySelectorAll('*').forEach((element) => {
+                            element.getAttributeNames()
+                                .filter((name) => name.startsWith('wire:'))
+                                .forEach((name) => element.removeAttribute(name));
+                        });
+
+                        const button = placeholder.querySelector('button');
+                        if (button) {
+                            button.disabled = true;
+                            button.tabIndex = -1;
+                        }
+
+                        items.insertBefore(placeholder, first);
+                    });
+
                     document.querySelectorAll('.mmr-table-scroll-ctn .fi-ta-content-ctn').forEach((ctn) => {
                         const documentBottom = Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);
                         const viewportBottom = window.scrollY + window.innerHeight;

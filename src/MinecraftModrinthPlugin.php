@@ -58,12 +58,6 @@ class MinecraftModrinthPlugin implements HasPluginSettings, Plugin
                 // underneath it; its own background (set by Filament) keeps rows
                 // from showing through.
                 .'.mmr-table-scroll-ctn .fi-ta-table>thead{position:sticky;top:0;z-index:1;}'
-                // Filament omits the previous-page item altogether while the
-                // paginator is on its first page. Reserve that item's space on
-                // the list itself, rather than with a generated flex child: page
-                // number 1 must remain the first real <li> so Filament's border
-                // and rounded-corner rules keep its normal dimensions.
-                .'.mmr-table-scroll-ctn .fi-pagination-items:not(:has(> .fi-pagination-item[rel="prev"])){padding-inline-start:2.25rem;}'
                 .'</style>'
             ),
         );
