@@ -123,7 +123,6 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
         // being silently dropped by this method overriding it without calling it.
         $this->baseUpdatedActiveTab();
         $this->queueTableHeightRecalculation();
-        $this->queueHeaderScroll();
 
         if ($activeTab !== 'installed') {
             return;
@@ -188,26 +187,6 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
             JS);
     }
 
-    /**
-     * Scroll a tab change to Filament's page title, rather than its table.
-     */
-    protected function queueHeaderScroll(): void
-    {
-        $this->js(<<<'JS'
-            requestAnimationFrame(() => requestAnimationFrame(() => {
-                // The standard Filament page header (which contains this page's
-                // title) is rendered before the schema slot. Keep the schema
-                // header as a fallback for panels with a customized page view.
-                const header = document.querySelector('.fi-page .fi-header') ?? document.querySelector('.mmr-page-header');
-                if (!header) return;
-
-                const topbarHeight = document.querySelector('.fi-topbar')?.getBoundingClientRect().height ?? 0;
-                const top = window.scrollY + header.getBoundingClientRect().top - topbarHeight - 16;
-
-                window.scrollTo({ top: Math.max(top, 0), behavior: 'smooth' });
-            }))
-            JS);
-    }
 
     protected function hasScanCandidates(Server $server, DaemonFileRepository $fileRepository): bool
     {
@@ -1404,7 +1383,6 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
         return $schema
             ->components([
                 Grid::make($type === ModrinthProjectType::Datapack ? 4 : 3)
-                    ->extraAttributes(['class' => 'mmr-page-header'])
                     ->schema([
                         TextEntry::make('Minecraft Version')
                             ->state(fn () => MinecraftModrinth::getMinecraftVersion($server) ?? trans('pelican-minecraft-modrinth::strings.page.unknown'))
