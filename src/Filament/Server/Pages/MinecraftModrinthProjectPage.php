@@ -1413,10 +1413,18 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     // itself to scroll in addition to the table - measure the
                     // actual remaining viewport space instead, so the table always
                     // fits exactly regardless of layout specifics. Re-measures on
-                    // window resize; $cleanup removes the listener when Livewire
-                    // replaces this element.
+                    // window resize. $cleanup is not available in x-init's
+                    // evaluation context (it errors as undefined there - it's
+                    // meant for custom directive teardown), so the listener
+                    // instead unsubscribes itself once it notices $el is no
+                    // longer in the document (e.g. after Livewire morphs this
+                    // element away), rather than leaking indefinitely.
                     'x-init' => <<<'JS'
                         let mmrResize = () => {
+                            if (!$el.isConnected) {
+                                window.removeEventListener('resize', mmrResize);
+                                return;
+                            }
                             let ctn = $el.querySelector('.fi-ta-content-ctn');
                             if (!ctn) return;
                             let top = ctn.getBoundingClientRect().top;
@@ -1426,7 +1434,6 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                         mmrResize();
                         setTimeout(mmrResize, 250);
                         window.addEventListener('resize', mmrResize);
-                        $cleanup(() => window.removeEventListener('resize', mmrResize));
                         JS,
                 ]),
             ]);
