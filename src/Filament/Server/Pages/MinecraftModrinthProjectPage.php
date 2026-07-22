@@ -172,26 +172,32 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     document.querySelectorAll('.mmr-table-scroll-ctn .fi-pagination-items').forEach((items) => {
                         const paginationItems = Array.from(items.children);
 
-                        if (paginationItems.some((item) => item.matches('.fi-pagination-item[rel="prev"], .mmr-pagination-previous-spacer'))) {
+                        if (
+                            items.parentElement?.classList.contains('mmr-pagination-items-ctn')
+                            || paginationItems.some((item) => item.matches('.fi-pagination-item[rel="prev"]'))
+                        ) {
                             return;
                         }
 
                         const next = paginationItems.find((item) => item.matches('.fi-pagination-item[rel="next"]'));
-                        const first = paginationItems.find((item) => item.matches('.fi-pagination-item'));
+                        const parent = items.parentElement;
 
-                        if (!next || !first) {
+                        if (!next || !parent) {
                             return;
                         }
 
-                        const spacer = document.createElement('li');
+                        const container = document.createElement('div');
+                        const spacer = document.createElement('div');
                         const width = next.getBoundingClientRect().width;
 
+                        container.className = 'mmr-pagination-items-ctn';
+                        container.style.cssText = 'grid-column:3;justify-self:end;display:flex;align-items:center;';
                         spacer.className = 'mmr-pagination-previous-spacer';
                         spacer.setAttribute('aria-hidden', 'true');
-                        spacer.style.cssText = `flex:0 0 ${width}px;width:${width}px;visibility:hidden;list-style:none;`;
-                        first.style.borderInlineStartWidth = '0';
+                        spacer.style.cssText = `flex:0 0 ${width}px;width:${width}px;visibility:hidden;`;
 
-                        items.insertBefore(spacer, first);
+                        parent.insertBefore(container, items);
+                        container.append(spacer, items);
                     });
 
                     document.querySelectorAll('.mmr-table-scroll-ctn .fi-ta-content-ctn').forEach((ctn) => {
