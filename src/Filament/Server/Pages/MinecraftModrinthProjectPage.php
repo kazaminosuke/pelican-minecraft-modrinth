@@ -123,6 +123,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
         // being silently dropped by this method overriding it without calling it.
         $this->baseUpdatedActiveTab();
         $this->queueTableHeightRecalculation();
+        $this->queueHeaderScroll();
 
         if ($activeTab !== 'installed') {
             return;
@@ -184,6 +185,45 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     requestAnimationFrame(window.mmrResizeTables);
                 });
             })()
+            JS);
+    }
+
+
+    public function updatedPaginators($page, $pageName): void
+    {
+        if ($pageName !== $this->getTablePaginationPageName()) {
+            return;
+        }
+
+        $this->queueTableHeightRecalculation();
+        $this->queueHeaderScroll();
+    }
+    /**
+     * Scroll a table page change to Filament's page title after layout settles.
+     */
+    protected function queueHeaderScroll(): void
+    {
+        $this->js(<<<'JS'
+            if (window.mmrHeaderScrollFrame) {
+                cancelAnimationFrame(window.mmrHeaderScrollFrame);
+            }
+
+            window.mmrHeaderScrollFrame = requestAnimationFrame(() => {
+                window.mmrHeaderScrollFrame = requestAnimationFrame(() => {
+                    window.mmrHeaderScrollFrame = null;
+
+                    // The standard Filament page header (which contains this page's
+                    // title) is rendered before the schema slot. Keep the schema
+                    // header as a fallback for panels with a customized page view.
+                    const header = document.querySelector('.fi-page .fi-header') ?? document.querySelector('.mmr-page-header');
+                    if (!header) return;
+
+                    const topbarHeight = document.querySelector('.fi-topbar')?.getBoundingClientRect().height ?? 0;
+                    const top = window.scrollY + header.getBoundingClientRect().top - topbarHeight - 16;
+
+                    window.scrollTo({ top: Math.max(top, 0), behavior: 'smooth' });
+                });
+            });
             JS);
     }
 
@@ -722,7 +762,6 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                 return new LengthAwarePaginator($hits, $response['total_hits'], 20, $page);
             })
             ->paginated([20])
-            ->scrollToTopOnPageChange()
             ->emptyStateHeading(function () {
                 $currentSource = $this->getCurrentSource();
 
@@ -1383,6 +1422,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
         return $schema
             ->components([
                 Grid::make($type === ModrinthProjectType::Datapack ? 4 : 3)
+                    ->extraAttributes(['class' => 'mmr-page-header'])
                     ->schema([
                         TextEntry::make('Minecraft Version')
                             ->state(fn () => MinecraftModrinth::getMinecraftVersion($server) ?? trans('pelican-minecraft-modrinth::strings.page.unknown'))
