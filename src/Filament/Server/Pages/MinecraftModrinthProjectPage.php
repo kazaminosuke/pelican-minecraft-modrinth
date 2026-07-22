@@ -189,13 +189,16 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
     }
 
     /**
-     * Scroll a tab change to the page header, rather than Filament's table.
+     * Scroll a tab change to Filament's page title, rather than its table.
      */
     protected function queueHeaderScroll(): void
     {
         $this->js(<<<'JS'
             requestAnimationFrame(() => requestAnimationFrame(() => {
-                const header = document.querySelector('.mmr-page-header');
+                // The standard Filament page header (which contains this page's
+                // title) is rendered before the schema slot. Keep the schema
+                // header as a fallback for panels with a customized page view.
+                const header = document.querySelector('.fi-page > .fi-header') ?? document.querySelector('.mmr-page-header');
                 if (!header) return;
 
                 const topbarHeight = document.querySelector('.fi-topbar')?.getBoundingClientRect().height ?? 0;
