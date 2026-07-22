@@ -170,13 +170,13 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
             (() => {
                 const resizeTables = () => {
                     document.querySelectorAll('.mmr-table-scroll-ctn .fi-ta-content-ctn').forEach((ctn) => {
-                        const table = ctn.closest('.fi-ta');
-                        const pagination = table?.querySelector('.fi-ta-pagination, .fi-pagination');
-                        const paginationStyle = pagination ? window.getComputedStyle(pagination) : null;
-                        const paginationHeight = pagination
-                            ? pagination.getBoundingClientRect().height + (Number.parseFloat(paginationStyle.marginTop) || 0) + (Number.parseFloat(paginationStyle.marginBottom) || 0)
-                            : 0;
-                        const available = window.innerHeight - ctn.getBoundingClientRect().top - paginationHeight - 24;
+                        const documentBottom = Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);
+                        const viewportBottom = window.scrollY + window.innerHeight;
+                        const overflow = Math.max(documentBottom - viewportBottom, 0);
+
+                        if (overflow === 0) return;
+
+                        const available = ctn.getBoundingClientRect().height - overflow - 24;
                         ctn.style.maxHeight = Math.max(available, 240) + 'px';
                     });
                 };
