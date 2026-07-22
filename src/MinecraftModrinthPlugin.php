@@ -5,10 +5,13 @@ namespace Boy132\MinecraftModrinth;
 use App\Contracts\Plugins\HasPluginSettings;
 use App\Traits\EnvironmentWriterTrait;
 use BladeUI\Icons\Factory as BladeIconsFactory;
+use Boy132\MinecraftModrinth\Support\CacheVersion;
+use Filament\Actions\Action;
 use Filament\Contracts\Plugin;
 use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
 use Filament\Panel;
+use Filament\Schemas\Components\Actions;
 use Filament\View\PanelsRenderHook;
 use Illuminate\Support\HtmlString;
 
@@ -94,6 +97,29 @@ class MinecraftModrinthPlugin implements HasPluginSettings, Plugin
                 ->password()
                 ->revealable()
                 ->default(fn () => config('pelican-minecraft-modrinth.github_token')),
+            // A standalone action embedded in the settings form's schema
+            // (rather than a plugin-settings form field) - it runs
+            // independently of the "Save" submission that PluginResource
+            // wires up around this whole schema, so clicking it doesn't
+            // require or trigger a settings save.
+            Actions::make([
+                Action::make('clear_cache')
+                    ->label(trans('pelican-minecraft-modrinth::strings.settings.clear_cache'))
+                    ->color('danger')
+                    ->icon('tabler-trash')
+                    ->requiresConfirmation()
+                    ->modalHeading(trans('pelican-minecraft-modrinth::strings.settings.clear_cache_confirmation_heading'))
+                    ->modalDescription(trans('pelican-minecraft-modrinth::strings.settings.clear_cache_confirmation_description'))
+                    ->action(function () {
+                        $serverCount = CacheVersion::bumpAllHydration();
+                        CacheVersion::bumpHangarHash();
+
+                        Notification::make()
+                            ->title(trans('pelican-minecraft-modrinth::strings.settings.cache_cleared', ['count' => $serverCount]))
+                            ->success()
+                            ->send();
+                    }),
+            ])->belowContent(trans('pelican-minecraft-modrinth::strings.settings.clear_cache_helper')),
         ];
     }
 

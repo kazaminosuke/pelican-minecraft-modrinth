@@ -10,6 +10,7 @@ use Boy132\MinecraftModrinth\Enums\ProjectSourceKey;
 use Boy132\MinecraftModrinth\Sources\CurseForgeSource;
 use Boy132\MinecraftModrinth\Sources\HangarSource;
 use Boy132\MinecraftModrinth\Sources\ModrinthSource;
+use Boy132\MinecraftModrinth\Support\CacheVersion;
 use Boy132\MinecraftModrinth\Support\CurseForgeFingerprint;
 use Boy132\MinecraftModrinth\Support\MinecraftVersionResolver;
 use Exception;
@@ -565,7 +566,13 @@ class MinecraftModrinthService
                     json_encode($metadata, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)
                 );
 
-                return !$response->failed();
+                if ($response->failed()) {
+                    return false;
+                }
+
+                CacheVersion::bumpHydration($server);
+
+                return true;
             }) === true;
         } catch (Exception $exception) {
             report($exception);
@@ -587,7 +594,13 @@ class MinecraftModrinthService
                     json_encode(['installed_mods' => array_values($installedMods)], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)
                 );
 
-                return !$response->failed();
+                if ($response->failed()) {
+                    return false;
+                }
+
+                CacheVersion::bumpHydration($server);
+
+                return true;
             }) === true;
         } catch (Exception $exception) {
             report($exception);
@@ -615,7 +628,13 @@ class MinecraftModrinthService
                     json_encode($metadata, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)
                 );
 
-                return !$response->failed();
+                if ($response->failed()) {
+                    return false;
+                }
+
+                CacheVersion::bumpHydration($server);
+
+                return true;
             }) === true;
         } catch (Exception $exception) {
             report($exception);

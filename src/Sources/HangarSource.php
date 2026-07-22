@@ -7,6 +7,7 @@ use Boy132\MinecraftModrinth\Contracts\ProjectSourceInterface;
 use Boy132\MinecraftModrinth\Enums\MinecraftLoader;
 use Boy132\MinecraftModrinth\Enums\ModrinthProjectType;
 use Boy132\MinecraftModrinth\Enums\ProjectSourceKey;
+use Boy132\MinecraftModrinth\Support\CacheVersion;
 use Boy132\MinecraftModrinth\Support\MinecraftVersionResolver;
 use Exception;
 use Illuminate\Support\Facades\Http;
@@ -229,13 +230,16 @@ class HangarSource implements ProjectSourceInterface
      * part of Hangar hash matching, so a successful result is cached by hash
      * (see HASH_MATCH_CACHE_TTL) - the hash is the cache key, so if a file's
      * content ever changes its hash changes too and the old entry is simply
-     * never looked up again, with no explicit invalidation needed. Only
-     * successful matches are cached; a miss isn't, since a project could be
-     * published to Hangar after this file was last scanned.
+     * never looked up again, with no explicit invalidation needed on its own.
+     * The plugin settings "clear cache" action has no per-file granularity to
+     * target though, so CacheVersion::hangarHash() is also folded into the
+     * key - bumping it is the only way that action can invalidate this cache
+     * as a whole. Only successful matches are cached; a miss isn't, since a
+     * project could be published to Hangar after this file was last scanned.
      */
     protected function findVersionEntryByHash(string $projectId, string $hash): ?array
     {
-        $cacheKey = "hangar_hash_match:$hash";
+        $cacheKey = 'hangar_hash_match:v2:'.CacheVersion::hangarHash().":$hash";
         $cached = cache()->get($cacheKey);
 
         if (is_array($cached)) {

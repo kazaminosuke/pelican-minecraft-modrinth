@@ -94,16 +94,16 @@ class ProjectSourceRegistry
      * Hydrates installed-mod metadata entries (each tagged with a `source`,
      * per Phase 3) with live display data from each entry's actual source.
      * Entries are grouped by source and each source's lookup is batched
-     * (chunks of 100 project ids, each chunk cached 30 minutes) so a large
-     * modpack with mods from several sources doesn't issue one request per
-     * mod. An entry whose source has no live match (removed upstream, or an
-     * unimplemented/unrecognized source) falls back to an "unavailable"
-     * placeholder built from the stored metadata.
+     * (chunks of 100 project ids, each chunk cached for HYDRATE_CACHE_HOURS)
+     * so a large modpack with mods from several sources doesn't issue one
+     * request per mod. An entry whose source has no live match (removed
+     * upstream, or an unimplemented/unrecognized source) falls back to an
+     * "unavailable" placeholder built from the stored metadata.
      *
      * @param array<int, array<string, mixed>> $installedMods
      * @return array<int, array<string, mixed>>
      */
-    public function hydrateInstalled(array $installedMods): array
+    public function hydrateInstalled(array $installedMods, Server $server): array
     {
         $bySource = [];
         foreach ($installedMods as $mod) {
@@ -114,7 +114,7 @@ class ProjectSourceRegistry
 
         foreach ($bySource as $sourceKey => $mods) {
             $source = $this->getByValue($sourceKey);
-            $projectsMap = $source ? $this->fetchProjectsMap($source, $sourceKey, $mods) : [];
+            $projectsMap = $source ? $this->fetchProjectsMap($source, $sourceKey, $mods, $server) : [];
 
             foreach ($mods as $mod) {
                 $project = $projectsMap[$mod['project_id']] ?? null;
@@ -140,19 +140,33 @@ class ProjectSourceRegistry
     }
 
     /**
+     * Cached for a long time (see HYDRATE_CACHE_HOURS) since it's no longer
+     * only time-bounded: CacheVersion::hydration() bakes in a per-server
+     * generation stamp that MinecraftModrinthService bumps whenever that
+     * server's installed-mods metadata is written (install/update/scan
+     * import/uninstall), so a mutation is reflected immediately rather than
+     * waiting out the TTL, while an unmodified server's chunk cache survives
+     * far longer than the old 30-minute TTL that was re-fetching all ~500
+     * projects worth of chunks every half hour regardless of whether
+     * anything had actually changed.
+     */
+    protected const HYDRATE_CACHE_HOURS = 24;
+
+    /**
      * @param array<int, array<string, mixed>> $mods
      * @return array<string, mixed>
      */
-    protected function fetchProjectsMap(ProjectSourceInterface $source, string $sourceKey, array $mods): array
+    protected function fetchProjectsMap(ProjectSourceInterface $source, string $sourceKey, array $mods, Server $server): array
     {
         $projectIds = array_values(array_unique(array_column($mods, 'project_id')));
         $projectsMap = [];
+        $generation = CacheVersion::hydration($server);
 
         foreach (array_chunk($projectIds, 100) as $chunk) {
             logger()->info('Hydrating installed projects chunk', ['source' => $sourceKey, 'count' => count($chunk), 'memory' => memory_get_usage(true)]);
-            $cacheKey = "{$sourceKey}_bulk_hydrate:v3:".md5(implode(',', $chunk));
+            $cacheKey = "{$sourceKey}_bulk_hydrate:v3:{$generation}:".md5(implode(',', $chunk));
 
-            $chunkMap = cache()->remember($cacheKey, now()->addMinutes(30), function () use ($source, $chunk) {
+            $chunkMap = cache()->remember($cacheKey, now()->addHours(self::HYDRATE_CACHE_HOURS), function () use ($source, $chunk) {
                 try {
                     return $source->getProjectsByIds($chunk);
                 } catch (Exception $exception) {

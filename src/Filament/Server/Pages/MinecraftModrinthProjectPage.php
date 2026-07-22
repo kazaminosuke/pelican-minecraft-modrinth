@@ -796,7 +796,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     }
 
                     $projects = !empty($installedMods)
-                        ? app(ProjectSourceRegistry::class)->hydrateInstalled($installedMods)
+                        ? app(ProjectSourceRegistry::class)->hydrateInstalled($installedMods, $server)
                         : [];
 
                     foreach ($unknownFiles as $filename) {

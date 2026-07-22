@@ -15,6 +15,11 @@ return [
         'github_token' => 'GitHub Token',
         'github_token_helper' => 'Optional. Not required to use GitHub Releases as a source, but raises the API rate limit. Generate a fine-grained personal access token with no extra permissions at github.com/settings/tokens.',
         'settings_saved' => 'Settings saved',
+        'clear_cache' => 'Clear cache',
+        'clear_cache_helper' => 'Clears the cached installed-mod display data and Hangar hash-match results for every server, so the next load re-fetches from each source instead of using saved data. Does not touch installed mods themselves.',
+        'clear_cache_confirmation_heading' => 'Clear cache?',
+        'clear_cache_confirmation_description' => 'This forces every server\'s Installed tab to re-fetch display data from Modrinth/CurseForge/Hangar/GitHub on next load. It does not uninstall or change any mods.',
+        'cache_cleared' => 'Cache cleared for :count server(s)',
     ],
 
     'page' => [
