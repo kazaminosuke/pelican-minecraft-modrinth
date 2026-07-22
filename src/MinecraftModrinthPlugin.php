@@ -48,10 +48,11 @@ class MinecraftModrinthPlugin implements HasPluginSettings, Plugin
                 // table proved too fragile (it left the page itself scrollable in
                 // addition to the table) since that space depends on the topbar,
                 // sidebar mode, and this page's own header wrapping - it's set
-                // dynamically instead, in pixels, by the x-init script on this
-                // element's wrapper (see MinecraftModrinthProjectPage::content()),
-                // which measures the actual remaining viewport space. min-height
-                // is a floor for the moment before that script runs.
+                // dynamically instead, in pixels (or left uncapped when the
+                // content already fits), by MinecraftModrinthProjectPage's
+                // queueTableHeightRecalculation(), which measures actual layout
+                // overflow after each render. min-height is a floor for the
+                // moment before that script runs.
                 .'.mmr-table-scroll-ctn .fi-ta-content-ctn{min-height:15rem;overflow-y:auto;}'
                 // Keeps the column header row (Title/Author/Downloads/Modified)
                 // pinned to the top of that scrolling area as rows scroll past

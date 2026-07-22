@@ -44,7 +44,9 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
     use HasTabs {
         HasTabs::updatedActiveTab as protected baseUpdatedActiveTab;
     }
-    use InteractsWithTable;
+    use InteractsWithTable {
+        InteractsWithTable::updatedTableSearch as protected baseUpdatedTableSearch;
+    }
 
     /** @var array<int, array{source: string, project_id: string, project_slug: string, project_title: string, version_id: string, version_number: string, filename: string, installed_at: string, author?: string}>|null */
     protected ?array $installedModsMetadata = null;
@@ -200,10 +202,23 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     });
 
                     document.querySelectorAll('.mmr-table-scroll-ctn .fi-ta-content-ctn').forEach((ctn) => {
+                        // Clear any cap from a previous (larger) result set before
+                        // measuring, so this always sees the table's true natural
+                        // size. Without this, a search narrowing the results down
+                        // would keep reusing the old, larger cap - overflow would
+                        // then also read back as 0 below and the function would
+                        // bail without ever shrinking it back down, leaving empty
+                        // space under the short table.
+                        ctn.style.maxHeight = 'none';
+
                         const documentBottom = Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);
                         const viewportBottom = window.scrollY + window.innerHeight;
                         const overflow = Math.max(documentBottom - viewportBottom, 0);
 
+                        // Content already fits the viewport at its natural height
+                        // (few rows) - leave it uncapped rather than imposing a
+                        // fixed max-height, so there's no leftover empty space and
+                        // no internal scrollbar for a table that doesn't need one.
                         if (overflow === 0) return;
 
                         const available = ctn.getBoundingClientRect().height - overflow - 24;
@@ -234,6 +249,21 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
         $this->queueTableHeightRecalculation();
         $this->queueHeaderScroll();
     }
+
+    public function updatedTableSearch(): void
+    {
+        // CanSearchRecords::updatedTableSearch() (aliased above, since it's
+        // pulled into InteractsWithTable from a nested trait) persists the
+        // search term to the session and resets the page - both silently
+        // dropped if this override doesn't call it. No queueHeaderScroll()
+        // here unlike the other two triggers: yanking the page's scroll
+        // position while the user is actively typing in the search box
+        // would be disruptive, whereas a row count change is the whole
+        // point of searching, so only the height needs recalculating.
+        $this->baseUpdatedTableSearch();
+        $this->queueTableHeightRecalculation();
+    }
+
     /**
      * Scroll a table page change to Filament's page title after layout settles.
      */
