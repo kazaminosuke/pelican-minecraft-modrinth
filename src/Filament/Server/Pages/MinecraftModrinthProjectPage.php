@@ -123,6 +123,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
         // being silently dropped by this method overriding it without calling it.
         $this->baseUpdatedActiveTab();
         $this->queueTableHeightRecalculation();
+        $this->queueHeaderScroll();
 
         if ($activeTab !== 'installed') {
             return;
@@ -184,6 +185,24 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     requestAnimationFrame(window.mmrResizeTables);
                 });
             })()
+            JS);
+    }
+
+    /**
+     * Scroll a tab change to the page header, rather than Filament's table.
+     */
+    protected function queueHeaderScroll(): void
+    {
+        $this->js(<<<'JS'
+            requestAnimationFrame(() => requestAnimationFrame(() => {
+                const header = document.querySelector('.mmr-page-header');
+                if (!header) return;
+
+                const topbarHeight = document.querySelector('.fi-topbar')?.getBoundingClientRect().height ?? 0;
+                const top = window.scrollY + header.getBoundingClientRect().top - topbarHeight - 16;
+
+                window.scrollTo({ top: Math.max(top, 0), behavior: 'smooth' });
+            }))
             JS);
     }
 
@@ -1382,6 +1401,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
         return $schema
             ->components([
                 Grid::make($type === ModrinthProjectType::Datapack ? 4 : 3)
+                    ->extraAttributes(['class' => 'mmr-page-header'])
                     ->schema([
                         TextEntry::make('Minecraft Version')
                             ->state(fn () => MinecraftModrinth::getMinecraftVersion($server) ?? trans('pelican-minecraft-modrinth::strings.page.unknown'))
