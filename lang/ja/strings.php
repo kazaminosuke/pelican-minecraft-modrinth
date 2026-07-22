@@ -30,7 +30,7 @@ return [
         'minecraft_version' => 'Minecraftバージョン',
         'loader' => 'ローダー',
         'world' => 'ワールド',
-        'installed' => 'インストール済み :type',
+        'installed' => 'インストール済み',
         'unknown' => '不明',
         'view_all' => 'すべて',
         'view_installed' => 'インストール済み',
