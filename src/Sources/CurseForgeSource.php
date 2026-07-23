@@ -24,6 +24,9 @@ class CurseForgeSource implements ProjectSourceInterface
     /** CurseForge classId for "Bukkit Plugins". */
     protected const CLASS_ID_PLUGIN = 5;
 
+    /** CurseForge's ModsSearchSortField enum value for sorting by total download count. */
+    protected const SORT_FIELD_TOTAL_DOWNLOADS = 6;
+
     public function getKey(): ProjectSourceKey
     {
         return ProjectSourceKey::CurseForge;
@@ -88,6 +91,16 @@ class CurseForgeSource implements ProjectSourceInterface
             'gameVersion' => MinecraftVersionResolver::resolve($server),
             'index' => ($page - 1) * 20,
             'pageSize' => 20,
+            // sortField/sortOrder are both optional and, left unset, CurseForge
+            // falls back to its own internal ordering (roughly "Featured"),
+            // which is unrelated to download count and reads as effectively
+            // random next to Modrinth's tab. 6 = TotalDownloads in
+            // CurseForge's ModsSearchSortField enum (1 Featured, 2 Popularity,
+            // 3 LastUpdated, 4 Name, 5 Author, 6 TotalDownloads, 7 Category,
+            // 8 GameVersion, 9 EarlyAccess, 10 FeaturedRelease, 11 ReleaseDate,
+            // 12 Rating), matching Modrinth's tab so both read the same way.
+            'sortField' => self::SORT_FIELD_TOTAL_DOWNLOADS,
+            'sortOrder' => 'desc',
         ];
 
         if ($classId === self::CLASS_ID_MOD) {
