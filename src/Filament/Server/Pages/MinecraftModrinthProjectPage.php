@@ -16,6 +16,7 @@ use Exception;
 use Filament\Actions\Action;
 use Filament\Facades\Filament;
 use Filament\Forms\Components\TextInput;
+use Filament\Forms\Components\Select;
 use Filament\Infolists\Components\TextEntry;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
@@ -59,6 +60,12 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
     /** @var array<string> */
     public array $unknownFiles = [];
+
+    public string $catalogSort = 'downloads';
+
+    public ?string $catalogCategory = null;
+
+    public ?string $catalogEnvironment = null;
 
     protected ?string $datapackWorldName = null;
 
@@ -827,7 +834,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     return new LengthAwarePaginator([], 0, 20, $page);
                 }
 
-                $response = $currentSource->search($server, $type, $page, $search);
+                $response = $currentSource->search($server, $type, $page, $search, ['sort' => $this->catalogSort, 'category' => $this->catalogCategory, 'environment' => $currentSource->getKey() === ProjectSourceKey::Modrinth ? $this->catalogEnvironment : null]);
 
                 $hits = array_map(function (array $hit) use ($currentSource) {
                     $hit['source'] = $currentSource->getKey()->value;
@@ -1361,6 +1368,21 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
             && in_array(ProjectSourceKey::GitHubReleases->value, $availableSourceKeys, true);
 
         return [
+            Action::make('catalog_filters')
+                ->label('Sort & Filter')
+                ->icon('tabler-adjustments')
+                ->visible(fn () => $this->activeTab !== 'installed' && in_array($this->getCurrentSource()?->getKey(), [ProjectSourceKey::Modrinth, ProjectSourceKey::CurseForge], true))
+                ->schema([
+                    Select::make('sort')->label('Sort')->options(['downloads' => 'Downloads', 'updated' => 'Recently updated', 'popularity' => 'Popularity'])->default(fn () => $this->catalogSort),
+                    Select::make('category')->label('Category')->options(fn () => match ($this->getCurrentSource()?->getKey()) { ProjectSourceKey::Modrinth => ['adventure' => 'Adventure', 'cursed' => 'Cursed', 'decoration' => 'Decoration', 'economy' => 'Economy', 'equipment' => 'Equipment', 'food' => 'Food', 'magic' => 'Magic', 'optimization' => 'Optimization', 'social' => 'Social', 'technology' => 'Technology', 'utility' => 'Utility', 'worldgen' => 'World Generation'], ProjectSourceKey::CurseForge => ['406' => 'Technology', '407' => 'Storage', '408' => 'Cosmetic', '409' => 'Ores and Resources', '410' => 'Armor, Tools, and Weapons', '412' => 'Miscellaneous', '413' => 'Server Utility', '414' => 'Food', '415' => 'Energy', '416' => 'Farming', '417' => 'Transport', '419' => 'Magic'], default => [] })->searchable()->default(fn () => $this->catalogCategory),
+                    Select::make('environment')->label('Environment')->options(['server' => 'Server required/optional', 'client' => 'Client only'])->visible(fn () => $this->getCurrentSource()?->getKey() === ProjectSourceKey::Modrinth)->default(fn () => $this->catalogEnvironment),
+                ])
+                ->action(function (array $data): void {
+                    $this->catalogSort = $data['sort'] ?? 'downloads';
+                    $this->catalogCategory = $data['category'] ?: null;
+                    $this->catalogEnvironment = $data['environment'] ?? null;
+                    $this->resetPage();
+                }),
             Action::make('open_folder')
                 ->label(fn () => trans('pelican-minecraft-modrinth::strings.page.open_folder', ['folder' => $folder]))
                 ->tooltip(fn () => trans('pelican-minecraft-modrinth::strings.page.open_folder', ['folder' => $folder]))

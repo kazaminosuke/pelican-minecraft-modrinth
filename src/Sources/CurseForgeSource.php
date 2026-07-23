@@ -73,7 +73,7 @@ class CurseForgeSource implements ProjectSourceInterface
     }
 
     /** @return array{hits: array<int, array<string, mixed>>, total_hits: int} */
-    public function search(Server $server, ModrinthProjectType $type, int $page = 1, ?string $search = null): array
+    public function search(Server $server, ModrinthProjectType $type, int $page = 1, ?string $search = null, array $filters = []): array
     {
         if (!$this->isConfigured()) {
             return ['hits' => [], 'total_hits' => 0];
@@ -99,7 +99,7 @@ class CurseForgeSource implements ProjectSourceInterface
             // 3 LastUpdated, 4 Name, 5 Author, 6 TotalDownloads, 7 Category,
             // 8 GameVersion, 9 EarlyAccess, 10 FeaturedRelease, 11 ReleaseDate,
             // 12 Rating), matching Modrinth's tab so both read the same way.
-            'sortField' => self::SORT_FIELD_TOTAL_DOWNLOADS,
+            'sortField' => match ($filters['sort'] ?? 'downloads') { 'updated' => 3, 'popularity' => 2, default => self::SORT_FIELD_TOTAL_DOWNLOADS },
             'sortOrder' => 'desc',
         ];
 
@@ -112,6 +112,8 @@ class CurseForgeSource implements ProjectSourceInterface
 
             $params['modLoaderType'] = $modLoaderType;
         }
+
+        if (!empty($filters['category'])) { $params['categoryId'] = (int) $filters['category']; }
 
         if ($search) {
             $params['searchFilter'] = $search;

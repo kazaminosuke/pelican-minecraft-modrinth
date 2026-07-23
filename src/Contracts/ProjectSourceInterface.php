@@ -47,7 +47,7 @@ interface ProjectSourceInterface
     public function supportsDirectIdentifier(): bool;
 
     /** @return array{hits: array<int, array<string, mixed>>, total_hits: int} */
-    public function search(Server $server, ModrinthProjectType $type, int $page, ?string $search = null): array;
+    public function search(Server $server, ModrinthProjectType $type, int $page, ?string $search = null, array $filters = []): array;
 
     /** @return array<string, mixed>|null normalized project data */
     public function getProject(string $projectId): ?array;

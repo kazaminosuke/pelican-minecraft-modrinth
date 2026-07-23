@@ -60,7 +60,7 @@ class ModrinthSource implements ProjectSourceInterface
     }
 
     /** @return array{hits: array<int, array<string, mixed>>, total_hits: int} */
-    public function search(Server $server, ModrinthProjectType $type, int $page = 1, ?string $search = null): array
+    public function search(Server $server, ModrinthProjectType $type, int $page = 1, ?string $search = null, array $filters = []): array
     {
         $minecraftLoader = $type->getModrinthLoader($server);
         $projectType = $type->value;
@@ -79,13 +79,18 @@ class ModrinthSource implements ProjectSourceInterface
             $facets = "[[\"categories:$minecraftLoader\"],[\"versions:$minecraftVersion\"],[\"project_type:{$projectType}\"]]";
         }
 
+        $facetGroups = json_decode($facets, true);
+        if (!empty($filters['category'])) { $facetGroups[] = ['categories:'.$filters['category']]; }
+        if (!empty($filters['environment'])) { $facetGroups[] = $filters['environment'] === 'server' ? ['server_side:required', 'server_side:optional'] : ['server_side:unsupported']; }
+
         $data = [
             'offset' => ($page - 1) * 20,
             'limit' => 20,
-            'facets' => $facets,
+            'facets' => json_encode($facetGroups),
+            'index' => match ($filters['sort'] ?? 'downloads') { 'updated' => 'updated', 'popularity' => 'relevance', default => 'downloads' },
         ];
 
-        $key = "modrinth_projects:{$projectType}:$minecraftVersion:" . ($minecraftLoader ?? 'datapack') . ":$page";
+        $key = "modrinth_projects:{$projectType}:$minecraftVersion:" . ($minecraftLoader ?? 'datapack') . ":$page:".md5(json_encode($filters));
 
         if ($search) {
             $data['query'] = $search;

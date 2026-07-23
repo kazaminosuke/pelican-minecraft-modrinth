@@ -80,7 +80,7 @@ class HangarSource implements ProjectSourceInterface
     }
 
     /** @return array{hits: array<int, array<string, mixed>>, total_hits: int} */
-    public function search(Server $server, ModrinthProjectType $type, int $page = 1, ?string $search = null): array
+    public function search(Server $server, ModrinthProjectType $type, int $page = 1, ?string $search = null, array $filters = []): array
     {
         if ($type !== ModrinthProjectType::Plugin) {
             return ['hits' => [], 'total_hits' => 0];

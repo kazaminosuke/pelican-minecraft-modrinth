@@ -72,7 +72,7 @@ class GitHubReleasesSource implements ProjectSourceInterface
     }
 
     /** @return array{hits: array<int, array<string, mixed>>, total_hits: int} */
-    public function search(Server $server, ModrinthProjectType $type, int $page = 1, ?string $search = null): array
+    public function search(Server $server, ModrinthProjectType $type, int $page = 1, ?string $search = null, array $filters = []): array
     {
         return ['hits' => [], 'total_hits' => 0];
     }
