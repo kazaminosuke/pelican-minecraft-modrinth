@@ -100,7 +100,7 @@ class CurseForgeSource implements ProjectSourceInterface
             // 8 GameVersion, 9 EarlyAccess, 10 FeaturedRelease, 11 ReleaseDate,
             // 12 Rating), matching Modrinth's tab so both read the same way.
             'sortField' => match ($filters['sort'] ?? 'downloads') { 'updated' => 3, 'popularity' => 2, default => self::SORT_FIELD_TOTAL_DOWNLOADS },
-            'sortOrder' => 'desc',
+            'sortOrder' => ($filters['direction'] ?? 'desc') === 'asc' ? 'asc' : 'desc',
         ];
 
         if ($classId === self::CLASS_ID_MOD) {
