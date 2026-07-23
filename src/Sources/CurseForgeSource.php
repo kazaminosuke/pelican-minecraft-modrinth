@@ -123,6 +123,14 @@ class CurseForgeSource implements ProjectSourceInterface
 
         $response = cache()->remember($cacheKey, now()->addMinutes(30), fn () => $this->getJson('/mods/search', $params));
 
+        if (($filters['sort'] ?? null) === 'updated') {
+            logger()->debug('CurseForge updated search response', [
+                'query' => $params,
+                'category' => $filters['category'] ?? null,
+                'first_dates' => collect($response['data'] ?? [])->take(10)->map(fn ($mod) => is_array($mod) ? ($mod['dateModified'] ?? null) : null)->all(),
+            ]);
+        }
+
         $hits = collect($response['data'] ?? [])
             ->filter(fn ($mod) => is_array($mod))
             ->map(fn (array $mod) => $this->normalizeProject($mod, $type))
