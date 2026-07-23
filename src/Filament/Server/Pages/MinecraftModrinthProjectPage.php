@@ -842,12 +842,6 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     return $hit;
                 }, $response['hits']);
 
-                // Both APIs are asked to order by their update timestamp. Sort the
-                // normalized response too, so the table cannot display a stale or
-                // source-specific order when an API response is cached or ranked.
-                if ($this->catalogSort === 'updated') {
-                    usort($hits, fn (array $left, array $right) => strtotime($right['date_modified'] ?? '') <=> strtotime($left['date_modified'] ?? ''));
-                }
 
                 return new LengthAwarePaginator($hits, $response['total_hits'], 20, $page);
             })
