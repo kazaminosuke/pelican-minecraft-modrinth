@@ -27,6 +27,7 @@ use Filament\Schemas\Components\Section;
 use Filament\Schemas\Components\Tabs\Tab;
 use Filament\Schemas\Schema;
 use Filament\Support\Enums\TextSize;
+use Filament\Support\Enums\Width;
 use Filament\Tables\Columns\ImageColumn;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\SelectFilter;
@@ -861,9 +862,21 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                 return new LengthAwarePaginator($hits, $response['total_hits'], 20, $page);
             })
             ->paginated([20])
+            // Default filters-dropdown width is Width::ExtraSmall (Filament's
+            // own default) - fine for the original 2 filters, but cramped once
+            // a 3rd (Sort) was added alongside Category's longer option labels
+            // (e.g. "Armor, Tools, and Weapons"), which may be why Environment
+            // was reported as no longer visible after that addition.
+            ->filtersFormWidth(Width::Medium)
             ->filters([
-                SelectFilter::make('catalog_category')->label('Category')->options(fn () => $this->getCatalogCategoryOptions()),
-                SelectFilter::make('catalog_environment')->label('Environment')->options(['server' => 'Server required/optional', 'client' => 'Client only'])->visible(fn () => $this->getCurrentSource()?->getKey() === ProjectSourceKey::Modrinth),
+                SelectFilter::make('catalog_category')->label(trans('pelican-minecraft-modrinth::strings.table.filters.category'))->options(fn () => $this->getCatalogCategoryOptions()),
+                SelectFilter::make('catalog_environment')
+                    ->label(trans('pelican-minecraft-modrinth::strings.table.filters.environment'))
+                    ->options([
+                        'server' => trans('pelican-minecraft-modrinth::strings.table.filters.environment_server'),
+                        'client' => trans('pelican-minecraft-modrinth::strings.table.filters.environment_client'),
+                    ])
+                    ->visible(fn () => $this->getCurrentSource()?->getKey() === ProjectSourceKey::Modrinth),
                 SelectFilter::make('catalog_sort')
                     ->label(trans('pelican-minecraft-modrinth::strings.table.sort.label'))
                     ->options([
@@ -872,7 +885,18 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                         'popularity' => trans('pelican-minecraft-modrinth::strings.table.sort.popularity'),
                     ])
                     ->default('downloads')
-                    ->visible(fn () => $this->activeTab !== 'installed'),
+                    ->visible(fn () => $this->activeTab !== 'installed')
+                    // Sorting isn't a filter conceptually (it never narrows
+                    // the result set), so it shouldn't appear in the "active
+                    // filters" indicator row above the table the way Category/
+                    // Environment do - Filament has no separate "table sort
+                    // selector" component this table's API-backed, non-Eloquent
+                    // ->records() closure could use instead (its own sort
+                    // mechanism is column-click based, which was already
+                    // replaced for being unusable), so this stays a
+                    // SelectFilter for the proven $this->tableFilters wiring,
+                    // just with its indicator suppressed.
+                    ->indicateUsing(fn (): array => []),
             ])
             ->emptyStateHeading(function () {
                 $currentSource = $this->getCurrentSource();

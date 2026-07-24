@@ -55,6 +55,12 @@ return [
             'updated' => '更新日順',
             'popularity' => '人気順',
         ],
+        'filters' => [
+            'category' => 'カテゴリ',
+            'environment' => '対応環境',
+            'environment_server' => 'サーバー必須/任意',
+            'environment_client' => 'クライアント専用',
+        ],
     ],
 
     'version' => [

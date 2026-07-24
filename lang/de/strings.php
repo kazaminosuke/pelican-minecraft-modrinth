@@ -55,6 +55,12 @@ return [
             'updated' => 'Kürzlich aktualisiert',
             'popularity' => 'Beliebtheit',
         ],
+        'filters' => [
+            'category' => 'Kategorie',
+            'environment' => 'Umgebung',
+            'environment_server' => 'Server erforderlich/optional',
+            'environment_client' => 'Nur Client',
+        ],
     ],
 
     'version' => [
