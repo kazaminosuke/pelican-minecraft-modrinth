@@ -24,8 +24,17 @@ class CurseForgeSource implements ProjectSourceInterface
     /** CurseForge classId for "Bukkit Plugins". */
     protected const CLASS_ID_PLUGIN = 5;
 
-    /** CurseForge's ModsSearchSortField enum value for sorting by total download count. */
+    /**
+     * CurseForge's ModsSearchSortField enum values used by the catalog sort
+     * dropdown (1 Featured, 2 Popularity, 3 LastUpdated, 4 Name, 5 Author,
+     * 6 TotalDownloads, 7 Category, 8 GameVersion, 9 EarlyAccess,
+     * 10 FeaturedRelease, 11 ReleaseDate, 12 Rating).
+     */
     protected const SORT_FIELD_TOTAL_DOWNLOADS = 6;
+
+    protected const SORT_FIELD_LAST_UPDATED = 3;
+
+    protected const SORT_FIELD_POPULARITY = 2;
 
     public function getKey(): ProjectSourceKey
     {
@@ -94,13 +103,16 @@ class CurseForgeSource implements ProjectSourceInterface
             // sortField/sortOrder are both optional and, left unset, CurseForge
             // falls back to its own internal ordering (roughly "Featured"),
             // which is unrelated to download count and reads as effectively
-            // random next to Modrinth's tab. 6 = TotalDownloads in
-            // CurseForge's ModsSearchSortField enum (1 Featured, 2 Popularity,
-            // 3 LastUpdated, 4 Name, 5 Author, 6 TotalDownloads, 7 Category,
-            // 8 GameVersion, 9 EarlyAccess, 10 FeaturedRelease, 11 ReleaseDate,
-            // 12 Rating), matching Modrinth's tab so both read the same way.
-            'sortField' => match ($filters['sort'] ?? 'downloads') { 'updated' => 3, 'popularity' => 2, default => self::SORT_FIELD_TOTAL_DOWNLOADS },
-            'sortOrder' => ($filters['direction'] ?? 'desc') === 'asc' ? 'asc' : 'desc',
+            // random. The catalog sort dropdown only offers three presets
+            // (downloads/updated/popularity), each with a fixed direction -
+            // there's no per-field ascending option, so sortOrder is always
+            // 'desc'.
+            'sortField' => match ($filters['sort'] ?? 'downloads') {
+                'updated' => self::SORT_FIELD_LAST_UPDATED,
+                'popularity' => self::SORT_FIELD_POPULARITY,
+                default => self::SORT_FIELD_TOTAL_DOWNLOADS,
+            },
+            'sortOrder' => 'desc',
         ];
 
         if ($classId === self::CLASS_ID_MOD) {
@@ -122,14 +134,6 @@ class CurseForgeSource implements ProjectSourceInterface
         $cacheKey = 'curseforge_search:'.md5(json_encode($params));
 
         $response = cache()->remember($cacheKey, now()->addMinutes(30), fn () => $this->getJson('/mods/search', $params));
-
-        if (($filters['sort'] ?? null) === 'updated') {
-            logger()->debug('CurseForge updated search response', [
-                'query' => $params,
-                'category' => $filters['category'] ?? null,
-                'first_dates' => collect($response['data'] ?? [])->take(10)->map(fn ($mod) => is_array($mod) ? ($mod['dateModified'] ?? null) : null)->all(),
-            ]);
-        }
 
         $hits = collect($response['data'] ?? [])
             ->filter(fn ($mod) => is_array($mod))

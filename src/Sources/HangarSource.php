@@ -97,6 +97,18 @@ class HangarSource implements ProjectSourceInterface
             'version' => MinecraftVersionResolver::resolve($server),
             'limit' => self::PAGE_SIZE,
             'offset' => ($page - 1) * self::PAGE_SIZE,
+            // Hangar's ProjectSortingStrategy enum (confirmed against its
+            // official OpenAPI spec): each value already bakes in a fixed
+            // direction (e.g. "downloads" is always most-downloaded-first),
+            // same as Modrinth's index and CurseForge's sortField - no
+            // separate ascending/descending option. "stars" is Hangar's own
+            // community-rating signal, the closest match to the catalog
+            // dropdown's "popularity" preset.
+            'sort' => match ($filters['sort'] ?? 'downloads') {
+                'updated' => 'updated',
+                'popularity' => 'stars',
+                default => 'downloads',
+            },
         ];
 
         if ($search) {

@@ -49,6 +49,12 @@ return [
             'downloads' => 'Downloads',
             'date_modified' => 'Geändert',
         ],
+        'sort' => [
+            'label' => 'Sortieren nach',
+            'downloads' => 'Downloads',
+            'updated' => 'Kürzlich aktualisiert',
+            'popularity' => 'Beliebtheit',
+        ],
     ],
 
     'version' => [

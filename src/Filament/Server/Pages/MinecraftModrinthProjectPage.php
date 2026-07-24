@@ -16,7 +16,6 @@ use Exception;
 use Filament\Actions\Action;
 use Filament\Facades\Filament;
 use Filament\Forms\Components\TextInput;
-use Filament\Forms\Components\Select;
 use Filament\Infolists\Components\TextEntry;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
@@ -61,12 +60,6 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
     /** @var array<string> */
     public array $unknownFiles = [];
-
-    public string $catalogSort = 'downloads';
-
-    public ?string $catalogCategory = null;
-
-    public ?string $catalogEnvironment = null;
 
     protected ?string $datapackWorldName = null;
 
@@ -266,18 +259,6 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
         $this->queueTableHeightRecalculation();
         $this->queueHeaderScroll();
-    }
-
-    public function updatedTableSortColumn(): void
-    {
-        $this->resetPage();
-        $this->queueTableHeightRecalculation();
-    }
-
-    public function updatedTableSortDirection(): void
-    {
-        $this->resetPage();
-        $this->queueTableHeightRecalculation();
     }
 
     public function updated(string $name): void
@@ -856,15 +837,20 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                 $filterState = $this->tableFilters ?? [];
                 $category = $filterState['catalog_category']['value'] ?? null;
                 $environment = $filterState['catalog_environment']['value'] ?? null;
-                $sortColumn = $this->tableSortColumn ?? 'downloads';
-                $sortDirection = $this->tableSortDirection ?? 'desc';
-                $apiSort = match ($sortColumn) {
-                    'date_modified' => 'updated',
-                    'downloads' => 'downloads',
-                    default => 'popularity',
-                };
+                // NOT $this->tableSortColumn/tableSortDirection - Filament v4's
+                // CanSortRecords trait doesn't have those properties at all (it
+                // stores sort as one combined "column:direction" string in
+                // $this->tableSort, exposed via getTableSortColumn()/
+                // getTableSortDirection()). Reading the non-existent properties
+                // silently evaluated to null on every request, so this always
+                // fell through to the 'downloads' default below regardless of
+                // what was actually selected - the sort control never did
+                // anything. Moot now that sorting is driven by the catalog_sort
+                // filter below instead of a sortable column click, but this is
+                // also why that never worked either.
+                $sortOption = $filterState['catalog_sort']['value'] ?? 'downloads';
 
-                $response = $currentSource->search($server, $type, $page, $search, ['sort' => $apiSort, 'direction' => $sortDirection, 'category' => $category, 'environment' => $currentSource->getKey() === ProjectSourceKey::Modrinth ? $environment : null]);
+                $response = $currentSource->search($server, $type, $page, $search, ['sort' => $sortOption, 'category' => $category, 'environment' => $currentSource->getKey() === ProjectSourceKey::Modrinth ? $environment : null]);
 
                 $hits = array_map(function (array $hit) use ($currentSource) {
                     $hit['source'] = $currentSource->getKey()->value;
@@ -872,18 +858,21 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     return $hit;
                 }, $response['hits']);
 
-
-                if (in_array($sortColumn, ['title', 'author'], true)) {
-                    usort($hits, fn (array $left, array $right) => ($sortDirection === 'asc' ? 1 : -1) * strcasecmp((string) ($left[$sortColumn] ?? ''), (string) ($right[$sortColumn] ?? '')));
-                }
-
                 return new LengthAwarePaginator($hits, $response['total_hits'], 20, $page);
             })
             ->paginated([20])
-            ->defaultSort('downloads', 'desc')
             ->filters([
                 SelectFilter::make('catalog_category')->label('Category')->options(fn () => $this->getCatalogCategoryOptions()),
                 SelectFilter::make('catalog_environment')->label('Environment')->options(['server' => 'Server required/optional', 'client' => 'Client only'])->visible(fn () => $this->getCurrentSource()?->getKey() === ProjectSourceKey::Modrinth),
+                SelectFilter::make('catalog_sort')
+                    ->label(trans('pelican-minecraft-modrinth::strings.table.sort.label'))
+                    ->options([
+                        'downloads' => trans('pelican-minecraft-modrinth::strings.table.sort.downloads'),
+                        'updated' => trans('pelican-minecraft-modrinth::strings.table.sort.updated'),
+                        'popularity' => trans('pelican-minecraft-modrinth::strings.table.sort.popularity'),
+                    ])
+                    ->default('downloads')
+                    ->visible(fn () => $this->activeTab !== 'installed'),
             ])
             ->emptyStateHeading(function () {
                 $currentSource = $this->getCurrentSource();
@@ -909,7 +898,6 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                 TextColumn::make('title')
                     ->label(trans('pelican-minecraft-modrinth::strings.table.columns.title'))
                     ->searchable()
-                    ->sortable()
                     ->wrap()
                     ->lineClamp(1)
                     ->description(function (array $record): ?string {
@@ -940,20 +928,17 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                 TextColumn::make('author')
                     ->label(trans('pelican-minecraft-modrinth::strings.table.columns.author'))
                     ->url(fn (array $record, $state) => (($record['source'] ?? null) === ProjectSourceKey::Modrinth->value && $state) ? "https://modrinth.com/user/$state" : null, true)
-                    ->sortable()
                     ->toggleable(),
                 TextColumn::make('downloads')
                     ->label(trans('pelican-minecraft-modrinth::strings.table.columns.downloads'))
                     ->icon('tabler-download')
                     ->numeric()
-                    ->sortable()
                     ->toggleable(),
                 TextColumn::make('date_modified')
                     ->label(trans('pelican-minecraft-modrinth::strings.table.columns.date_modified'))
                     ->icon('tabler-calendar')
                     ->formatStateUsing(fn ($state) => $state ? Carbon::parse($state, 'UTC')->diffForHumans() : '')
                     ->tooltip(fn ($state) => $state ? Carbon::parse($state, 'UTC')->timezone(user()->timezone ?? 'UTC')->format($table->getDefaultDateTimeDisplayFormat()) : '')
-                    ->sortable()
                     ->toggleable(),
             ])
             ->recordUrl(function (array $record) {
@@ -1421,21 +1406,6 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
             && in_array(ProjectSourceKey::GitHubReleases->value, $availableSourceKeys, true);
 
         return [
-            Action::make('catalog_filters')
-                ->label('Sort & Filter')
-                ->icon('tabler-adjustments')
-                ->visible(fn () => false)
-                ->schema([
-                    Select::make('sort')->label('Sort')->options(['downloads' => 'Downloads', 'updated' => 'Recently updated', 'popularity' => 'Popularity'])->default(fn () => $this->catalogSort),
-                    Select::make('category')->label('Category')->options(fn () => match ($this->getCurrentSource()?->getKey()) { ProjectSourceKey::Modrinth => ['adventure' => 'Adventure', 'cursed' => 'Cursed', 'decoration' => 'Decoration', 'economy' => 'Economy', 'equipment' => 'Equipment', 'food' => 'Food', 'magic' => 'Magic', 'optimization' => 'Optimization', 'social' => 'Social', 'technology' => 'Technology', 'utility' => 'Utility', 'worldgen' => 'World Generation'], ProjectSourceKey::CurseForge => ['406' => 'Technology', '407' => 'Storage', '408' => 'Cosmetic', '409' => 'Ores and Resources', '410' => 'Armor, Tools, and Weapons', '412' => 'Miscellaneous', '413' => 'Server Utility', '414' => 'Food', '415' => 'Energy', '416' => 'Farming', '417' => 'Transport', '419' => 'Magic'], default => [] })->searchable()->default(fn () => $this->catalogCategory),
-                    Select::make('environment')->label('Environment')->options(['server' => 'Server required/optional', 'client' => 'Client only'])->visible(fn () => $this->getCurrentSource()?->getKey() === ProjectSourceKey::Modrinth)->default(fn () => $this->catalogEnvironment),
-                ])
-                ->action(function (array $data): void {
-                    $this->catalogSort = $data['sort'] ?? 'downloads';
-                    $this->catalogCategory = $data['category'] ?: null;
-                    $this->catalogEnvironment = $data['environment'] ?? null;
-                    $this->resetPage();
-                }),
             Action::make('open_folder')
                 ->label(fn () => trans('pelican-minecraft-modrinth::strings.page.open_folder', ['folder' => $folder]))
                 ->tooltip(fn () => trans('pelican-minecraft-modrinth::strings.page.open_folder', ['folder' => $folder]))

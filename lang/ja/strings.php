@@ -49,6 +49,12 @@ return [
             'downloads' => 'ダウンロード数',
             'date_modified' => '更新日',
         ],
+        'sort' => [
+            'label' => '並べ替え',
+            'downloads' => 'ダウンロード数順',
+            'updated' => '更新日順',
+            'popularity' => '人気順',
+        ],
     ],
 
     'version' => [
