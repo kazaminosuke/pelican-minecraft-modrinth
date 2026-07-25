@@ -47,6 +47,8 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
         HasTabs::updatedActiveTab as protected baseUpdatedActiveTab;
     }
     use InteractsWithTable {
+        InteractsWithTable::applyTableColumnManager as protected baseApplyTableColumnManager;
+        InteractsWithTable::resetTableColumnManager as protected baseResetTableColumnManager;
         InteractsWithTable::updatedTableSearch as protected baseUpdatedTableSearch;
     }
 
@@ -313,12 +315,27 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
         $this->queueHeaderScroll();
     }
 
-    public function updated(string $name): void
+    /**
+     * Filament's deferred column manager does not update a
+     * `tableColumnManager*` property. Its Alpine component directly invokes
+     * this method via `$wire.call()` after copying its deferred state to
+     * `tableColumns`, so this is the post-morph hook that actually runs when
+     * the user presses "Apply columns".
+     *
+     * @param array<int, array<string, mixed>>|null $state
+     */
+    public function applyTableColumnManager(?array $state = null, bool $wasReordered = false): void
     {
-        if (str_starts_with($name, 'tableColumnManager')) {
-            $this->queueTableHeightRecalculation();
-        }
+        $this->baseApplyTableColumnManager($state, $wasReordered);
+        $this->queueTableHeightRecalculation();
     }
+
+    public function resetTableColumnManager(): void
+    {
+        $this->baseResetTableColumnManager();
+        $this->queueTableHeightRecalculation();
+    }
+
     public function updatedTableSearch(): void
     {
         // CanSearchRecords::updatedTableSearch() (aliased above, since it's
