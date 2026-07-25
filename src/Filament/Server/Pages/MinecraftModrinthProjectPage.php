@@ -48,6 +48,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
     }
     use InteractsWithTable {
         InteractsWithTable::applyTableColumnManager as protected baseApplyTableColumnManager;
+        InteractsWithTable::loadTable as protected baseLoadTable;
         InteractsWithTable::resetTableColumnManager as protected baseResetTableColumnManager;
         InteractsWithTable::updatedTableSearch as protected baseUpdatedTableSearch;
     }
@@ -313,6 +314,16 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
         $this->queueTableHeightRecalculation();
         $this->queueHeaderScroll();
+    }
+
+    /**
+     * Complete Filament's deferred initial table load, then resize the
+     * newly-morphed table content just as we do after other table updates.
+     */
+    public function loadTable(): void
+    {
+        $this->baseLoadTable();
+        $this->queueTableHeightRecalculation();
     }
 
     /**
@@ -918,6 +929,10 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
                 return new LengthAwarePaginator($hits, $response['total_hits'], 20, $page);
             })
+            // Render the page shell immediately. The first catalog request may
+            // be an uncached external API call, so let Filament issue it after
+            // the initial Livewire response has reached the browser.
+            ->deferLoading()
             ->paginated([20])
             // Category labels can be long (for example, "Armor, Tools, and
             // Weapons"), so retain a wider filters panel for the two real filters.
