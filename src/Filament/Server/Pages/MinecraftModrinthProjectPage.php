@@ -39,6 +39,7 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\HtmlString;
 
 class MinecraftModrinthProjectPage extends Page implements HasTable
 {
@@ -61,6 +62,12 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
     /** @var array<string> */
     public array $unknownFiles = [];
+
+    /**
+     * The catalog sort is deliberately separate from Filament's table filters:
+     * it changes result ordering but never narrows the result set.
+     */
+    public string $catalogSort = 'downloads';
 
     protected ?string $datapackWorldName = null;
 
@@ -113,10 +120,62 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
     public function mount(): void
     {
+        $this->catalogSort = $this->normalizeCatalogSort(
+            session()->get($this->getCatalogSortSessionKey(), 'downloads'),
+        );
+
         $this->loadDefaultActiveTab();
         $this->queueTableHeightRecalculation();
     }
 
+    /** @return array<string, string> */
+    protected function getCatalogSortOptions(): array
+    {
+        return [
+            'downloads' => trans('pelican-minecraft-modrinth::strings.table.sort.downloads'),
+            'updated' => trans('pelican-minecraft-modrinth::strings.table.sort.updated'),
+            'popularity' => trans('pelican-minecraft-modrinth::strings.table.sort.popularity'),
+        ];
+    }
+
+    protected function normalizeCatalogSort(mixed $sort): string
+    {
+        return is_string($sort) && array_key_exists($sort, $this->getCatalogSortOptions())
+            ? $sort
+            : 'downloads';
+    }
+
+    protected function getCatalogSortSessionKey(): string
+    {
+        /** @var Server $server */
+        $server = Filament::getTenant();
+
+        return 'pelican-minecraft-modrinth.catalog-sort.'.$server->getKey();
+    }
+
+    public function updatedCatalogSort(mixed $sort): void
+    {
+        $this->catalogSort = $this->normalizeCatalogSort($sort);
+        session()->put($this->getCatalogSortSessionKey(), $this->catalogSort);
+
+        $this->resetPage($this->getTablePaginationPageName());
+        $this->resetTable();
+        $this->queueTableHeightRecalculation();
+    }
+
+    protected function getCatalogSortSelect(): HtmlString
+    {
+        $options = '';
+
+        foreach ($this->getCatalogSortOptions() as $value => $label) {
+            $selected = $value === $this->catalogSort ? ' selected' : '';
+            $options .= sprintf('<option value="%s"%s>%s</option>', e($value), $selected, e($label));
+        }
+
+        return new HtmlString(
+            '<select id="mmr-catalog-sort" wire:model.live="catalogSort" class="mmr-catalog-sort-select">'.$options.'</select>',
+        );
+    }
     public function updatedActiveTab(?string $activeTab): void
     {
         // HasTabs::updatedActiveTab() (aliased above) already resets the table's
@@ -128,10 +187,9 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
         $this->baseUpdatedActiveTab();
 
         // Category IDs and the Modrinth-only environment filter are scoped to
-        // a source tab. Keep the user’s sort choice, but discard source-specific
-        // filter state before Filament rebuilds the tab’s filters form.
-        $sortFilter = $this->tableFilters['catalog_sort'] ?? null;
-        $this->tableFilters = $sortFilter === null ? [] : ['catalog_sort' => $sortFilter];
+        // a source tab, so discard them before Filament rebuilds the form.
+        // Catalog sorting is an independent Livewire property and stays intact.
+        $this->tableFilters = [];
         $this->resetTable();
         $this->queueTableHeightRecalculation();
         $this->queueHeaderScroll();
@@ -845,18 +903,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                 $filterState = $this->tableFilters ?? [];
                 $category = $filterState['catalog_category']['value'] ?? null;
                 $environment = $filterState['catalog_environment']['value'] ?? null;
-                // NOT $this->tableSortColumn/tableSortDirection - Filament v4's
-                // CanSortRecords trait doesn't have those properties at all (it
-                // stores sort as one combined "column:direction" string in
-                // $this->tableSort, exposed via getTableSortColumn()/
-                // getTableSortDirection()). Reading the non-existent properties
-                // silently evaluated to null on every request, so this always
-                // fell through to the 'downloads' default below regardless of
-                // what was actually selected - the sort control never did
-                // anything. Moot now that sorting is driven by the catalog_sort
-                // filter below instead of a sortable column click, but this is
-                // also why that never worked either.
-                $sortOption = $filterState['catalog_sort']['value'] ?? 'downloads';
+                $sortOption = $this->catalogSort;
 
                 $response = $currentSource->search($server, $type, $page, $search, ['sort' => $sortOption, 'category' => $category, 'environment' => $currentSource->getKey() === ProjectSourceKey::Modrinth ? $environment : null]);
 
@@ -869,11 +916,8 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                 return new LengthAwarePaginator($hits, $response['total_hits'], 20, $page);
             })
             ->paginated([20])
-            // Default filters-dropdown width is Width::ExtraSmall (Filament's
-            // own default) - fine for the original 2 filters, but cramped once
-            // a 3rd (Sort) was added alongside Category's longer option labels
-            // (e.g. "Armor, Tools, and Weapons"), which may be why Environment
-            // was reported as no longer visible after that addition.
+            // Category labels can be long (for example, "Armor, Tools, and
+            // Weapons"), so retain a wider filters panel for the two real filters.
             ->filtersFormWidth(Width::Medium)
             ->filters([
                 SelectFilter::make('catalog_category')->label(trans('pelican-minecraft-modrinth::strings.table.filters.category'))->options(fn () => $this->getCatalogCategoryOptions()),
@@ -884,27 +928,6 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                         'client' => trans('pelican-minecraft-modrinth::strings.table.filters.environment_client'),
                     ])
                     ->visible(fn () => $this->getCurrentSource()?->getKey() === ProjectSourceKey::Modrinth),
-                SelectFilter::make('catalog_sort')
-                    ->placeholder(null)
-                    ->label(trans('pelican-minecraft-modrinth::strings.table.sort.label'))
-                    ->options([
-                        'downloads' => trans('pelican-minecraft-modrinth::strings.table.sort.downloads'),
-                        'updated' => trans('pelican-minecraft-modrinth::strings.table.sort.updated'),
-                        'popularity' => trans('pelican-minecraft-modrinth::strings.table.sort.popularity'),
-                    ])
-                    ->default('downloads')
-                    ->visible(fn () => $this->activeTab !== 'installed')
-                    // Sorting isn't a filter conceptually (it never narrows
-                    // the result set), so it shouldn't appear in the "active
-                    // filters" indicator row above the table the way Category/
-                    // Environment do - Filament has no separate "table sort
-                    // selector" component this table's API-backed, non-Eloquent
-                    // ->records() closure could use instead (its own sort
-                    // mechanism is column-click based, which was already
-                    // replaced for being unusable), so this stays a
-                    // SelectFilter for the proven $this->tableFilters wiring,
-                    // just with its indicator suppressed.
-                    ->indicateUsing(fn (): array => []),
             ])
             ->emptyStateHeading(function () {
                 $currentSource = $this->getCurrentSource();
@@ -1638,6 +1661,12 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                             ->size(TextSize::Large),
                     ]),
                 $this->getTabsContentComponent(),
+                TextEntry::make('catalog_sort')
+                    ->label(trans('pelican-minecraft-modrinth::strings.table.sort.label'))
+                    ->state(fn (): HtmlString => $this->getCatalogSortSelect())
+                    ->html()
+                    ->visible(fn (): bool => $this->activeTab !== 'installed')
+                    ->extraAttributes(['class' => 'mmr-catalog-sort']),
                 Group::make([
                     EmbeddedTable::make(),
                 ])->extraAttributes([

@@ -67,6 +67,9 @@ class MinecraftModrinthPlugin implements HasPluginSettings, Plugin
                 // run after, so a genuinely short result set isn't padded out
                 // to this floor.
                 .'.mmr-table-scroll-ctn .fi-ta-content-ctn{min-height:15rem;overflow-y:auto;}'
+                .'.mmr-catalog-sort{max-width:16rem;}'
+                .'.mmr-catalog-sort-select{display:block;width:100%;border-radius:.5rem;border:1px solid rgb(209 213 219);background:#fff;padding:.5rem .75rem;color:rgb(17 24 39);font-size:.875rem;line-height:1.25rem;}'
+                .'.dark .mmr-catalog-sort-select{border-color:rgb(75 85 99);background:rgb(31 41 55);color:#fff;}'
                 // Keeps the column header row (Title/Author/Downloads/Modified)
                 // pinned to the top of that scrolling area as rows scroll past
                 // underneath it; its own background (set by Filament) keeps rows
