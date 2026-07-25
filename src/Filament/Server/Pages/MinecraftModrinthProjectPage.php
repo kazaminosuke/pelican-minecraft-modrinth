@@ -167,6 +167,12 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
     public function updatedActiveTab(?string $activeTab): void
     {
+        // A loaded table normally evaluates its records during this same
+        // Livewire update. Reset it to Filament's deferred state first, so an
+        // Installed-tab hydration runs in the follow-up loadTable request
+        // while the tab itself has already switched and shows its spinner.
+        $this->isTableLoaded = false;
+
         // HasTabs::updatedActiveTab() (aliased above) already resets the table's
         // page - each tab (source or "installed") paginates its own independent
         // result set, so a page number from the previous tab has no meaning here
@@ -183,36 +189,6 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
         $this->queueTableHeightRecalculation();
         $this->queueHeaderScroll();
 
-        if ($activeTab !== 'installed') {
-            return;
-        }
-
-        /** @var Server $server */
-        $server = Filament::getTenant();
-
-        $projectType = static::detectProjectType($server);
-        $scanCacheKey = MinecraftModrinth::getHashScanCacheKey($server, $projectType);
-        if (Cache::has($scanCacheKey)) {
-            return;
-        }
-
-        /** @var DaemonFileRepository $fileRepository */
-        $fileRepository = app(DaemonFileRepository::class);
-        if (!$this->hasScanCandidates($server, $fileRepository)) {
-            return;
-        }
-
-        $scanInProgressKey = match ($projectType) {
-            ModrinthProjectType::Plugin => 'pelican-minecraft-modrinth::strings.notifications.scan_in_progress_plugins',
-            ModrinthProjectType::Datapack => 'pelican-minecraft-modrinth::strings.notifications.scan_in_progress_datapacks',
-            default => 'pelican-minecraft-modrinth::strings.notifications.scan_in_progress_mods',
-        };
-
-        Notification::make()
-            ->title(trans($scanInProgressKey))
-            ->info()
-
-            ->send();
     }
     /**
      * Resize the table after Livewire has finished morphing its contents.
@@ -390,47 +366,6 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
             JS);
     }
 
-
-    protected function hasScanCandidates(Server $server, DaemonFileRepository $fileRepository): bool
-    {
-        $type = static::detectProjectType($server);
-        if (!$type) {
-            return false;
-        }
-
-        try {
-            $directoryContents = $fileRepository->setServer($server)->getDirectory(MinecraftModrinth::getProjectFolder($server, $fileRepository, $type));
-        } catch (Exception $exception) {
-            report($exception);
-
-            return false;
-        }
-
-        $extension = $type->getFileExtension();
-
-        $diskFiles = collect($directoryContents)
-            ->filter(fn ($item) => isset($item['name']) && str_ends_with(strtolower($item['name']), $extension))
-            ->pluck('name')
-            ->map(fn ($name) => strtolower($name))
-            ->values()
-            ->toArray();
-
-        $knownFilenames = array_map('strtolower', MinecraftModrinth::getInstalledMods($server, $fileRepository, $type));
-
-        foreach ($diskFiles as $filename) {
-            if (!in_array($filename, $knownFilenames, true)) {
-                return true;
-            }
-        }
-
-        foreach ($knownFilenames as $filename) {
-            if (!in_array($filename, $diskFiles, true)) {
-                return true;
-            }
-        }
-
-        return false;
-    }
 
     /**
      * Sources enabled for this egg (via feature flags) that support the
