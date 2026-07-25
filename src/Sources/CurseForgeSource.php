@@ -89,7 +89,6 @@ class CurseForgeSource implements ProjectSourceInterface
         }
 
         $classId = $this->classIdFor($type);
-
         if (!$classId) {
             return ['hits' => [], 'total_hits' => 0];
         }
@@ -100,13 +99,6 @@ class CurseForgeSource implements ProjectSourceInterface
             'gameVersion' => MinecraftVersionResolver::resolve($server),
             'index' => ($page - 1) * 20,
             'pageSize' => 20,
-            // sortField/sortOrder are both optional and, left unset, CurseForge
-            // falls back to its own internal ordering (roughly "Featured"),
-            // which is unrelated to download count and reads as effectively
-            // random. The catalog sort dropdown only offers three presets
-            // (downloads/updated/popularity), each with a fixed direction -
-            // there's no per-field ascending option, so sortOrder is always
-            // 'desc'.
             'sortField' => match ($filters['sort'] ?? 'downloads') {
                 'updated' => self::SORT_FIELD_LAST_UPDATED,
                 'popularity' => self::SORT_FIELD_POPULARITY,
@@ -117,34 +109,67 @@ class CurseForgeSource implements ProjectSourceInterface
 
         if ($classId === self::CLASS_ID_MOD) {
             $modLoaderType = $this->modLoaderTypeFor($server);
-
             if ($modLoaderType === null) {
                 return ['hits' => [], 'total_hits' => 0];
             }
-
             $params['modLoaderType'] = $modLoaderType;
         }
 
-        if (!empty($filters['category'])) { $params['categoryId'] = (int) $filters['category']; }
-
+        if (!empty($filters['category'])) {
+            $params['categoryId'] = (int) $filters['category'];
+        }
         if ($search) {
             $params['searchFilter'] = $search;
         }
 
-        $cacheKey = 'curseforge_search:'.md5(json_encode($params));
+        $cacheKey = 'curseforge_search:v2:'.md5(json_encode($params));
+        $cached = cache()->get($cacheKey);
+        if (is_array($cached)) {
+            return $cached;
+        }
 
-        $response = cache()->remember($cacheKey, now()->addMinutes(30), fn () => $this->getJson('/mods/search', $params));
+        $startedAt = microtime(true);
+        $responseBytes = 0;
 
-        $hits = collect($response['data'] ?? [])
-            ->filter(fn ($mod) => is_array($mod))
-            ->map(fn (array $mod) => $this->normalizeProject($mod, $type))
-            ->values()
-            ->all();
+        try {
+            $response = Http::asJson()
+                ->withHeaders(['x-api-key' => $this->apiKey()])
+                ->timeout(2)
+                ->connectTimeout(1)
+                ->throw()
+                ->get(self::BASE_URL.'/mods/search', $params);
+            $responseBytes = strlen($response->body());
+            $payload = $response->json();
 
-        return [
-            'hits' => $hits,
-            'total_hits' => (int) ($response['pagination']['totalCount'] ?? count($hits)),
-        ];
+            if (!is_array($payload)) {
+                throw new Exception('Invalid CurseForge search response');
+            }
+
+            $result = [
+                'hits' => collect($payload['data'] ?? [])
+                    ->filter(fn ($mod) => is_array($mod))
+                    ->map(fn (array $mod) => $this->normalizeProject($mod, $type))
+                    ->values()
+                    ->all(),
+                'total_hits' => (int) ($payload['pagination']['totalCount'] ?? 0),
+            ];
+
+            cache()->put($cacheKey, $result, now()->addMinutes(30));
+
+            return $result;
+        } catch (Exception $exception) {
+            report($exception);
+
+            return ['hits' => [], 'total_hits' => 0];
+        } finally {
+            if (config('app.debug')) {
+                logger()->debug('Catalog search API timing', [
+                    'source' => 'curseforge',
+                    'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+                    'response_bytes' => $responseBytes,
+                ]);
+            }
+        }
     }
 
     /** @return array<string, mixed>|null */

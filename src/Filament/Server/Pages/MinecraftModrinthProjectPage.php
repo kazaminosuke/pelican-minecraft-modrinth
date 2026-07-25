@@ -11,6 +11,7 @@ use Boy132\MinecraftModrinth\Enums\MinecraftLoader;
 use Boy132\MinecraftModrinth\Enums\ModrinthProjectType;
 use Boy132\MinecraftModrinth\Enums\ProjectSourceKey;
 use Boy132\MinecraftModrinth\Facades\MinecraftModrinth;
+use Boy132\MinecraftModrinth\Support\CacheVersion;
 use Boy132\MinecraftModrinth\Support\ProjectSourceRegistry;
 use Exception;
 use Filament\Actions\Action;
@@ -50,11 +51,15 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
         InteractsWithTable::applyTableColumnManager as protected baseApplyTableColumnManager;
         InteractsWithTable::loadTable as protected baseLoadTable;
         InteractsWithTable::resetTableColumnManager as protected baseResetTableColumnManager;
+        InteractsWithTable::updatedTableFilters as protected baseUpdatedTableFilters;
         InteractsWithTable::updatedTableSearch as protected baseUpdatedTableSearch;
     }
 
     /** @var array<int, array{source: string, project_id: string, project_slug: string, project_title: string, version_id: string, version_number: string, filename: string, installed_at: string, author?: string}>|null */
     protected ?array $installedModsMetadata = null;
+
+    /** @var array<string, array<string, mixed>>|null */
+    protected ?array $installedModsIndex = null;
 
     /** @var array<string, array<int, mixed>> Cache for version data by "source:project_id" */
     protected array $versionsCache = [];
@@ -160,6 +165,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
     public function updatedCatalogSort(mixed $sort): void
     {
+        $this->isTableLoaded = false;
         $this->catalogSort = $this->normalizeCatalogSort($sort);
         session()->put($this->getCatalogSortSessionKey(), $this->catalogSort);
 
@@ -364,6 +370,8 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
     public function updatedTableSearch(): void
     {
+        $this->isTableLoaded = false;
+
         // CanSearchRecords::updatedTableSearch() (aliased above, since it's
         // pulled into InteractsWithTable from a nested trait) persists the
         // search term to the session and resets the page - both silently
@@ -373,6 +381,13 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
         // would be disruptive, whereas a row count change is the whole
         // point of searching, so only the height needs recalculating.
         $this->baseUpdatedTableSearch();
+        $this->queueTableHeightRecalculation();
+    }
+
+    public function updatedTableFilters(): void
+    {
+        $this->isTableLoaded = false;
+        $this->baseUpdatedTableFilters();
         $this->queueTableHeightRecalculation();
     }
 
@@ -507,7 +522,15 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
             /** @var DaemonFileRepository $fileRepository */
             $fileRepository = app(DaemonFileRepository::class);
 
-            $this->installedModsMetadata = MinecraftModrinth::getInstalledModsMetadata($server, $fileRepository, static::detectProjectType($server));
+            $type = static::detectProjectType($server);
+            $generation = CacheVersion::hydration($server);
+            $cacheKey = "installed_metadata_display:v1:{$server->id}:".($type?->value ?? 'unknown').":{$generation}";
+
+            $this->installedModsMetadata = Cache::remember(
+                $cacheKey,
+                now()->addMinutes(5),
+                fn () => MinecraftModrinth::getInstalledModsMetadata($server, $fileRepository, $type),
+            );
         }
 
         return $this->installedModsMetadata;
@@ -517,15 +540,22 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
     protected function getInstalledMod(string $projectId, string $sourceKey = ''): ?array
     {
         $sourceKey = $sourceKey !== '' ? $sourceKey : ProjectSourceKey::Modrinth->value;
-        $installedMods = $this->getInstalledModsMetadata();
+        if ($this->installedModsIndex === null) {
+            $this->installedModsIndex = [];
 
-        foreach ($installedMods as $mod) {
-            if ($mod['project_id'] === $projectId && ($mod['source'] ?? ProjectSourceKey::Modrinth->value) === $sourceKey) {
-                return $mod;
+            foreach ($this->getInstalledModsMetadata() as $mod) {
+                $key = ($mod['source'] ?? ProjectSourceKey::Modrinth->value).':'.$mod['project_id'];
+                $this->installedModsIndex[$key] = $mod;
             }
         }
 
-        return null;
+        return $this->installedModsIndex[$sourceKey.':'.$projectId] ?? null;
+    }
+
+    protected function forgetInstalledModsMetadata(): void
+    {
+        $this->installedModsMetadata = null;
+        $this->installedModsIndex = null;
     }
 
     /** @return array<int, mixed> */
@@ -766,7 +796,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
         }
 
         if ($updatedCount > 0 || $failedCount > 0) {
-            $this->installedModsMetadata = null;
+            $this->forgetInstalledModsMetadata();
             $this->versionsCache = [];
         }
 
@@ -827,7 +857,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                         $this->unknownFiles = MinecraftModrinth::scanAndImportMods($server, $fileRepository, $type);
                         $unknownFiles = $this->unknownFiles;
 
-                        $this->installedModsMetadata = null;
+                        $this->forgetInstalledModsMetadata();
                         $installedMods = $this->getInstalledModsMetadata();
 
                         $importedCount = $scanWasCached ? 0 : max(0, count($installedMods) - $metadataBefore);
@@ -1094,7 +1124,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
                                             $this->performInstallOrUpdate($server, $fileRepository, $record, $versionData, $primaryFile, $installedMod);
 
-                                            $this->installedModsMetadata = null;
+                                            $this->forgetInstalledModsMetadata();
                                             $this->versionsCache = [];
                                             $this->js('$wire.$refresh()');
 
@@ -1109,7 +1139,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                                         } catch (Exception $exception) {
                                             report($exception);
 
-                                            $this->installedModsMetadata = null;
+                                            $this->forgetInstalledModsMetadata();
                                             $this->versionsCache = [];
                                             $this->js('$wire.$refresh()');
 
@@ -1186,7 +1216,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
                             $this->performInstallOrUpdate($server, $fileRepository, $record, $latestVersion, $primaryFile);
 
-                            $this->installedModsMetadata = null;
+                            $this->forgetInstalledModsMetadata();
                             $this->versionsCache = [];
 
                             Notification::make()
@@ -1200,7 +1230,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                         } catch (Exception $exception) {
                             report($exception);
 
-                            $this->installedModsMetadata = null;
+                            $this->forgetInstalledModsMetadata();
                             $this->versionsCache = [];
 
                             Notification::make()
@@ -1288,7 +1318,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
                             $this->performInstallOrUpdate($server, $fileRepository, $record, $latestVersion, $primaryFile, $installedMod);
 
-                            $this->installedModsMetadata = null;
+                            $this->forgetInstalledModsMetadata();
                             $this->versionsCache = [];
 
                             Notification::make()
@@ -1301,7 +1331,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                         } catch (Exception $exception) {
                             report($exception);
 
-                            $this->installedModsMetadata = null;
+                            $this->forgetInstalledModsMetadata();
                             $this->versionsCache = [];
 
                             Notification::make()
@@ -1410,7 +1440,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
                                 unset($this->versionsCache["{$sourceKey->value}:{$record['project_id']}"]);
                             } else {
-                                $this->installedModsMetadata = null;
+                                $this->forgetInstalledModsMetadata();
                                 $this->versionsCache = [];
                             }
 
@@ -1428,7 +1458,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                         } catch (Exception $exception) {
                             report($exception);
 
-                            $this->installedModsMetadata = null;
+                            $this->forgetInstalledModsMetadata();
                             $this->versionsCache = [];
 
                             if ($this->activeTab === 'installed') {
@@ -1527,7 +1557,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
                         $this->performInstallOrUpdate($server, $fileRepository, $record, $latestVersion, $primaryFile);
 
-                        $this->installedModsMetadata = null;
+                        $this->forgetInstalledModsMetadata();
                         $this->versionsCache = [];
                         $this->js('$wire.$refresh()');
 

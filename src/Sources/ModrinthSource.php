@@ -67,54 +67,102 @@ class ModrinthSource implements ProjectSourceInterface
         $minecraftVersion = MinecraftVersionResolver::resolve($server);
 
         if ($type === ModrinthProjectType::Datapack) {
-            $facets = "[[\"versions:$minecraftVersion\"],[\"project_type:{$projectType}\"]]";
+            $facetGroups = [["versions:$minecraftVersion"], ["project_type:{$projectType}"]];
         } else {
             if (!$minecraftLoader) {
-                return [
-                    'hits' => [],
-                    'total_hits' => 0,
-                ];
+                return ['hits' => [], 'total_hits' => 0];
             }
 
-            $facets = "[[\"categories:$minecraftLoader\"],[\"versions:$minecraftVersion\"],[\"project_type:{$projectType}\"]]";
+            $facetGroups = [["categories:$minecraftLoader"], ["versions:$minecraftVersion"], ["project_type:{$projectType}"]];
         }
 
-        $facetGroups = json_decode($facets, true);
-        if (!empty($filters['category'])) { $facetGroups[] = ['categories:'.$filters['category']]; }
-        if (!empty($filters['environment'])) { $facetGroups[] = $filters['environment'] === 'server' ? ['server_side:required', 'server_side:optional'] : ['server_side:unsupported']; }
+        if (!empty($filters['category'])) {
+            $facetGroups[] = ['categories:'.$filters['category']];
+        }
+        if (!empty($filters['environment'])) {
+            $facetGroups[] = $filters['environment'] === 'server'
+                ? ['server_side:required', 'server_side:optional']
+                : ['server_side:unsupported'];
+        }
 
         $data = [
             'offset' => ($page - 1) * 20,
             'limit' => 20,
             'facets' => json_encode($facetGroups),
-            'index' => match ($filters['sort'] ?? 'downloads') { 'updated' => 'updated', 'popularity' => 'relevance', default => 'downloads' },
+            'index' => match ($filters['sort'] ?? 'downloads') {
+                'updated' => 'updated',
+                'popularity' => 'relevance',
+                default => 'downloads',
+            },
         ];
-
-        $key = "modrinth_projects:{$projectType}:$minecraftVersion:" . ($minecraftLoader ?? 'datapack') . ":$page:".md5(json_encode($filters));
 
         if ($search) {
             $data['query'] = $search;
-
-            $key .= ":$search";
         }
 
-        return cache()->remember($key, now()->addMinutes(30), function () use ($data) {
-            try {
-                return Http::asJson()
-                    ->timeout(5)
-                    ->connectTimeout(5)
-                    ->throw()
-                    ->get(self::BASE_URL.'/search', $data)
-                    ->json();
-            } catch (Exception $exception) {
-                report($exception);
+        $cacheKey = 'modrinth_search:v2:'.md5(json_encode($data));
+        $cached = cache()->get($cacheKey);
+        if (is_array($cached)) {
+            return $cached;
+        }
 
-                return [
-                    'hits' => [],
-                    'total_hits' => 0,
-                ];
+        $startedAt = microtime(true);
+        $responseBytes = 0;
+
+        try {
+            $response = Http::asJson()
+                ->timeout(2)
+                ->connectTimeout(1)
+                ->throw()
+                ->get(self::BASE_URL.'/search', $data);
+            $responseBytes = strlen($response->body());
+            $payload = $response->json();
+
+            if (!is_array($payload)) {
+                throw new Exception('Invalid Modrinth search response');
             }
-        });
+
+            $result = [
+                'hits' => collect($payload['hits'] ?? [])
+                    ->filter(fn ($project) => is_array($project))
+                    ->map(fn (array $project) => $this->normalizeSearchProject($project))
+                    ->values()
+                    ->all(),
+                'total_hits' => (int) ($payload['total_hits'] ?? 0),
+            ];
+
+            cache()->put($cacheKey, $result, now()->addMinutes(30));
+
+            return $result;
+        } catch (Exception $exception) {
+            report($exception);
+
+            return ['hits' => [], 'total_hits' => 0];
+        } finally {
+            if (config('app.debug')) {
+                logger()->debug('Catalog search API timing', [
+                    'source' => 'modrinth',
+                    'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+                    'response_bytes' => $responseBytes,
+                ]);
+            }
+        }
+    }
+
+    /** @param array<string, mixed> $project */
+    protected function normalizeSearchProject(array $project): array
+    {
+        return [
+            'project_id' => (string) ($project['project_id'] ?? $project['id'] ?? ''),
+            'slug' => $project['slug'] ?? '',
+            'title' => $project['title'] ?? '',
+            'description' => $project['description'] ?? '',
+            'icon_url' => $project['icon_url'] ?? null,
+            'author' => $project['author'] ?? null,
+            'downloads' => (int) ($project['downloads'] ?? 0),
+            'date_modified' => $project['date_modified'] ?? $project['updated'] ?? null,
+            'project_type' => $project['project_type'] ?? '',
+        ];
     }
 
     /**
