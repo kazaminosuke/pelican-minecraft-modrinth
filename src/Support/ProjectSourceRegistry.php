@@ -163,7 +163,6 @@ class ProjectSourceRegistry
         $generation = CacheVersion::hydration($server);
 
         foreach (array_chunk($projectIds, 100) as $chunk) {
-            logger()->info('Hydrating installed projects chunk', ['source' => $sourceKey, 'count' => count($chunk), 'memory' => memory_get_usage(true)]);
             $cacheKey = "{$sourceKey}_bulk_hydrate:v3:{$generation}:".md5(implode(',', $chunk));
 
             $chunkMap = cache()->remember($cacheKey, now()->addHours(self::HYDRATE_CACHE_HOURS), function () use ($source, $chunk) {

@@ -71,6 +71,9 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
      */
     public string $catalogSort = 'downloads';
 
+    /** Null until the deferred table request loads the Wings file count; -1 means unavailable. */
+    public ?int $installedFilesCount = null;
+
     protected ?string $datapackWorldName = null;
 
     protected static string|\BackedEnum|null $navigationIcon = 'tabler-packages';
@@ -288,6 +291,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
             return;
         }
 
+        $this->isTableLoaded = false;
         $this->queueTableHeightRecalculation();
         $this->queueHeaderScroll();
     }
@@ -298,8 +302,43 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
      */
     public function loadTable(): void
     {
+        if ($this->installedFilesCount === null) {
+            /** @var Server $server */
+            $server = Filament::getTenant();
+            $type = static::detectProjectType($server);
+
+            /** @var DaemonFileRepository $fileRepository */
+            $fileRepository = app(DaemonFileRepository::class);
+            $this->installedFilesCount = $type
+                ? ($this->resolveInstalledFilesCount($server, $fileRepository, $type) ?? -1)
+                : -1;
+        }
+
         $this->baseLoadTable();
         $this->queueTableHeightRecalculation();
+    }
+
+    protected function resolveInstalledFilesCount(Server $server, DaemonFileRepository $fileRepository, ModrinthProjectType $type): ?int
+    {
+        try {
+            $files = $fileRepository->setServer($server)->getDirectory(
+                MinecraftModrinth::getProjectFolder($server, $fileRepository, $type),
+            );
+
+            if (isset($files['error'])) {
+                throw new Exception($files['error']);
+            }
+
+            $extension = $type->getFileExtension();
+
+            return collect($files)
+                ->filter(fn ($file) => isset($file['name']) && str($file['name'])->lower()->endsWith($extension))
+                ->count();
+        } catch (Exception $exception) {
+            report($exception);
+
+            return null;
+        }
     }
 
     /**
@@ -774,7 +813,9 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
                 if ($this->activeTab === 'installed') {
                     $perPage = 20;
-                    $installedMods = $this->getInstalledModsMetadata();
+                    $scanCacheKey = MinecraftModrinth::getHashScanCacheKey($server, $type);
+                    $scanWasCached = Cache::has($scanCacheKey);
+                    $installedMods = $scanWasCached ? [] : $this->getInstalledModsMetadata();
                     $unknownFiles = [];
 
                     /** @var DaemonFileRepository $fileRepository */
@@ -789,7 +830,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                         $this->installedModsMetadata = null;
                         $installedMods = $this->getInstalledModsMetadata();
 
-                        $importedCount = max(0, count($installedMods) - $metadataBefore);
+                        $importedCount = $scanWasCached ? 0 : max(0, count($installedMods) - $metadataBefore);
                         if ($importedCount > 0) {
                             Notification::make()
                                 ->title(trans('pelican-minecraft-modrinth::strings.notifications.scan_success', ['count' => $importedCount]))
@@ -805,6 +846,10 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                             ->send();
 
                         $this->unknownFiles = [];
+
+                        if ($scanWasCached) {
+                            $installedMods = $this->getInstalledModsMetadata();
+                        }
                     }
 
                     if ($search) {
@@ -817,11 +862,30 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                         $unknownFiles = array_values(array_filter($unknownFiles, fn (string $filename) => str_contains(strtolower($filename), $searchLower)));
                     }
 
-                    $projects = !empty($installedMods)
-                        ? app(ProjectSourceRegistry::class)->hydrateInstalled($installedMods, $server)
+                    // hydrateInstalled() groups records by source. Reproduce that
+                    // ordering before pagination, then hydrate only this page's
+                    // records instead of every installed project on every request.
+                    $installedBySource = [];
+                    foreach ($installedMods as $installedMod) {
+                        $sourceKey = $installedMod['source'] ?? ProjectSourceKey::Modrinth->value;
+                        $installedBySource[$sourceKey][] = $installedMod;
+                    }
+
+                    $orderedInstalledMods = $installedBySource
+                        ? array_merge(...array_values($installedBySource))
+                        : [];
+                    $totalCount = count($orderedInstalledMods) + count($unknownFiles);
+                    $this->installedFilesCount = $totalCount;
+                    $offset = ($page - 1) * $perPage;
+                    $pagedInstalledMods = array_slice($orderedInstalledMods, $offset, $perPage);
+
+                    $projects = $pagedInstalledMods
+                        ? app(ProjectSourceRegistry::class)->hydrateInstalled($pagedInstalledMods, $server)
                         : [];
 
-                    foreach ($unknownFiles as $filename) {
+                    $unknownOffset = max(0, $offset - count($orderedInstalledMods));
+                    $remainingSlots = $perPage - count($pagedInstalledMods);
+                    foreach (array_slice($unknownFiles, $unknownOffset, $remainingSlots) as $filename) {
                         $projects[] = [
                             'project_id' => null,
                             'slug' => null,
@@ -836,11 +900,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                         ];
                     }
 
-                    $totalCount = count($installedMods) + count($unknownFiles);
-                    $offset = ($page - 1) * $perPage;
-                    $pagedProjects = array_slice($projects, $offset, $perPage);
-
-                    return new LengthAwarePaginator($pagedProjects, $totalCount, $perPage, $page);
+                    return new LengthAwarePaginator($projects, $totalCount, $perPage, $page);
                 }
 
                 $currentSource = $this->getCurrentSource();
@@ -902,7 +962,8 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
             })
             ->columns([
                 ImageColumn::make('icon_url')
-                    ->label(''),
+                    ->label('')
+                    ->extraImgAttributes(['loading' => 'lazy', 'decoding' => 'async']),
                 TextColumn::make('title')
                     ->label(trans('pelican-minecraft-modrinth::strings.table.columns.title'))
                     ->searchable()
@@ -1587,28 +1648,10 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                             ->extraAttributes(['class' => 'mcloader-badge']),
                         TextEntry::make('installed')
                             ->label(fn () => trans('pelican-minecraft-modrinth::strings.page.installed', ['type' => $type?->getLabel() ?? 'Modrinth']))
-                            ->state(function (DaemonFileRepository $fileRepository) use ($server, $type) {
-                                try {
-                                    if (!$type) {
-                                        return trans('pelican-minecraft-modrinth::strings.page.unknown');
-                                    }
-
-                                    $files = $fileRepository->setServer($server)->getDirectory(MinecraftModrinth::getProjectFolder($server, $fileRepository, $type));
-
-                                    if (isset($files['error'])) {
-                                        throw new Exception($files['error']);
-                                    }
-
-                                    $extension = $type->getFileExtension();
-
-                                    return collect($files)
-                                        ->filter(fn ($file) => str($file['name'])->lower()->endsWith($extension))
-                                        ->count();
-                                } catch (Exception $exception) {
-                                    report($exception);
-
-                                    return trans('pelican-minecraft-modrinth::strings.page.unknown');
-                                }
+                            ->state(fn () => match (true) {
+                                $this->installedFilesCount === null => '…',
+                                $this->installedFilesCount < 0 => trans('pelican-minecraft-modrinth::strings.page.unknown'),
+                                default => $this->installedFilesCount,
                             })
                             ->badge()
                             ->size(TextSize::Large),
