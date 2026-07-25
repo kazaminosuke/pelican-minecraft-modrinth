@@ -39,7 +39,6 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\HtmlString;
 
 class MinecraftModrinthProjectPage extends Page implements HasTable
 {
@@ -163,19 +162,6 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
         $this->queueTableHeightRecalculation();
     }
 
-    protected function getCatalogSortSelect(): HtmlString
-    {
-        $options = '';
-
-        foreach ($this->getCatalogSortOptions() as $value => $label) {
-            $selected = $value === $this->catalogSort ? ' selected' : '';
-            $options .= sprintf('<option value="%s"%s>%s</option>', e($value), $selected, e($label));
-        }
-
-        return new HtmlString(
-            '<select id="mmr-catalog-sort" wire:model.live="catalogSort" class="mmr-catalog-sort-select">'.$options.'</select>',
-        );
-    }
     public function updatedActiveTab(?string $activeTab): void
     {
         // HasTabs::updatedActiveTab() (aliased above) already resets the table's
@@ -1661,12 +1647,6 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                             ->size(TextSize::Large),
                     ]),
                 $this->getTabsContentComponent(),
-                TextEntry::make('catalog_sort')
-                    ->label(trans('pelican-minecraft-modrinth::strings.table.sort.label'))
-                    ->state(fn (): HtmlString => $this->getCatalogSortSelect())
-                    ->html()
-                    ->visible(fn (): bool => $this->activeTab !== 'installed')
-                    ->extraAttributes(['class' => 'mmr-catalog-sort']),
                 Group::make([
                     EmbeddedTable::make(),
                 ])->extraAttributes([

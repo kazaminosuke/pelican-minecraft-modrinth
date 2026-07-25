@@ -8,6 +8,7 @@ use App\Repositories\Daemon\DaemonFileRepository;
 use App\Traits\EnvironmentWriterTrait;
 use BladeUI\Icons\Factory as BladeIconsFactory;
 use Boy132\MinecraftModrinth\Enums\ModrinthProjectType;
+use Boy132\MinecraftModrinth\Filament\Server\Pages\MinecraftModrinthProjectPage;
 use Boy132\MinecraftModrinth\Services\MinecraftModrinthService;
 use Boy132\MinecraftModrinth\Support\CacheVersion;
 use Exception;
@@ -18,6 +19,7 @@ use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
 use Filament\Panel;
 use Filament\Schemas\Components\Actions;
+use Filament\Tables\View\TablesRenderHook;
 use Filament\View\PanelsRenderHook;
 use Illuminate\Support\HtmlString;
 
@@ -41,6 +43,19 @@ class MinecraftModrinthPlugin implements HasPluginSettings, Plugin
             'prefix' => 'mcloader',
         ]);
 
+        $panel->renderHook(
+            TablesRenderHook::TOOLBAR_SEARCH_AFTER,
+            fn () => new HtmlString(
+                '<div class="mmr-catalog-sort-toolbar" x-cloak x-show="$wire.activeTab !== \'installed\'">'
+                .'<label for="mmr-catalog-sort" class="fi-sr-only">'.e(trans('pelican-minecraft-modrinth::strings.table.sort.label')).'</label>'
+                .'<select id="mmr-catalog-sort" wire:model.live="catalogSort" class="mmr-catalog-sort-select">'
+                .'<option value="downloads">'.e(trans('pelican-minecraft-modrinth::strings.table.sort.downloads')).'</option>'
+                .'<option value="updated">'.e(trans('pelican-minecraft-modrinth::strings.table.sort.updated')).'</option>'
+                .'<option value="popularity">'.e(trans('pelican-minecraft-modrinth::strings.table.sort.popularity')).'</option>'
+                .'</select></div>',
+            ),
+            MinecraftModrinthProjectPage::class,
+        );
         $panel->renderHook(
             PanelsRenderHook::HEAD_END,
             fn () => new HtmlString(
@@ -67,8 +82,8 @@ class MinecraftModrinthPlugin implements HasPluginSettings, Plugin
                 // run after, so a genuinely short result set isn't padded out
                 // to this floor.
                 .'.mmr-table-scroll-ctn .fi-ta-content-ctn{min-height:15rem;overflow-y:auto;}'
-                .'.mmr-catalog-sort{max-width:16rem;}'
-                .'.mmr-catalog-sort-select{display:block;width:100%;border-radius:.5rem;border:1px solid rgb(209 213 219);background:#fff;padding:.5rem .75rem;color:rgb(17 24 39);font-size:.875rem;line-height:1.25rem;}'
+                .'.mmr-catalog-sort-toolbar{width:12rem;min-width:10rem;}'
+                .'.mmr-catalog-sort-select{display:block;width:100%;min-height:2.25rem;border-radius:.5rem;border:1px solid rgb(209 213 219);background:#fff;padding:.5rem .75rem;color:rgb(17 24 39);font-size:.875rem;line-height:1.25rem;}'
                 .'.dark .mmr-catalog-sort-select{border-color:rgb(75 85 99);background:rgb(31 41 55);color:#fff;}'
                 // Keeps the column header row (Title/Author/Downloads/Modified)
                 // pinned to the top of that scrolling area as rows scroll past
