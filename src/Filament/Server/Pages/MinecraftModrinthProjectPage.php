@@ -126,6 +126,13 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
         // with far fewer results) - plus resets the column manager state. It was
         // being silently dropped by this method overriding it without calling it.
         $this->baseUpdatedActiveTab();
+
+        // Category IDs and the Modrinth-only environment filter are scoped to
+        // a source tab. Keep the user’s sort choice, but discard source-specific
+        // filter state before Filament rebuilds the tab’s filters form.
+        $sortFilter = $this->tableFilters['catalog_sort'] ?? null;
+        $this->tableFilters = $sortFilter === null ? [] : ['catalog_sort' => $sortFilter];
+        $this->resetTable();
         $this->queueTableHeightRecalculation();
         $this->queueHeaderScroll();
 
@@ -878,6 +885,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     ])
                     ->visible(fn () => $this->getCurrentSource()?->getKey() === ProjectSourceKey::Modrinth),
                 SelectFilter::make('catalog_sort')
+                    ->placeholder(null)
                     ->label(trans('pelican-minecraft-modrinth::strings.table.sort.label'))
                     ->options([
                         'downloads' => trans('pelican-minecraft-modrinth::strings.table.sort.downloads'),
