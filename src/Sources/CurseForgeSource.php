@@ -9,6 +9,7 @@ use Boy132\MinecraftModrinth\Enums\ModrinthProjectType;
 use Boy132\MinecraftModrinth\Enums\ProjectSourceKey;
 use Boy132\MinecraftModrinth\Support\MinecraftVersionResolver;
 use Exception;
+use Illuminate\Http\Client\Pool;
 use Illuminate\Support\Facades\Http;
 
 class CurseForgeSource implements ProjectSourceInterface
@@ -234,8 +235,104 @@ class CurseForgeSource implements ProjectSourceInterface
     /** @return array<int, mixed> */
     public function getVersions(string $projectId, Server $server, ModrinthProjectType $type): array
     {
-        if (!$this->isConfigured()) {
+        $params = $this->getVersionRequestParams($server, $type);
+
+        if ($params === null) {
             return [];
+        }
+
+        $cacheKey = "curseforge_files:$projectId:".md5(json_encode($params));
+        $response = cache()->remember($cacheKey, now()->addMinutes(30), fn () => $this->getJson("/mods/$projectId/files", $params));
+
+        return $this->normalizeVersions($response);
+    }
+
+    /**
+     * Warm the same per-project cache used by getVersions() with concurrent
+     * requests. A failed request is isolated to that project and cached as an
+     * empty response, matching getVersions()'s existing behaviour.
+     *
+     * @param array<int, string> $projectIds
+     * @return array<string, array<int, mixed>>
+     */
+    public function warmVersions(array $projectIds, Server $server, ModrinthProjectType $type): array
+    {
+        $params = $this->getVersionRequestParams($server, $type);
+
+        if ($params === null) {
+            return [];
+        }
+
+        $versionsByProjectId = [];
+        $pending = [];
+
+        foreach (array_values(array_unique($projectIds)) as $projectId) {
+            $cacheKey = "curseforge_files:$projectId:".md5(json_encode($params));
+            $cached = cache()->get($cacheKey);
+
+            if (is_array($cached)) {
+                $versionsByProjectId[$projectId] = $this->normalizeVersions($cached);
+
+                continue;
+            }
+
+            $pending[$projectId] = $cacheKey;
+        }
+
+        if ($pending === []) {
+            return $versionsByProjectId;
+        }
+
+        try {
+            $responses = Http::pool(function (Pool $pool) use ($pending, $params) {
+                $requests = [];
+
+                foreach (array_keys($pending) as $projectId) {
+                    $requests[] = $pool->as((string) $projectId)
+                        ->asJson()
+                        ->withHeaders(['x-api-key' => $this->apiKey()])
+                        ->timeout(10)
+                        ->connectTimeout(5)
+                        ->get(self::BASE_URL."/mods/$projectId/files", $params);
+                }
+
+                return $requests;
+            });
+        } catch (Exception $exception) {
+            report($exception);
+            $responses = [];
+        }
+
+        foreach ($pending as $projectId => $cacheKey) {
+            try {
+                $response = $responses[$projectId] ?? null;
+
+                if ($response === null || !$response->successful()) {
+                    throw new Exception("CurseForge versions lookup failed for project $projectId");
+                }
+
+                $payload = $response->json();
+
+                if (!is_array($payload)) {
+                    throw new Exception("Invalid CurseForge versions response for project $projectId");
+                }
+            } catch (Exception $exception) {
+                report($exception);
+                $payload = [];
+            }
+
+            cache()->put($cacheKey, $payload, now()->addMinutes(30));
+            $versionsByProjectId[$projectId] = $this->normalizeVersions($payload);
+        }
+
+        return $versionsByProjectId;
+    }
+
+    /** @return array<string, int|string>|null */
+    protected function getVersionRequestParams(Server $server, ModrinthProjectType $type): ?array
+    {
+        if (!$this->isConfigured()) {
+            return null;
         }
 
         $params = [
@@ -247,16 +344,21 @@ class CurseForgeSource implements ProjectSourceInterface
             $modLoaderType = $this->modLoaderTypeFor($server);
 
             if ($modLoaderType === null) {
-                return [];
+                return null;
             }
 
             $params['modLoaderType'] = $modLoaderType;
         }
 
-        $cacheKey = "curseforge_files:$projectId:".md5(json_encode($params));
+        return $params;
+    }
 
-        $response = cache()->remember($cacheKey, now()->addMinutes(30), fn () => $this->getJson("/mods/$projectId/files", $params));
-
+    /**
+     * @param array<string, mixed> $response
+     * @return array<int, mixed>
+     */
+    protected function normalizeVersions(array $response): array
+    {
         $versions = collect($response['data'] ?? [])
             ->filter(fn ($file) => is_array($file) && ($file['isAvailable'] ?? true))
             ->map(fn (array $file) => $this->normalizeVersion($file))

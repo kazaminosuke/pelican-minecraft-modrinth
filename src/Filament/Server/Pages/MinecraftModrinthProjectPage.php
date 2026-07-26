@@ -12,6 +12,7 @@ use Boy132\MinecraftModrinth\Enums\ModrinthProjectType;
 use Boy132\MinecraftModrinth\Enums\ProjectSourceKey;
 use Boy132\MinecraftModrinth\Facades\MinecraftModrinth;
 use Boy132\MinecraftModrinth\Support\CacheVersion;
+use Boy132\MinecraftModrinth\Sources\CurseForgeSource;
 use Boy132\MinecraftModrinth\Support\ProjectSourceRegistry;
 use Exception;
 use Filament\Actions\Action;
@@ -675,6 +676,44 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
         return $this->versionsCache[$cacheIndex];
     }
 
+    /** @param array<int, array<string, mixed>> $records */
+    protected function warmVisibleCurseForgeVersions(array $records, Server $server, ModrinthProjectType $type): void
+    {
+        $projectIds = [];
+
+        foreach ($records as $record) {
+            $projectId = $record['project_id'] ?? null;
+
+            if (!is_string($projectId) || $projectId === '' || $this->getInstalledMod($projectId, ProjectSourceKey::CurseForge->value) === null) {
+                continue;
+            }
+
+            $projectIds[] = $projectId;
+        }
+
+        if ($projectIds === []) {
+            return;
+        }
+
+        $startedAt = microtime(true);
+        $source = app(CurseForgeSource::class);
+        $versionsByProjectId = $source->warmVersions($projectIds, $server, $type);
+
+        foreach ($projectIds as $projectId) {
+            $this->versionsCache[ProjectSourceKey::CurseForge->value.":$projectId"] = $versionsByProjectId[$projectId] ?? [];
+        }
+
+        Log::info('Mod manager timing', [
+            'stage' => 'record_version_lookup_batch',
+            'request_id' => $this->modManagerTimingRequestId,
+            'source' => ProjectSourceKey::CurseForge->value,
+            'started_after_ms' => $this->getModManagerTimingElapsedMs($startedAt),
+            'finished_after_ms' => $this->getModManagerTimingElapsedMs(),
+            'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+            'project_count' => count(array_unique($projectIds)),
+        ]);
+    }
+
     protected function getCachedDatapackWorldName(Server $server, DaemonFileRepository $fileRepository): string
     {
         if ($this->datapackWorldName === null) {
@@ -1063,6 +1102,10 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
                     return $hit;
                 }, $response['hits']);
+
+                if ($currentSource instanceof CurseForgeSource) {
+                    $this->warmVisibleCurseForgeVersions($hits, $server, $type);
+                }
 
                 return new LengthAwarePaginator($hits, $response['total_hits'], 20, $page);
             })
