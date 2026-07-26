@@ -143,6 +143,9 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
         $this->modManagerTimingRequestId = bin2hex(random_bytes(6));
         $this->modManagerTimingVersionLookups = 0;
         $this->modManagerTimingVersionLookupDurationMs = 0;
+
+        request()->attributes->set('mmr_timing_request_id', $this->modManagerTimingRequestId);
+        request()->attributes->set('mmr_timing_started_at', $this->modManagerTimingStartedAt);
     }
 
     public function dehydrate(): void

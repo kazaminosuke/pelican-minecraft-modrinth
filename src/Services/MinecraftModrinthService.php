@@ -15,6 +15,7 @@ use Boy132\MinecraftModrinth\Support\CurseForgeFingerprint;
 use Boy132\MinecraftModrinth\Support\MinecraftVersionResolver;
 use Exception;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 
 class MinecraftModrinthService
 {
@@ -26,6 +27,27 @@ class MinecraftModrinthService
 
     /** @var array<int, array<string, string>|null> */
     protected array $serverPropertiesCache = [];
+
+    /** @param array<string, mixed> $context */
+    protected function logModManagerTiming(string $stage, float $startedAt, array $context = []): void
+    {
+        $requestId = request()->attributes->get('mmr_timing_request_id');
+        $requestStartedAt = request()->attributes->get('mmr_timing_started_at');
+
+        if (!is_string($requestId) || !is_float($requestStartedAt)) {
+            return;
+        }
+
+        $finishedAt = microtime(true);
+
+        Log::info('Mod manager timing', array_merge($context, [
+            'stage' => $stage,
+            'request_id' => $requestId,
+            'started_after_ms' => (int) round(($startedAt - $requestStartedAt) * 1000),
+            'finished_after_ms' => (int) round(($finishedAt - $requestStartedAt) * 1000),
+            'duration_ms' => (int) round(($finishedAt - $startedAt) * 1000),
+        ]));
+    }
 
     public function getMinecraftVersion(Server $server): ?string
     {
@@ -87,12 +109,21 @@ class MinecraftModrinthService
      */
     public function scanAndImportMods(Server $server, DaemonFileRepository $fileRepository, ?ModrinthProjectType $type = null): array
     {
+        $startedAt = microtime(true);
         $resolvedType = $type ?? ModrinthProjectType::fromServer($server);
         $cacheKey = $this->getHashScanCacheKey($server, $resolvedType);
+        $cacheHit = Cache::has($cacheKey);
 
-        return cache()->remember($cacheKey, now()->addMinutes(10), function () use ($server, $fileRepository, $resolvedType) {
+        $unknownFiles = Cache::remember($cacheKey, now()->addMinutes(10), function () use ($server, $fileRepository, $resolvedType) {
             return $this->performScan($server, $fileRepository, $resolvedType);
         });
+
+        $this->logModManagerTiming('installed_scan', $startedAt, [
+            'cache_hit' => $cacheHit,
+            'unknown_files_count' => count($unknownFiles),
+        ]);
+
+        return $unknownFiles;
     }
 
     public function getHashScanCacheKey(Server $server, ?ModrinthProjectType $type = null): string
@@ -289,6 +320,7 @@ class MinecraftModrinthService
         $matchedFilenames = [];
         $remainingFilenames = $unknownFiles;
         $folder = $this->getProjectFolder($server, $fileRepository, $type);
+        $hashResolutionStartedAt = microtime(true);
 
         foreach ($this->getHashLookupSourcesInPriorityOrder() as $hashSource) {
             if (empty($remainingFilenames)) {
@@ -306,6 +338,7 @@ class MinecraftModrinthService
             }
 
             $hashMap = []; // [filename => hash]
+            $hashComputationStartedAt = microtime(true);
             foreach ($remainingFilenames as $filename) {
                 try {
                     $hashMap[$filename] = $this->computeDaemonFileHash($fileRepository, $server, "{$folder}/{$filename}", $algorithm);
@@ -314,7 +347,21 @@ class MinecraftModrinthService
                 }
             }
 
+            $this->logModManagerTiming('hash_computation', $hashComputationStartedAt, [
+                'source' => $hashSource->getKey()->value,
+                'algorithm' => $algorithm,
+                'files_count' => count($remainingFilenames),
+                'hashed_files_count' => count($hashMap),
+            ]);
+
+            $hashLookupStartedAt = microtime(true);
             $versionsByHash = $hashSource->findVersionsByHash($hashMap);
+
+            $this->logModManagerTiming('hash_lookup', $hashLookupStartedAt, [
+                'source' => $hashSource->getKey()->value,
+                'hashes_count' => count($hashMap),
+                'matches_count' => count($versionsByHash),
+            ]);
 
             if (empty($versionsByHash)) {
                 continue;
@@ -348,6 +395,7 @@ class MinecraftModrinthService
                 continue;
             }
 
+            $projectLookupStartedAt = microtime(true);
             try {
                 $projectsMap = $hashSource->getProjectsByIds(array_unique($projectIds));
             } catch (Exception $exception) {
@@ -355,6 +403,13 @@ class MinecraftModrinthService
                 $projectsMap = [];
             }
 
+            $this->logModManagerTiming('hash_project_lookup', $projectLookupStartedAt, [
+                'source' => $hashSource->getKey()->value,
+                'project_ids_count' => count(array_unique($projectIds)),
+                'projects_count' => count($projectsMap),
+            ]);
+
+            $metadataPersistenceStartedAt = microtime(true);
             foreach ($matchedVersions as $filename => $versionData) {
                 if (!isset($versionData['project_id'], $versionData['id'], $versionData['version_number'])) {
                     continue;
@@ -382,8 +437,20 @@ class MinecraftModrinthService
                 }
             }
 
+            $this->logModManagerTiming('hash_metadata_persistence', $metadataPersistenceStartedAt, [
+                'source' => $hashSource->getKey()->value,
+                'matched_files_count' => count($matchedVersions),
+                'saved_files_count' => count($matchedFilenames),
+            ]);
+
             $remainingFilenames = array_values(array_diff($remainingFilenames, $matchedFilenames));
         }
+
+        $this->logModManagerTiming('hash_resolution', $hashResolutionStartedAt, [
+            'unknown_files_count' => count($unknownFiles),
+            'matched_files_count' => count($matchedFilenames),
+            'remaining_files_count' => count($remainingFilenames),
+        ]);
 
         return array_values(
             array_filter($unknownFiles, fn ($name) => !in_array($name, $matchedFilenames, true))
