@@ -84,6 +84,10 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
     protected string $modManagerTimingRequestId = '';
 
+    protected int $modManagerTimingVersionLookups = 0;
+
+    protected int $modManagerTimingVersionLookupDurationMs = 0;
+
     protected ?string $datapackWorldName = null;
 
     protected static string|\BackedEnum|null $navigationIcon = 'tabler-packages';
@@ -137,6 +141,8 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
     {
         $this->modManagerTimingStartedAt = microtime(true);
         $this->modManagerTimingRequestId = bin2hex(random_bytes(6));
+        $this->modManagerTimingVersionLookups = 0;
+        $this->modManagerTimingVersionLookupDurationMs = 0;
     }
 
     public function dehydrate(): void
@@ -147,6 +153,8 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
             'duration_ms' => $this->getModManagerTimingElapsedMs(),
             'request_path' => request()->path(),
             'table_loaded' => $this->isTableLoaded,
+            'version_lookup_count' => $this->modManagerTimingVersionLookups,
+            'version_lookup_duration_ms' => $this->modManagerTimingVersionLookupDurationMs,
         ]);
     }
 
@@ -636,12 +644,29 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
         $cacheIndex = "$sourceKey:$projectId";
 
         if (!isset($this->versionsCache[$cacheIndex])) {
+            $startedAt = microtime(true);
+
             /** @var Server $server */
             $server = Filament::getTenant();
             $type = static::detectProjectType($server);
             $source = app(ProjectSourceRegistry::class)->get(ProjectSourceKey::tryFrom($sourceKey) ?? ProjectSourceKey::Modrinth);
 
             $this->versionsCache[$cacheIndex] = ($source && $type) ? $source->getVersions($projectId, $server, $type) : [];
+
+            $durationMs = (int) round((microtime(true) - $startedAt) * 1000);
+            $this->modManagerTimingVersionLookups++;
+            $this->modManagerTimingVersionLookupDurationMs += $durationMs;
+
+            Log::info('Mod manager timing', [
+                'stage' => 'record_version_lookup',
+                'request_id' => $this->modManagerTimingRequestId,
+                'source' => $sourceKey,
+                'project_id' => $projectId,
+                'started_after_ms' => $this->getModManagerTimingElapsedMs($startedAt),
+                'finished_after_ms' => $this->getModManagerTimingElapsedMs(),
+                'duration_ms' => $durationMs,
+                'versions_count' => count($this->versionsCache[$cacheIndex]),
+            ]);
         }
 
         return $this->versionsCache[$cacheIndex];
