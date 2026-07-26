@@ -308,6 +308,8 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
      */
     public function loadTable(): void
     {
+        $startedAt = microtime(true);
+
         if ($this->installedFilesCount === null) {
             /** @var Server $server */
             $server = Filament::getTenant();
@@ -320,12 +322,20 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                 : -1;
         }
 
+        Log::info('Mod manager timing', [
+            'stage' => 'load_table_prepare',
+            'active_tab' => $this->activeTab,
+            'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+        ]);
+
         $this->baseLoadTable();
         $this->queueTableHeightRecalculation();
     }
 
     protected function resolveInstalledFilesCount(Server $server, DaemonFileRepository $fileRepository, ModrinthProjectType $type): ?int
     {
+        $startedAt = microtime(true);
+
         try {
             $files = $fileRepository->setServer($server)->getDirectory(
                 MinecraftModrinth::getProjectFolder($server, $fileRepository, $type),
@@ -336,12 +346,24 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
             }
 
             $extension = $type->getFileExtension();
-
-            return collect($files)
+            $count = collect($files)
                 ->filter(fn ($file) => isset($file['name']) && str($file['name'])->lower()->endsWith($extension))
                 ->count();
+
+            Log::info('Mod manager timing', [
+                'stage' => 'wings_installed_file_count',
+                'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+                'count' => $count,
+            ]);
+
+            return $count;
         } catch (Exception $exception) {
             report($exception);
+
+            Log::info('Mod manager timing', [
+                'stage' => 'wings_installed_file_count_failed',
+                'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+            ]);
 
             return null;
         }
@@ -517,6 +539,8 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
     protected function getInstalledModsMetadata(): array
     {
         if ($this->installedModsMetadata === null) {
+            $startedAt = microtime(true);
+
             /** @var Server $server */
             $server = Filament::getTenant();
             /** @var DaemonFileRepository $fileRepository */
@@ -526,11 +550,20 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
             $generation = CacheVersion::hydration($server);
             $cacheKey = "installed_metadata_display:v1:{$server->id}:".($type?->value ?? 'unknown').":{$generation}";
 
+            $cacheHit = Cache::has($cacheKey);
+
             $this->installedModsMetadata = Cache::remember(
                 $cacheKey,
                 now()->addMinutes(5),
                 fn () => MinecraftModrinth::getInstalledModsMetadata($server, $fileRepository, $type),
             );
+
+            Log::info('Mod manager timing', [
+                'stage' => 'installed_metadata',
+                'cache_hit' => $cacheHit,
+                'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+                'entries' => count($this->installedModsMetadata),
+            ]);
         }
 
         return $this->installedModsMetadata;
@@ -935,6 +968,8 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
                 $currentSource = $this->getCurrentSource();
 
+                $catalogStartedAt = microtime(true);
+
                 if (!$type || !$currentSource || !$currentSource->isConfigured() || !$currentSource->supportsSearch()) {
                     return new LengthAwarePaginator([], 0, 20, $page);
                 }
@@ -945,6 +980,13 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                 $sortOption = $this->catalogSort;
 
                 $response = $currentSource->search($server, $type, $page, $search, ['sort' => $sortOption, 'category' => $category, 'environment' => $currentSource->getKey() === ProjectSourceKey::Modrinth ? $environment : null]);
+
+                Log::info('Mod manager timing', [
+                    'stage' => 'catalog_records',
+                    'source' => $currentSource->getKey()->value,
+                    'duration_ms' => (int) round((microtime(true) - $catalogStartedAt) * 1000),
+                    'hits' => count($response['hits']),
+                ]);
 
                 $hits = array_map(function (array $hit) use ($currentSource) {
                     $hit['source'] = $currentSource->getKey()->value;
