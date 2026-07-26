@@ -79,6 +79,11 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
     /** Null until the deferred table request loads the Wings file count; -1 means unavailable. */
     public ?int $installedFilesCount = null;
 
+    /** Per-request timing state used only by temporary initial-load diagnostics. */
+    protected float $modManagerTimingStartedAt = 0.0;
+
+    protected string $modManagerTimingRequestId = '';
+
     protected ?string $datapackWorldName = null;
 
     protected static string|\BackedEnum|null $navigationIcon = 'tabler-packages';
@@ -126,6 +131,28 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
     public function getTitle(): string
     {
         return static::getNavigationLabel();
+    }
+
+    public function boot(): void
+    {
+        $this->modManagerTimingStartedAt = microtime(true);
+        $this->modManagerTimingRequestId = bin2hex(random_bytes(6));
+    }
+
+    public function dehydrate(): void
+    {
+        Log::info('Mod manager timing', [
+            'stage' => 'total_component_request',
+            'request_id' => $this->modManagerTimingRequestId,
+            'duration_ms' => $this->getModManagerTimingElapsedMs(),
+            'request_path' => request()->path(),
+            'table_loaded' => $this->isTableLoaded,
+        ]);
+    }
+
+    protected function getModManagerTimingElapsedMs(?float $timestamp = null): int
+    {
+        return (int) round((($timestamp ?? microtime(true)) - $this->modManagerTimingStartedAt) * 1000);
     }
 
     public function mount(): void
@@ -324,7 +351,10 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
         Log::info('Mod manager timing', [
             'stage' => 'load_table_prepare',
+            'request_id' => $this->modManagerTimingRequestId,
             'active_tab' => $this->activeTab,
+            'started_after_ms' => $this->getModManagerTimingElapsedMs($startedAt),
+            'finished_after_ms' => $this->getModManagerTimingElapsedMs(),
             'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
         ]);
 
@@ -352,6 +382,9 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
             Log::info('Mod manager timing', [
                 'stage' => 'wings_installed_file_count',
+                'request_id' => $this->modManagerTimingRequestId,
+                'started_after_ms' => $this->getModManagerTimingElapsedMs($startedAt),
+                'finished_after_ms' => $this->getModManagerTimingElapsedMs(),
                 'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
                 'count' => $count,
             ]);
@@ -362,6 +395,9 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
             Log::info('Mod manager timing', [
                 'stage' => 'wings_installed_file_count_failed',
+                'request_id' => $this->modManagerTimingRequestId,
+                'started_after_ms' => $this->getModManagerTimingElapsedMs($startedAt),
+                'finished_after_ms' => $this->getModManagerTimingElapsedMs(),
                 'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
             ]);
 
@@ -560,7 +596,10 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
             Log::info('Mod manager timing', [
                 'stage' => 'installed_metadata',
+                'request_id' => $this->modManagerTimingRequestId,
                 'cache_hit' => $cacheHit,
+                'started_after_ms' => $this->getModManagerTimingElapsedMs($startedAt),
+                'finished_after_ms' => $this->getModManagerTimingElapsedMs(),
                 'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
                 'entries' => count($this->installedModsMetadata),
             ]);
@@ -983,7 +1022,10 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
                 Log::info('Mod manager timing', [
                     'stage' => 'catalog_records',
+                    'request_id' => $this->modManagerTimingRequestId,
                     'source' => $currentSource->getKey()->value,
+                    'started_after_ms' => $this->getModManagerTimingElapsedMs($catalogStartedAt),
+                    'finished_after_ms' => $this->getModManagerTimingElapsedMs(),
                     'duration_ms' => (int) round((microtime(true) - $catalogStartedAt) * 1000),
                     'hits' => count($response['hits']),
                 ]);
