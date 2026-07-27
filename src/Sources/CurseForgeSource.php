@@ -248,9 +248,13 @@ class CurseForgeSource implements ProjectSourceInterface
     }
 
     /**
-     * Warm the same per-project cache used by getVersions() with concurrent
-     * requests. A failed request is isolated to that project and cached as an
-     * empty response, matching getVersions()'s existing behaviour.
+     * Warm the same per-project cache used by getVersions().
+     *
+     * CurseForge's bulk mods endpoint contains latestFiles plus
+     * latestFilesIndexes. When those indexes can be resolved to full files for
+     * the active Minecraft version and loader, one request replaces all
+     * per-project lookups. Any project whose bulk data is incomplete falls
+     * back to its existing files endpoint so update detection remains exact.
      *
      * @param array<int, string> $projectIds
      * @return array<string, array<int, mixed>>
@@ -281,6 +285,19 @@ class CurseForgeSource implements ProjectSourceInterface
 
         if ($pending === []) {
             return $versionsByProjectId;
+        }
+
+        $bulkStartedAt = microtime(true);
+        $bulkResponse = $this->getBulkMods(array_keys($pending));
+        $bulkVersionsByProjectId = $this->extractBulkLatestVersions($bulkResponse, $params);
+
+        $this->logBulkVersionsTiming($bulkStartedAt, count($pending), count($bulkVersionsByProjectId));
+
+        foreach ($bulkVersionsByProjectId as $projectId => $payload) {
+            $cacheKey = $pending[$projectId];
+            cache()->put($cacheKey, $payload, now()->addMinutes(30));
+            $versionsByProjectId[$projectId] = $this->normalizeVersions($payload);
+            unset($pending[$projectId]);
         }
 
         try {
@@ -326,6 +343,104 @@ class CurseForgeSource implements ProjectSourceInterface
         }
 
         return $versionsByProjectId;
+    }
+
+    /** @param array<int, string> $projectIds */
+    protected function getBulkMods(array $projectIds): array
+    {
+        try {
+            $response = Http::asJson()
+                ->withHeaders(['x-api-key' => $this->apiKey()])
+                ->timeout(10)
+                ->connectTimeout(5)
+                ->throw()
+                ->post(self::BASE_URL.'/mods', ['modIds' => array_map('intval', $projectIds)])
+                ->json();
+
+            return is_array($response) ? $response : [];
+        } catch (Exception $exception) {
+            report($exception);
+
+            return [];
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $response
+     * @param array<string, int|string> $params
+     * @return array<string, array<string, array<int, mixed>>>
+     */
+    protected function extractBulkLatestVersions(array $response, array $params): array
+    {
+        $versionsByProjectId = [];
+
+        foreach ($response['data'] ?? [] as $mod) {
+            if (!is_array($mod) || !isset($mod['id']) || !is_array($mod['latestFiles'] ?? null) || !is_array($mod['latestFilesIndexes'] ?? null)) {
+                continue;
+            }
+
+            $fileIds = [];
+            foreach ($mod['latestFilesIndexes'] as $index) {
+                if (!is_array($index) || ($index['gameVersion'] ?? null) !== $params['gameVersion']) {
+                    continue;
+                }
+
+                if (isset($params['modLoaderType']) && (int) ($index['modLoader'] ?? -1) !== (int) $params['modLoaderType']) {
+                    continue;
+                }
+
+                $fileIds[] = (string) ($index['fileId'] ?? '');
+            }
+
+            if ($fileIds === []) {
+                continue;
+            }
+
+            $filesById = [];
+            foreach ($mod['latestFiles'] as $file) {
+                if (is_array($file) && isset($file['id'])) {
+                    $filesById[(string) $file['id']] = $file;
+                }
+            }
+
+            $files = [];
+            foreach (array_unique($fileIds) as $fileId) {
+                if (!isset($filesById[$fileId])) {
+                    continue 2;
+                }
+
+                $files[] = $filesById[$fileId];
+            }
+
+            $versionsByProjectId[(string) $mod['id']] = ['data' => $files];
+        }
+
+        return $versionsByProjectId;
+    }
+
+    protected function logBulkVersionsTiming(float $startedAt, int $requestedProjectCount, int $resolvedProjectCount): void
+    {
+        logger()->info('Mod manager timing', [
+            'stage' => 'curseforge_versions_bulk_request',
+            'request_id' => request()->attributes->get('mmr_timing_request_id'),
+            'started_after_ms' => $this->getModManagerTimingElapsedMs($startedAt),
+            'finished_after_ms' => $this->getModManagerTimingElapsedMs(),
+            'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+            'requested_project_count' => $requestedProjectCount,
+            'resolved_project_count' => $resolvedProjectCount,
+            'fallback_project_count' => $requestedProjectCount - $resolvedProjectCount,
+        ]);
+    }
+
+    protected function getModManagerTimingElapsedMs(?float $timestamp = null): ?int
+    {
+        $startedAt = request()->attributes->get('mmr_timing_started_at');
+
+        if (!is_float($startedAt)) {
+            return null;
+        }
+
+        return (int) round((($timestamp ?? microtime(true)) - $startedAt) * 1000);
     }
 
     /** @return array<string, int|string>|null */

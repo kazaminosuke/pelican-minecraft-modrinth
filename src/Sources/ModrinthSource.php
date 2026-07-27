@@ -273,6 +273,7 @@ class ModrinthSource implements ProjectSourceInterface
         $data = [
             'game_versions' => "[\"$minecraftVersion\"]",
             'loaders' => "[\"$minecraftLoader\"]",
+            'include_changelog' => 'false',
         ];
 
         return cache()->remember("modrinth_versions:$projectId:$minecraftVersion:$minecraftLoader", now()->addMinutes(30), function () use ($projectId, $data) {
