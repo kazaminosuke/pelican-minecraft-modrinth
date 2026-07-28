@@ -26,6 +26,12 @@ class CurseForgeSource implements ProjectSourceInterface
     protected const CLASS_ID_PLUGIN = 5;
 
     /**
+     * The API documentation does not publish a maximum for POST /mods/files.
+     * A live request with 105 entries (93 unique IDs) succeeds, but keep response sizes bounded.
+     */
+    protected const BULK_FILES_CHUNK_SIZE = 100;
+
+    /**
      * CurseForge's ModsSearchSortField enum values used by the catalog sort
      * dropdown (1 Featured, 2 Popularity, 3 LastUpdated, 4 Name, 5 Author,
      * 6 TotalDownloads, 7 Category, 8 GameVersion, 9 EarlyAccess,
@@ -289,15 +295,24 @@ class CurseForgeSource implements ProjectSourceInterface
 
         $bulkStartedAt = microtime(true);
         $bulkResponse = $this->getBulkMods(array_keys($pending));
-        $bulkVersionsByProjectId = $this->extractBulkLatestVersions($bulkResponse, $params);
 
-        $this->logBulkVersionsTiming($bulkStartedAt, count($pending), count($bulkVersionsByProjectId));
+        $this->logBulkVersionsTiming(
+            $bulkStartedAt,
+            count($pending),
+            is_array($bulkResponse['data'] ?? null) ? count($bulkResponse['data']) : 0,
+        );
+
+        $bulkVersionsByProjectId = $this->extractBulkLatestVersions($bulkResponse, $params);
 
         foreach ($bulkVersionsByProjectId as $projectId => $payload) {
             $cacheKey = $pending[$projectId];
             cache()->put($cacheKey, $payload, now()->addMinutes(30));
             $versionsByProjectId[$projectId] = $this->normalizeVersions($payload);
             unset($pending[$projectId]);
+        }
+
+        if ($pending === []) {
+            return $versionsByProjectId;
         }
 
         try {
@@ -372,7 +387,8 @@ class CurseForgeSource implements ProjectSourceInterface
      */
     protected function extractBulkLatestVersions(array $response, array $params): array
     {
-        $versionsByProjectId = [];
+        $fileIdsByProjectId = [];
+        $filesById = [];
 
         foreach ($response['data'] ?? [] as $mod) {
             if (!is_array($mod) || !isset($mod['id']) || !is_array($mod['latestFiles'] ?? null) || !is_array($mod['latestFilesIndexes'] ?? null)) {
@@ -396,15 +412,42 @@ class CurseForgeSource implements ProjectSourceInterface
                 continue;
             }
 
-            $filesById = [];
+            $fileIdsByProjectId[(string) $mod['id']] = array_values(array_unique($fileIds));
+
             foreach ($mod['latestFiles'] as $file) {
                 if (is_array($file) && isset($file['id'])) {
                     $filesById[(string) $file['id']] = $file;
                 }
             }
+        }
 
+        $requiredFileIds = array_values(array_unique(array_merge(...array_values($fileIdsByProjectId))));
+        $missingFileIds = array_values(array_diff($requiredFileIds, array_keys($filesById)));
+
+        if ($missingFileIds !== []) {
+            $bulkFilesStartedAt = microtime(true);
+            $bulkFilesResponse = $this->getBulkFiles($missingFileIds);
+            $returnedFiles = is_array($bulkFilesResponse['data'] ?? null) ? $bulkFilesResponse['data'] : [];
+
+            $this->logBulkFilesTiming(
+                $bulkFilesStartedAt,
+                count($missingFileIds),
+                count($returnedFiles),
+                (int) ceil(count($missingFileIds) / self::BULK_FILES_CHUNK_SIZE),
+            );
+
+            foreach ($returnedFiles as $file) {
+                if (is_array($file) && isset($file['id'])) {
+                    $filesById[(string) $file['id']] = $file;
+                }
+            }
+        }
+
+        $versionsByProjectId = [];
+
+        foreach ($fileIdsByProjectId as $projectId => $fileIds) {
             $files = [];
-            foreach (array_unique($fileIds) as $fileId) {
+            foreach ($fileIds as $fileId) {
                 if (!isset($filesById[$fileId])) {
                     continue 2;
                 }
@@ -412,23 +455,58 @@ class CurseForgeSource implements ProjectSourceInterface
                 $files[] = $filesById[$fileId];
             }
 
-            $versionsByProjectId[(string) $mod['id']] = ['data' => $files];
+            $versionsByProjectId[$projectId] = ['data' => $files];
         }
 
         return $versionsByProjectId;
     }
 
-    protected function logBulkVersionsTiming(float $startedAt, int $requestedProjectCount, int $resolvedProjectCount): void
+    /** @param array<int, string> $fileIds */
+    protected function getBulkFiles(array $fileIds): array
+    {
+        $files = [];
+
+        foreach (array_chunk(array_values(array_unique($fileIds)), self::BULK_FILES_CHUNK_SIZE) as $chunk) {
+            $response = $this->postJson('/mods/files', [
+                'fileIds' => array_map('intval', $chunk),
+            ]);
+
+            foreach ($response['data'] ?? [] as $file) {
+                if (is_array($file)) {
+                    $files[] = $file;
+                }
+            }
+        }
+
+        return ['data' => $files];
+    }
+
+    protected function logBulkVersionsTiming(float $startedAt, int $requestedProjectCount, int $returnedProjectCount): void
     {
         logger()->info('Mod manager timing', [
             'stage' => 'curseforge_versions_bulk_request',
             'request_id' => request()->attributes->get('mmr_timing_request_id'),
+            'endpoint' => '/mods',
             'started_after_ms' => $this->getModManagerTimingElapsedMs($startedAt),
             'finished_after_ms' => $this->getModManagerTimingElapsedMs(),
             'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
             'requested_project_count' => $requestedProjectCount,
-            'resolved_project_count' => $resolvedProjectCount,
-            'fallback_project_count' => $requestedProjectCount - $resolvedProjectCount,
+            'returned_project_count' => $returnedProjectCount,
+        ]);
+    }
+
+    protected function logBulkFilesTiming(float $startedAt, int $requestedFileCount, int $returnedFileCount, int $requestCount): void
+    {
+        logger()->info('Mod manager timing', [
+            'stage' => 'curseforge_files_bulk_request',
+            'request_id' => request()->attributes->get('mmr_timing_request_id'),
+            'endpoint' => '/mods/files',
+            'started_after_ms' => $this->getModManagerTimingElapsedMs($startedAt),
+            'finished_after_ms' => $this->getModManagerTimingElapsedMs(),
+            'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+            'requested_file_count' => $requestedFileCount,
+            'returned_file_count' => $returnedFileCount,
+            'request_count' => $requestCount,
         ]);
     }
 
