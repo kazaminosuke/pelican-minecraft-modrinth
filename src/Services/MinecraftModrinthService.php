@@ -19,6 +19,12 @@ use Illuminate\Support\Facades\Log;
 
 class MinecraftModrinthService
 {
+    private const HASH_SCAN_CACHE_MINUTES = 10;
+
+    private const HASH_SCAN_LOCK_SECONDS = 180;
+
+    private const HASH_SCAN_LOCK_WAIT_SECONDS = 190;
+
     public function __construct(
         protected ModrinthSource $source,
         protected CurseForgeSource $curseForgeSource,
@@ -27,6 +33,8 @@ class MinecraftModrinthService
 
     /** @var array<int, array<string, string>|null> */
     protected array $serverPropertiesCache = [];
+
+    protected int $hashScanWingsGetCount = 0;
 
     /** @param array<string, mixed> $context */
     protected function logModManagerTiming(string $stage, float $startedAt, array $context = []): void
@@ -109,17 +117,53 @@ class MinecraftModrinthService
      */
     public function scanAndImportMods(Server $server, DaemonFileRepository $fileRepository, ?ModrinthProjectType $type = null): array
     {
+        // A second request can wait for a cold scan, so extend the limit before
+        // attempting the lock rather than only after entering performScan().
+        set_time_limit(240);
+
         $startedAt = microtime(true);
         $resolvedType = $type ?? ModrinthProjectType::fromServer($server);
         $cacheKey = $this->getHashScanCacheKey($server, $resolvedType);
-        $cacheHit = Cache::has($cacheKey);
+        $cached = Cache::get($cacheKey);
+        $cacheHit = is_array($cached);
+        $scanExecuted = false;
+        $lockWaitMs = 0;
+        $this->hashScanWingsGetCount = 0;
 
-        $unknownFiles = Cache::remember($cacheKey, now()->addMinutes(10), function () use ($server, $fileRepository, $resolvedType) {
-            return $this->performScan($server, $fileRepository, $resolvedType);
-        });
+        if ($cacheHit) {
+            $unknownFiles = $cached;
+        } else {
+            $lockRequestedAt = microtime(true);
+            $lockAcquiredAt = null;
+
+            $unknownFiles = Cache::lock($cacheKey.':lock', self::HASH_SCAN_LOCK_SECONDS)
+                ->block(self::HASH_SCAN_LOCK_WAIT_SECONDS, function () use ($cacheKey, $server, $fileRepository, $resolvedType, &$lockAcquiredAt, &$scanExecuted) {
+                    $lockAcquiredAt = microtime(true);
+                    $cachedAfterLock = Cache::get($cacheKey);
+
+                    if (is_array($cachedAfterLock)) {
+                        return $cachedAfterLock;
+                    }
+
+                    $scanExecuted = true;
+                    $result = $this->performScan($server, $fileRepository, $resolvedType);
+                    Cache::put($cacheKey, $result, now()->addMinutes(self::HASH_SCAN_CACHE_MINUTES));
+
+                    return $result;
+                });
+
+            if (is_float($lockAcquiredAt)) {
+                $lockWaitMs = (int) round(($lockAcquiredAt - $lockRequestedAt) * 1000);
+            }
+        }
 
         $this->logModManagerTiming('installed_scan', $startedAt, [
+            'cache_key' => $cacheKey,
             'cache_hit' => $cacheHit,
+            'cache_filled_while_waiting' => !$cacheHit && !$scanExecuted,
+            'scan_executed' => $scanExecuted,
+            'lock_wait_ms' => $lockWaitMs,
+            'wings_get_count' => $this->hashScanWingsGetCount,
             'unknown_files_count' => count($unknownFiles),
         ]);
 
@@ -321,6 +365,28 @@ class MinecraftModrinthService
         $remainingFilenames = $unknownFiles;
         $folder = $this->getProjectFolder($server, $fileRepository, $type);
         $hashResolutionStartedAt = microtime(true);
+        $hashComputationStartedAt = microtime(true);
+        $hashesByFilename = [];
+
+        foreach ($unknownFiles as $filename) {
+            try {
+                $hashesByFilename[$filename] = $this->computeDaemonFileHashes(
+                    $fileRepository,
+                    $server,
+                    "{$folder}/{$filename}",
+                );
+            } catch (Exception $exception) {
+                report($exception);
+            }
+        }
+
+        $this->logModManagerTiming('hash_computation', $hashComputationStartedAt, [
+            'source' => 'shared',
+            'algorithms' => ['murmur2', 'sha512', 'sha256'],
+            'files_count' => count($unknownFiles),
+            'hashed_files_count' => count($hashesByFilename),
+            'wings_get_count' => $this->hashScanWingsGetCount,
+        ]);
 
         foreach ($this->getHashLookupSourcesInPriorityOrder() as $hashSource) {
             if (empty($remainingFilenames)) {
@@ -338,21 +404,17 @@ class MinecraftModrinthService
             }
 
             $hashMap = []; // [filename => hash]
-            $hashComputationStartedAt = microtime(true);
             foreach ($remainingFilenames as $filename) {
-                try {
-                    $hashMap[$filename] = $this->computeDaemonFileHash($fileRepository, $server, "{$folder}/{$filename}", $algorithm);
-                } catch (Exception $exception) {
-                    report($exception);
+                $hash = $hashesByFilename[$filename][$algorithm] ?? null;
+
+                if (is_string($hash) && $hash !== '') {
+                    $hashMap[$filename] = $hash;
                 }
             }
 
-            $this->logModManagerTiming('hash_computation', $hashComputationStartedAt, [
-                'source' => $hashSource->getKey()->value,
-                'algorithm' => $algorithm,
-                'files_count' => count($remainingFilenames),
-                'hashed_files_count' => count($hashMap),
-            ]);
+            if ($hashMap === []) {
+                continue;
+            }
 
             $hashLookupStartedAt = microtime(true);
             $versionsByHash = $hashSource->findVersionsByHash($hashMap);
@@ -450,6 +512,7 @@ class MinecraftModrinthService
             'unknown_files_count' => count($unknownFiles),
             'matched_files_count' => count($matchedFilenames),
             'remaining_files_count' => count($remainingFilenames),
+            'wings_get_count' => $this->hashScanWingsGetCount,
         ]);
 
         return array_values(
@@ -475,38 +538,35 @@ class MinecraftModrinthService
     }
 
     /**
-     * Streams a daemon file into the hash algorithm expected by a source.
+     * Downloads a daemon file once and computes every hash needed by the
+     * installed-source resolvers during that single streaming pass.
+     *
+     * @return array{murmur2: string, sha512: string, sha256: string}
      */
-    protected function computeDaemonFileHash(DaemonFileRepository $fileRepository, Server $server, string $path, string $algorithm): string
+    protected function computeDaemonFileHashes(DaemonFileRepository $fileRepository, Server $server, string $path): array
     {
-        if ($algorithm === 'murmur2') {
-            return (string) CurseForgeFingerprint::hashStream(fn () => $this->openDaemonFileStream($fileRepository, $server, $path));
-        }
+        $sha512 = hash_init('sha512');
+        $sha256 = hash_init('sha256');
 
-        if (!in_array($algorithm, ['sha512', 'sha256'], true)) {
-            return '';
-        }
+        $murmur2 = CurseForgeFingerprint::hashStream(
+            fn () => $this->openDaemonFileStream($fileRepository, $server, $path),
+            static function (string $chunk) use ($sha512, $sha256): void {
+                hash_update($sha512, $chunk);
+                hash_update($sha256, $chunk);
+            },
+        );
 
-        $stream = $this->openDaemonFileStream($fileRepository, $server, $path);
-        $hash = hash_init($algorithm);
-
-        try {
-            while (!$stream->eof()) {
-                $chunk = $stream->read(1024 * 1024);
-                if ($chunk !== '') {
-                    hash_update($hash, $chunk);
-                }
-            }
-        } finally {
-            $stream->close();
-        }
-
-        return hash_final($hash);
+        return [
+            'murmur2' => (string) $murmur2,
+            'sha512' => hash_final($sha512),
+            'sha256' => hash_final($sha256),
+        ];
     }
 
     /** Opens a Wings response without converting its body into a string. */
     protected function openDaemonFileStream(DaemonFileRepository $fileRepository, Server $server, string $path): object
     {
+        $this->hashScanWingsGetCount++;
         $response = $fileRepository->setServer($server)->getHttpClient()->withOptions(['stream' => true])->get("/api/servers/{$server->uuid}/files/contents", ['file' => $path]);
 
         return $response->toPsrResponse()->getBody();

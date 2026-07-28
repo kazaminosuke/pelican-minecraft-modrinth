@@ -27,20 +27,93 @@ class CurseForgeFingerprint
     }
 
     /**
-     * Computes a fingerprint through bounded reads from a stream factory.
-     * MurmurHash2 needs the filtered length first, so it makes two streaming
-     * passes without retaining the JAR contents in PHP memory.
+     * Computes a fingerprint with one read of the source stream.
+     *
+     * MurmurHash2 needs the filtered length before hashing. Filtered bytes are
+     * therefore spooled to php://temp, which stays in memory only up to 2 MiB
+     * and transparently spills larger JARs to disk for the local second pass.
+     * The optional callback receives each raw chunk during the single source
+     * read so callers can calculate cryptographic hashes at the same time.
      */
-    public static function hashStream(callable $openStream): int
+    public static function hashStream(callable $openStream, ?callable $consumeRawChunk = null): int
     {
-        $length = 0;
-        self::consumeFilteredChunks($openStream, function (string $chunk) use (&$length): void { $length += strlen($chunk); });
+        $filteredStream = fopen('php://temp/maxmemory:2097152', 'w+b');
 
+        if ($filteredStream === false) {
+            throw new \RuntimeException('Unable to create temporary stream for CurseForge fingerprint');
+        }
+
+        try {
+            $length = 0;
+            $sourceStream = $openStream();
+
+            try {
+                while (!$sourceStream->eof()) {
+                    $chunk = $sourceStream->read(1024 * 1024);
+
+                    if ($chunk === '') {
+                        continue;
+                    }
+
+                    if ($consumeRawChunk !== null) {
+                        $consumeRawChunk($chunk);
+                    }
+
+                    $filtered = str_replace(["\x09", "\x0A", "\x0D", "\x20"], '', $chunk);
+                    $length += strlen($filtered);
+                    self::writeAll($filteredStream, $filtered);
+                }
+            } finally {
+                $sourceStream->close();
+            }
+
+            if (!rewind($filteredStream)) {
+                throw new \RuntimeException('Unable to rewind CurseForge fingerprint data');
+            }
+
+            return self::murmurHash2Stream($filteredStream, $length);
+        } finally {
+            fclose($filteredStream);
+        }
+    }
+
+    /** @param resource $stream */
+    private static function writeAll($stream, string $data): void
+    {
+        $length = strlen($data);
+        $offset = 0;
+
+        while ($offset < $length) {
+            $written = fwrite($stream, substr($data, $offset));
+
+            if ($written === false || $written === 0) {
+                throw new \RuntimeException('Unable to spool CurseForge fingerprint data');
+            }
+
+            $offset += $written;
+        }
+    }
+
+    /** @param resource $stream */
+    private static function murmurHash2Stream($stream, int $length): int
+    {
         $h = (self::SEED ^ $length) & 0xFFFFFFFF;
         $remainder = '';
-        self::consumeFilteredChunks($openStream, function (string $chunk) use (&$h, &$remainder): void {
+
+        while (!feof($stream)) {
+            $chunk = fread($stream, 1024 * 1024);
+
+            if ($chunk === false) {
+                throw new \RuntimeException('Unable to read spooled CurseForge fingerprint data');
+            }
+
+            if ($chunk === '') {
+                continue;
+            }
+
             $data = $remainder . $chunk;
             $processableLength = strlen($data) - (strlen($data) % 4);
+
             for ($i = 0; $i < $processableLength; $i += 4) {
                 $k = (ord($data[$i]) | (ord($data[$i + 1]) << 8) | (ord($data[$i + 2]) << 16) | (ord($data[$i + 3]) << 24)) & 0xFFFFFFFF;
                 $k = ($k * self::M) & 0xFFFFFFFF;
@@ -49,13 +122,23 @@ class CurseForgeFingerprint
                 $h = ($h * self::M) & 0xFFFFFFFF;
                 $h ^= $k;
             }
+
             $remainder = substr($data, $processableLength);
-        });
+        }
 
         $remaining = strlen($remainder);
-        if ($remaining === 3) { $h ^= ord($remainder[2]) << 16; }
-        if ($remaining >= 2) { $h ^= ord($remainder[1]) << 8; }
-        if ($remaining >= 1) { $h ^= ord($remainder[0]); $h = ($h * self::M) & 0xFFFFFFFF; }
+
+        if ($remaining === 3) {
+            $h ^= ord($remainder[2]) << 16;
+        }
+        if ($remaining >= 2) {
+            $h ^= ord($remainder[1]) << 8;
+        }
+        if ($remaining >= 1) {
+            $h ^= ord($remainder[0]);
+            $h = ($h * self::M) & 0xFFFFFFFF;
+        }
+
         $h ^= $h >> 13;
         $h = ($h * self::M) & 0xFFFFFFFF;
         $h ^= $h >> 15;
@@ -63,18 +146,6 @@ class CurseForgeFingerprint
         return $h;
     }
 
-    private static function consumeFilteredChunks(callable $openStream, callable $consume): void
-    {
-        $stream = $openStream();
-        try {
-            while (!$stream->eof()) {
-                $chunk = $stream->read(1024 * 1024);
-                if ($chunk !== '') { $consume(str_replace(["\x09", "\x0A", "\x0D", "\x20"], '', $chunk)); }
-            }
-        } finally {
-            $stream->close();
-        }
-    }
     private static function murmurHash2(string $data, int $seed): int
     {
         $length = strlen($data);
