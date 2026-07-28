@@ -14,7 +14,6 @@ use Boy132\MinecraftModrinth\Support\CacheVersion;
 use Boy132\MinecraftModrinth\Support\CurseForgeFingerprint;
 use Boy132\MinecraftModrinth\Support\MinecraftVersionResolver;
 use Exception;
-use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 
@@ -263,19 +262,10 @@ class MinecraftModrinthService
             return [];
         }
 
-        $directory = $this->getProjectFolder($server, $fileRepository, $type);
-
         try {
-            $directoryContents = $fileRepository->setServer($server)->getDirectory($directory);
+            $directoryContents = $fileRepository->setServer($server)->getDirectory($this->getProjectFolder($server, $fileRepository, $type));
         } catch (Exception $exception) {
             report($exception);
-            $this->logWingsRequestFailure(
-                'installed_scan_directory',
-                $server,
-                "/api/servers/{$server->uuid}/files/list-directory",
-                ['directory' => $directory],
-                $exception,
-            );
 
             return [];
         }
@@ -614,14 +604,6 @@ class MinecraftModrinthService
         try {
             $content = $fileRepository->setServer($server)->getContent($metadataPath);
         } catch (Exception $exception) {
-            $this->logWingsRequestFailure(
-                'installed_metadata_read',
-                $server,
-                "/api/servers/{$server->uuid}/files/contents",
-                ['file' => $metadataPath],
-                $exception,
-            );
-
             return null;
         }
 
@@ -657,32 +639,6 @@ class MinecraftModrinthService
         }
 
         return $validInstalledMods;
-    }
-
-    /** @param array<string, string> $query */
-    protected function logWingsRequestFailure(string $stage, Server $server, string $endpoint, array $query, Exception $exception): void
-    {
-        $response = $exception instanceof RequestException ? $exception->response : null;
-        $configuredUrl = $server->node->getConnectionAddress().$endpoint;
-
-        Log::error('Mod manager Wings request failed', [
-            'stage' => $stage,
-            'request_id' => request()->attributes->get('mmr_timing_request_id'),
-            'method' => 'GET',
-            'configured_url' => $configuredUrl,
-            'requested_url' => $configuredUrl.'?'.http_build_query($query),
-            'effective_url' => $response?->effectiveUri()?->__toString(),
-            'query' => $query,
-            'http_status' => $response?->status(),
-            'wings_request_id' => $response?->header('X-Request-Id') ?: $response?->json('request_id'),
-            'wings_error' => $response?->json('error'),
-            'server_id' => $server->id,
-            'server_uuid' => $server->uuid,
-            'server_updated_at' => $server->updated_at?->toIso8601String(),
-            'node_id' => $server->node_id,
-            'node_updated_at' => $server->node->updated_at?->toIso8601String(),
-            'exception_class' => $exception::class,
-        ]);
     }
 
     public function saveModMetadata(
