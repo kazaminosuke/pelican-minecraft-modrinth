@@ -36,6 +36,7 @@ use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Table;
+use Illuminate\Http\Client\RequestException;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
@@ -378,10 +379,10 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
     {
         $startedAt = microtime(true);
 
+        $directory = MinecraftModrinth::getProjectFolder($server, $fileRepository, $type);
+
         try {
-            $files = $fileRepository->setServer($server)->getDirectory(
-                MinecraftModrinth::getProjectFolder($server, $fileRepository, $type),
-            );
+            $files = $fileRepository->setServer($server)->getDirectory($directory);
 
             if (isset($files['error'])) {
                 throw new Exception($files['error']);
@@ -404,6 +405,29 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
             return $count;
         } catch (Exception $exception) {
             report($exception);
+
+            $response = $exception instanceof RequestException ? $exception->response : null;
+            $endpoint = "/api/servers/{$server->uuid}/files/list-directory";
+            $configuredUrl = $server->node->getConnectionAddress().$endpoint;
+
+            Log::error('Mod manager Wings request failed', [
+                'stage' => 'wings_installed_file_count',
+                'request_id' => $this->modManagerTimingRequestId,
+                'method' => 'GET',
+                'configured_url' => $configuredUrl,
+                'requested_url' => $configuredUrl.'?'.http_build_query(['directory' => $directory]),
+                'effective_url' => $response?->effectiveUri()?->__toString(),
+                'query' => ['directory' => $directory],
+                'http_status' => $response?->status(),
+                'wings_request_id' => $response?->header('X-Request-Id') ?: $response?->json('request_id'),
+                'wings_error' => $response?->json('error'),
+                'server_id' => $server->id,
+                'server_uuid' => $server->uuid,
+                'server_updated_at' => $server->updated_at?->toIso8601String(),
+                'node_id' => $server->node_id,
+                'node_updated_at' => $server->node->updated_at?->toIso8601String(),
+                'exception_class' => $exception::class,
+            ]);
 
             Log::info('Mod manager timing', [
                 'stage' => 'wings_installed_file_count_failed',
