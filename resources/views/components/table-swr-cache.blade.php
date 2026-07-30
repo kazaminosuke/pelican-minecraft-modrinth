@@ -492,20 +492,12 @@
             overlay.setAttribute('aria-hidden', 'true');
             overlay.setAttribute('inert', '');
             overlay.inert = true;
-            // wrapper is the same element Livewire re-renders on every
-            // background revalidation - without this, Livewire's morph
-            // (js/morph.js) walks into this raw-DOM-appended overlay as an
-            // unexpected extra child, and reconciling/removing it away from
-            // the rest of its diff is what produced the "loading spinner
-            // flashes, UI looks like it briefly falls apart" glitch: the
-            // overlay itself (and whatever real content it was still
-            // covering underneath) got caught up in that diff instead of
-            // being left alone until removeOverlay() takes it out directly.
-            // wire:ignore (see Livewire's directive('ignore', ...) in
-            // js/directives/wire-ignore.js) is picked up by Alpine's
-            // mutation observer for elements added after the fact, well
-            // before the next morph (a network round trip away) can run.
-            overlay.setAttribute('wire:ignore', '');
+            // See guardOverlayFromMorph() for why this element needs
+            // protecting from Livewire's morph at all. A wire:ignore
+            // attribute does NOT do that job: Livewire's directive only
+            // sets __livewire_ignore, which morph consults in its
+            // "updating" hook - the "removing" hook that decides whether
+            // to delete an unmatched child never looks at it.
             overlay.style.top = `${Math.max(anchorRect.top - wrapperRect.top, 0)}px`;
             overlay.style.left = `${Math.max(anchorRect.left - wrapperRect.left, 0)}px`;
             overlay.style.width = `${Math.max(anchorRect.width, 1)}px`;
@@ -625,6 +617,40 @@
         const isOverlayNode = (node) => node instanceof Element
             && node.closest('.mmr-table-swr-overlay') !== null;
 
+        // The overlay is appended straight into the wrapper, which sits
+        // inside the Livewire component root. Every background revalidation
+        // morphs that subtree against freshly rendered server HTML - HTML
+        // that has no overlay in it, because the server knows nothing about
+        // this purely client-side element. Morph therefore sees an
+        // unmatched trailing child and deletes it (Alpine's morph pushes it
+        // onto `removals` unless the "removing" hook skips it), briefly
+        // uncovering the very loading placeholder the overlay exists to
+        // hide - which is the spinner flash and the "UI falls apart" moment.
+        //
+        // Livewire re-exports its internal hook bus as Livewire.hook, and
+        // both morph hooks hand back a skip() that makes Alpine leave the
+        // element alone entirely. removeOverlay() still takes the overlay
+        // down through plain DOM APIs, which these hooks do not affect.
+        const guardOverlayFromMorph = () => {
+            if (window.__mmrTableSwrMorphGuardV1 || typeof window.Livewire?.hook !== 'function') {
+                return;
+            }
+
+            window.__mmrTableSwrMorphGuardV1 = true;
+
+            window.Livewire.hook('morph.removing', ({ el, skip }) => {
+                if (isOverlayNode(el)) {
+                    skip();
+                }
+            });
+
+            window.Livewire.hook('morph.updating', ({ el, skip }) => {
+                if (isOverlayNode(el)) {
+                    skip();
+                }
+            });
+        };
+
         const mutationTouchesWrapper = (mutation) => {
             const target = mutation.target;
 
@@ -654,6 +680,10 @@
 
         const init = () => {
             prune();
+            // Registered before the first scan can put an overlay up, and
+            // again on livewire:init in case this script parsed first.
+            guardOverlayFromMorph();
+            document.addEventListener('livewire:init', guardOverlayFromMorph);
             scan();
 
             if (documentObserver) {
