@@ -9,6 +9,7 @@ use App\Traits\EnvironmentWriterTrait;
 use BladeUI\Icons\Factory as BladeIconsFactory;
 use Boy132\MinecraftModrinth\Enums\ModrinthProjectType;
 use Boy132\MinecraftModrinth\Filament\Server\Pages\MinecraftModrinthProjectPage;
+use Boy132\MinecraftModrinth\Services\InstalledOperationManager;
 use Boy132\MinecraftModrinth\Services\MinecraftModrinthService;
 use Boy132\MinecraftModrinth\Support\CacheVersion;
 use Exception;
@@ -154,6 +155,7 @@ class MinecraftModrinthPlugin implements HasPluginSettings, Plugin
                     ])
                     ->action(function (array $data) {
                         $service = app(MinecraftModrinthService::class);
+                        $operations = app(InstalledOperationManager::class);
                         /** @var DaemonFileRepository $fileRepository */
                         $fileRepository = app(DaemonFileRepository::class);
 
@@ -163,7 +165,7 @@ class MinecraftModrinthPlugin implements HasPluginSettings, Plugin
                             return;
                         }
 
-                        self::clearSingleServer($service, $fileRepository, (int) $data['server_id']);
+                        self::clearSingleServer($service, $fileRepository, $operations, (int) $data['server_id']);
                     }),
             ])->belowContent(trans('pelican-minecraft-modrinth::strings.settings.clear_cache_helper')),
         ];
@@ -226,15 +228,28 @@ class MinecraftModrinthPlugin implements HasPluginSettings, Plugin
     }
 
     /**
-     * Clears and immediately re-scans a single server - unlike
-     * clearAllServers(), this can afford a synchronous re-scan since it's
-     * scoped to one server's mods rather than every server's. Deliberately
+     * Clears one server and queues a fresh scan without blocking the settings
+     * request. Deliberately
      * does not bump the Hangar hash-match cache (see CacheVersion) since
      * that cache isn't per-server - bumping it here would affect every
      * other server too, contradicting "just this one server".
      */
-    private static function clearSingleServer(MinecraftModrinthService $service, DaemonFileRepository $fileRepository, int $serverId): void
+    private static function clearSingleServer(
+        MinecraftModrinthService $service,
+        DaemonFileRepository $fileRepository,
+        InstalledOperationManager $operations,
+        int $serverId,
+    ): void
     {
+        if (!$operations->supportsAsyncDispatch()) {
+            Notification::make()
+                ->title(trans('pelican-minecraft-modrinth::strings.operations.queue_required'))
+                ->danger()
+                ->send();
+
+            return;
+        }
+
         $server = Server::query()->with('egg')->find($serverId);
 
         if (!$server) {
@@ -250,11 +265,25 @@ class MinecraftModrinthPlugin implements HasPluginSettings, Plugin
             $type = ModrinthProjectType::fromServer($server);
 
             if ($type) {
-                $service->resetInstalledMods($server, $fileRepository, $type);
+                $scanState = $operations->state($server, $type, InstalledOperationManager::OPERATION_SCAN);
+                if (!$scanState?->isActive()) {
+                    $service->clearInstalledModsMetadata($server, $fileRepository, $type);
+                    $dispatch = $operations->dispatchScan($server, $type, force: true);
+                    if (!$dispatch['dispatched'] && $dispatch['reason'] !== 'already_active') {
+                        throw new Exception('Failed to dispatch installed scan.');
+                    }
+                }
             }
 
             if (ModrinthProjectType::supportsDatapacks($server)) {
-                $service->resetInstalledMods($server, $fileRepository, ModrinthProjectType::Datapack);
+                $datapackState = $operations->state($server, ModrinthProjectType::Datapack, InstalledOperationManager::OPERATION_SCAN);
+                if (!$datapackState?->isActive()) {
+                    $service->clearInstalledModsMetadata($server, $fileRepository, ModrinthProjectType::Datapack);
+                    $dispatch = $operations->dispatchScan($server, ModrinthProjectType::Datapack, force: true);
+                    if (!$dispatch['dispatched'] && $dispatch['reason'] !== 'already_active') {
+                        throw new Exception('Failed to dispatch datapack scan.');
+                    }
+                }
             }
         } catch (Exception $exception) {
             report($exception);

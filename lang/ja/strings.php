@@ -99,6 +99,21 @@ return [
         'uninstall_description' => ':name を本当にアンインストールしますか?サーバーからファイルが完全に削除されます。',
     ],
 
+    'operations' => [
+        'scan' => 'インストール済みファイルのスキャン',
+        'bulk_update' => '一括更新',
+        'checking' => 'インストール済みデータを確認しています…',
+        'queued' => ':operation をキューに追加しました。',
+        'running' => ':operation を実行中です…',
+        'running_progress' => ':operation を実行中です（:progress / :total）',
+        'completed' => ':operation が完了しました。',
+        'failed' => ':operation に失敗しました。',
+        'dispatched' => 'バックグラウンド処理を開始しました。',
+        'already_active' => '別のインストール済みMod処理がすでに実行中です。',
+        'queue_required' => 'バックグラウンド処理には非同期Laravelキューの設定とqueue workerの起動が必要です。',
+        'dispatch_failed' => 'バックグラウンド処理を開始できませんでした。',
+    ],
+
     'notifications' => [
         'install_success' => 'インストールが完了しました',
         'install_success_body' => ':name のバージョン :version を正常にインストールしました',

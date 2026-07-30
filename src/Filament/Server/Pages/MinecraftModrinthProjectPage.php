@@ -11,8 +11,11 @@ use Boy132\MinecraftModrinth\Enums\MinecraftLoader;
 use Boy132\MinecraftModrinth\Enums\ModrinthProjectType;
 use Boy132\MinecraftModrinth\Enums\ProjectSourceKey;
 use Boy132\MinecraftModrinth\Facades\MinecraftModrinth;
+use Boy132\MinecraftModrinth\Services\InstalledOperationManager;
 use Boy132\MinecraftModrinth\Services\VersionLookupCoordinator;
 use Boy132\MinecraftModrinth\Support\CacheVersion;
+use Boy132\MinecraftModrinth\Support\InstalledOperationState;
+use Boy132\MinecraftModrinth\Support\InstalledScanResult;
 use Boy132\MinecraftModrinth\Support\ProjectSourceRegistry;
 use Exception;
 use Filament\Actions\Action;
@@ -82,6 +85,18 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
     /** Null until the deferred table request loads the Wings file count; -1 means unavailable. */
     public ?int $installedFilesCount = null;
+
+    /** @var array<string, mixed>|null Browser-safe status payload for the active background operation. */
+    public ?array $installedOperation = null;
+
+    /** Prevent a completed operation from refreshing the deferred table more than once. */
+    public ?string $handledInstalledOperation = null;
+
+    /** Avoid repeating the operator-facing queue configuration warning in one component session. */
+    public bool $operationQueueWarningShown = false;
+
+    /** Enable polling only while an Installed operation needs observation. */
+    public bool $pollInstalledOperations = false;
 
     /** Per-request timing state used only by temporary initial-load diagnostics. */
     protected float $modManagerTimingStartedAt = 0.0;
@@ -177,6 +192,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
         );
 
         $this->loadDefaultActiveTab();
+        $this->refreshInstalledOperationState();
         $this->queueTableHeightRecalculation();
     }
 
@@ -231,6 +247,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
         // with far fewer results) - plus resets the column manager state. It was
         // being silently dropped by this method overriding it without calling it.
         $this->baseUpdatedActiveTab();
+        $this->refreshInstalledOperationState();
 
         // Category IDs and the Modrinth-only environment filter are scoped to
         // a source tab, so discard them before Filament rebuilds the form.
@@ -958,71 +975,6 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
         );
     }
 
-    /**
-     * @return array{updated: int, failed: int}
-     */
-    private function performBulkUpdate(Server $server, DaemonFileRepository $fileRepository): array
-    {
-        $updatedCount = 0;
-        $failedCount = 0;
-        $installedMods = $this->getInstalledModsMetadata();
-        $registry = app(ProjectSourceRegistry::class);
-        $type = static::detectProjectType($server);
-
-        foreach ($installedMods as $installedMod) {
-            try {
-                if (!isset($installedMod['project_id'], $installedMod['project_slug'], $installedMod['project_title'], $installedMod['version_id'])) {
-                    continue;
-                }
-
-                $sourceKey = ProjectSourceKey::tryFrom($installedMod['source'] ?? '') ?? ProjectSourceKey::Modrinth;
-                $source = $registry->get($sourceKey);
-
-                if (!$source || !$type) {
-                    continue;
-                }
-
-                $versions = $source->getVersions($installedMod['project_id'], $server, $type);
-                if (empty($versions) || !isset($versions[0]['id'], $versions[0]['version_number'], $versions[0]['files'])) {
-                    continue;
-                }
-
-                $latestVersion = $versions[0];
-                if ($installedMod['version_id'] === $latestVersion['id']) {
-                    continue;
-                }
-
-                $primaryFile = $this->getPrimaryFile($latestVersion['files']);
-                if (!$primaryFile) {
-                    throw new Exception('No downloadable file found for bulk update');
-                }
-
-                $record = [
-                    'project_id' => $installedMod['project_id'],
-                    'slug' => $installedMod['project_slug'],
-                    'title' => $installedMod['project_title'],
-                    'author' => $installedMod['author'] ?? null,
-                    'source' => $sourceKey->value,
-                ];
-
-                $this->performInstallOrUpdate($server, $fileRepository, $record, $latestVersion, $primaryFile, $installedMod);
-                $updatedCount++;
-            } catch (Exception $exception) {
-                report($exception);
-                $failedCount++;
-            }
-        }
-
-        if ($updatedCount > 0 || $failedCount > 0) {
-            $this->forgetInstalledModsMetadata();
-            $this->forgetVersionCaches();
-        }
-
-        return [
-            'updated' => $updatedCount,
-            'failed' => $failedCount,
-        ];
-    }
 
     /**
      * @param array<string, mixed> $record
@@ -1062,42 +1014,43 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                 if ($this->activeTab === 'installed') {
                     $perPage = 20;
                     $scanCacheKey = MinecraftModrinth::getHashScanCacheKey($server, $type);
-                    $scanWasCached = Cache::has($scanCacheKey);
-                    $installedMods = $scanWasCached ? [] : $this->getInstalledModsMetadata();
-                    $unknownFiles = [];
+                    $scanResult = InstalledScanResult::fromCache(Cache::get($scanCacheKey));
+                    $installedMods = $this->getInstalledModsMetadata();
+                    $unknownFiles = $scanResult === null ? [] : $scanResult->unknownFiles;
+                    $this->unknownFiles = $unknownFiles;
 
-                    /** @var DaemonFileRepository $fileRepository */
-                    $fileRepository = app(DaemonFileRepository::class);
+                    if ($scanResult !== null) {
+                        $this->installedFilesCount = $scanResult->diskFileCount;
+                    }
 
-                    $metadataBefore = count($installedMods);
+                    $operations = app(InstalledOperationManager::class);
+                    $scanState = $operations->state(
+                        $server,
+                        $type,
+                        InstalledOperationManager::OPERATION_SCAN,
+                    );
 
-                    try {
-                        $this->unknownFiles = MinecraftModrinth::scanAndImportMods($server, $fileRepository, $type);
-                        $unknownFiles = $this->unknownFiles;
+                    if ($scanResult === null && $scanState === null) {
+                        $dispatch = $operations->dispatchScan($server, $type);
+                        $scanState = $dispatch['state'];
 
-                        $this->forgetInstalledModsMetadata();
-                        $installedMods = $this->getInstalledModsMetadata();
-
-                        $importedCount = $scanWasCached ? 0 : max(0, count($installedMods) - $metadataBefore);
-                        if ($importedCount > 0) {
+                        if ($dispatch['reason'] === 'sync_queue' && !$this->operationQueueWarningShown) {
+                            $this->operationQueueWarningShown = true;
                             Notification::make()
-                                ->title(trans('pelican-minecraft-modrinth::strings.notifications.scan_success', ['count' => $importedCount]))
-                                ->success()
+                                ->title(trans('pelican-minecraft-modrinth::strings.operations.queue_required'))
+                                ->warning()
                                 ->send();
                         }
-                    } catch (Exception $exception) {
-                        report($exception);
+                    }
 
-                        Notification::make()
-                            ->title(trans('pelican-minecraft-modrinth::strings.notifications.scan_failed'))
-                            ->danger()
-                            ->send();
-
-                        $this->unknownFiles = [];
-
-                        if ($scanWasCached) {
-                            $installedMods = $this->getInstalledModsMetadata();
-                        }
+                    if ($scanState !== null) {
+                        $this->installedOperation = $scanState->toCachePayload();
+                        $this->pollInstalledOperations = $this->shouldPollInstalledOperation($scanState);
+                    } else {
+                        $state = $this->refreshInstalledOperationState();
+                        $this->pollInstalledOperations = $state === null
+                            ? $scanResult === null && !$this->operationQueueWarningShown
+                            : $this->shouldPollInstalledOperation($state);
                     }
 
                     if ($search) {
@@ -1827,36 +1780,9 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                 ->icon('tabler-download')
                 ->color('warning')
                 ->requiresConfirmation()
-                ->action(function (DaemonFileRepository $fileRepository) use ($server) {
-                    $result = $this->performBulkUpdate($server, $fileRepository);
-
-                    if ($result['updated'] === 0 && $result['failed'] === 0) {
-                        Notification::make()
-                            ->title(trans('pelican-minecraft-modrinth::strings.notifications.bulk_update_none'))
-                            ->info()
-                            ->send();
-
-                        return;
-                    }
-
-                    if ($result['failed'] > 0) {
-                        Notification::make()
-                            ->title(trans('pelican-minecraft-modrinth::strings.notifications.bulk_update_partial', [
-                                'updated' => $result['updated'],
-                                'failed' => $result['failed'],
-                            ]))
-                            ->warning()
-                            ->send();
-
-                        return;
-                    }
-
-                    Notification::make()
-                        ->title(trans('pelican-minecraft-modrinth::strings.notifications.bulk_update_success', [
-                            'count' => $result['updated'],
-                        ]))
-                        ->success()
-                        ->send();
+                ->action(function () use ($server, $type) {
+                    $dispatch = app(InstalledOperationManager::class)->dispatchBulkUpdate($server, $type);
+                    $this->notifyInstalledOperationDispatched($dispatch);
                 })
                 ->visible(fn () => static::detectProjectType($server) !== null && $this->activeTab === 'installed'),
             Action::make('scan_mods')
@@ -1868,8 +1794,8 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                 }))
                 ->icon('tabler-search')
                 ->action(function () use ($server, $type) {
-                    Cache::forget(MinecraftModrinth::getHashScanCacheKey($server, $type));
-                    $this->redirect(static::getUrl());
+                    $dispatch = app(InstalledOperationManager::class)->dispatchScan($server, $type, force: true);
+                    $this->notifyInstalledOperationDispatched($dispatch);
                 })
                 ->visible(fn () => static::detectProjectType($server) !== null),
         ];
@@ -1925,6 +1851,24 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                             ->size(TextSize::Large),
                     ]),
                 $this->getTabsContentComponent(),
+                Section::make()
+                    ->schema([
+                        TextEntry::make('installed_operation_status')
+                            ->hiddenLabel()
+                            ->state(fn () => $this->installedOperationStatus())
+                            ->icon('tabler-loader-2')
+                            ->badge()
+                            ->color(fn () => match ($this->installedOperation['status'] ?? null) {
+                                InstalledOperationState::STATUS_RUNNING => 'info',
+                                InstalledOperationState::STATUS_COMPLETED => 'success',
+                                InstalledOperationState::STATUS_FAILED => 'danger',
+                                default => $this->operationQueueWarningShown ? 'danger' : 'gray',
+                            }),
+                    ])
+                    ->extraAttributes(fn () => $this->pollInstalledOperations
+                        ? ['wire:poll.2s' => 'pollInstalledOperation']
+                        : [])
+                    ->visible(fn () => $this->activeTab === 'installed'),
                 Group::make([
                     EmbeddedTable::make(),
                 ])->extraAttributes([
@@ -1941,5 +1885,238 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     // morphing the table contents beneath it.
                 ]),
             ]);
+    }
+
+    public function pollInstalledOperation(): void
+    {
+        if ($this->activeTab !== 'installed') {
+            return;
+        }
+
+        $state = $this->refreshInstalledOperationState();
+
+        if ($state === null) {
+            $this->pollInstalledOperations = false;
+
+            return;
+        }
+
+        if (!$state->isFinished()) {
+            $this->pollInstalledOperations = true;
+
+            return;
+        }
+
+        $fingerprint = $state->operation.':'.($state->finishedAt ?? '');
+        if ($this->handledInstalledOperation === $fingerprint) {
+            return;
+        }
+
+        $this->handledInstalledOperation = $fingerprint;
+        $this->pollInstalledOperations = false;
+        $this->forgetInstalledModsMetadata();
+        $this->forgetVersionCaches();
+        $this->isTableLoaded = false;
+        $this->resetTable();
+        $this->queueTableHeightRecalculation();
+        $this->notifyInstalledOperationFinished($state);
+
+        /** @var Server $server */
+        $server = Filament::getTenant();
+        if ($state->status === InstalledOperationState::STATUS_COMPLETED) {
+            app(InstalledOperationManager::class)->forget(
+                $server,
+                $state->projectType,
+                $state->operation,
+            );
+        }
+
+        $this->js('queueMicrotask(() => $wire.loadTable())');
+    }
+
+    protected function refreshInstalledOperationState(): ?InstalledOperationState
+    {
+        if ($this->activeTab !== 'installed') {
+            $this->installedOperation = null;
+            $this->pollInstalledOperations = false;
+
+            return null;
+        }
+
+        /** @var Server $server */
+        $server = Filament::getTenant();
+        $type = static::detectProjectType($server);
+
+        if (!$type) {
+            $this->installedOperation = null;
+            $this->pollInstalledOperations = false;
+
+            return null;
+        }
+
+        $operations = app(InstalledOperationManager::class);
+        $states = array_values(array_filter([
+            $operations->state($server, $type, InstalledOperationManager::OPERATION_SCAN),
+            $operations->state($server, $type, InstalledOperationManager::OPERATION_BULK_UPDATE),
+        ]));
+
+        usort($states, function (InstalledOperationState $left, InstalledOperationState $right): int {
+            if ($left->isActive() !== $right->isActive()) {
+                return $left->isActive() ? -1 : 1;
+            }
+
+            return strcmp(
+                $right->finishedAt ?? $right->startedAt ?? $right->queuedAt,
+                $left->finishedAt ?? $left->startedAt ?? $left->queuedAt,
+            );
+        });
+
+        $state = $states[0] ?? null;
+        $this->installedOperation = $state?->toCachePayload();
+        $this->pollInstalledOperations = $this->shouldPollInstalledOperation($state);
+
+        return $state;
+    }
+
+    protected function shouldPollInstalledOperation(?InstalledOperationState $state): bool
+    {
+        if ($state === null) {
+            return $this->activeTab === 'installed' && !$this->operationQueueWarningShown;
+        }
+
+        if ($state->isActive()) {
+            return true;
+        }
+
+        return $this->handledInstalledOperation !== $state->operation.':'.($state->finishedAt ?? '');
+    }
+
+    protected function installedOperationStatus(): string
+    {
+        if ($this->installedOperation === null) {
+            return trans($this->operationQueueWarningShown
+                ? 'pelican-minecraft-modrinth::strings.operations.queue_required'
+                : 'pelican-minecraft-modrinth::strings.operations.checking');
+        }
+
+        $operation = trans(
+            $this->installedOperation['operation'] === InstalledOperationManager::OPERATION_BULK_UPDATE
+                ? 'pelican-minecraft-modrinth::strings.operations.bulk_update'
+                : 'pelican-minecraft-modrinth::strings.operations.scan',
+        );
+        $status = $this->installedOperation['status'] ?? null;
+        $progress = (int) ($this->installedOperation['progress'] ?? 0);
+        $total = $this->installedOperation['total'] ?? null;
+
+        return match ($status) {
+            InstalledOperationState::STATUS_QUEUED => trans('pelican-minecraft-modrinth::strings.operations.queued', compact('operation')),
+            InstalledOperationState::STATUS_RUNNING => is_int($total) && $total > 0
+                ? trans('pelican-minecraft-modrinth::strings.operations.running_progress', compact('operation', 'progress', 'total'))
+                : trans('pelican-minecraft-modrinth::strings.operations.running', compact('operation')),
+            InstalledOperationState::STATUS_COMPLETED => trans('pelican-minecraft-modrinth::strings.operations.completed', compact('operation')),
+            InstalledOperationState::STATUS_FAILED => trans('pelican-minecraft-modrinth::strings.operations.failed', compact('operation')),
+            default => '',
+        };
+    }
+
+    protected function notifyInstalledOperationFinished(InstalledOperationState $state): void
+    {
+        if ($state->status === InstalledOperationState::STATUS_FAILED) {
+            Notification::make()
+                ->title(trans('pelican-minecraft-modrinth::strings.operations.failed', [
+                    'operation' => trans(
+                        $state->operation === InstalledOperationManager::OPERATION_BULK_UPDATE
+                            ? 'pelican-minecraft-modrinth::strings.operations.bulk_update'
+                            : 'pelican-minecraft-modrinth::strings.operations.scan',
+                    ),
+                ]))
+                ->danger()
+                ->send();
+
+            return;
+        }
+
+        if ($state->operation === InstalledOperationManager::OPERATION_BULK_UPDATE) {
+            $updated = (int) ($state->result['updated'] ?? 0);
+            $failed = (int) ($state->result['failed'] ?? 0);
+
+            if ($updated === 0 && $failed === 0) {
+                Notification::make()
+                    ->title(trans('pelican-minecraft-modrinth::strings.notifications.bulk_update_none'))
+                    ->info()
+                    ->send();
+
+                return;
+            }
+
+            $notification = Notification::make()
+                ->title($failed > 0
+                    ? trans('pelican-minecraft-modrinth::strings.notifications.bulk_update_partial', [
+                        'updated' => $updated,
+                        'failed' => $failed,
+                    ])
+                    : trans('pelican-minecraft-modrinth::strings.notifications.bulk_update_success', ['count' => $updated]));
+
+            if ($failed > 0) {
+                $notification->warning();
+            } else {
+                $notification->success();
+            }
+
+            $notification->send();
+
+            return;
+        }
+
+        Notification::make()
+            ->title(trans('pelican-minecraft-modrinth::strings.operations.completed', [
+                'operation' => trans('pelican-minecraft-modrinth::strings.operations.scan'),
+            ]))
+            ->success()
+            ->send();
+    }
+
+    /**
+     * @param array{dispatched: bool, reason: ?string, state: ?InstalledOperationState} $dispatch
+     */
+    protected function notifyInstalledOperationDispatched(array $dispatch): void
+    {
+        $state = $dispatch['state'];
+        if ($state !== null) {
+            $this->installedOperation = $state->toCachePayload();
+            $this->pollInstalledOperations = $this->shouldPollInstalledOperation($state);
+        }
+
+        if ($dispatch['dispatched']) {
+            Notification::make()
+                ->title(trans('pelican-minecraft-modrinth::strings.operations.dispatched'))
+                ->info()
+                ->send();
+
+            return;
+        }
+
+        $reason = $dispatch['reason'];
+
+        if ($reason === 'sync_queue') {
+            $this->operationQueueWarningShown = true;
+            $this->pollInstalledOperations = false;
+        }
+        $title = match ($reason) {
+            'already_active' => trans('pelican-minecraft-modrinth::strings.operations.already_active'),
+            'sync_queue' => trans('pelican-minecraft-modrinth::strings.operations.queue_required'),
+            default => trans('pelican-minecraft-modrinth::strings.operations.dispatch_failed'),
+        };
+
+        $notification = Notification::make()
+            ->title($title);
+
+        if ($reason === 'already_active') {
+            $notification->warning();
+        } else {
+            $notification->danger();
+        }
+
+        $notification->send();
     }
 }

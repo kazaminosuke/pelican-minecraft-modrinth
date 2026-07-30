@@ -43,6 +43,19 @@ https://github.com/kazaminosuke/pelican-minecraft-modrinth/releases/latest/downl
 3. Open the Pelican Panel plugin installer
 4. Upload the ZIP file
 
+### Queue worker
+
+Cold scans of installed files and bulk updates run as Laravel queue jobs so
+that Livewire requests stay responsive. Configure an asynchronous queue driver
+(for example `QUEUE_CONNECTION=database`) and keep a worker running:
+
+```sh
+php artisan queue:work
+```
+
+The `sync` and `null` drivers are intentionally rejected for these operations;
+the mod manager will show a queue configuration warning instead of blocking the browser request.
+
 ## Repository
 
 https://github.com/kazaminosuke/pelican-minecraft-modrinth

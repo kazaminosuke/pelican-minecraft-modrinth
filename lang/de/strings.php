@@ -99,6 +99,21 @@ return [
         'uninstall_description' => 'Möchtest du :name wirklich deinstallieren? Dies wird die Datei dauerhaft von deinem Server löschen.',
     ],
 
+    'operations' => [
+        'scan' => 'Scan installierter Dateien',
+        'bulk_update' => 'Massenaktualisierung',
+        'checking' => 'Installierte Daten werden geprüft…',
+        'queued' => ':operation wurde eingereiht.',
+        'running' => ':operation wird ausgeführt…',
+        'running_progress' => ':operation wird ausgeführt (:progress / :total)…',
+        'completed' => ':operation wurde abgeschlossen.',
+        'failed' => ':operation ist fehlgeschlagen.',
+        'dispatched' => 'Der Hintergrundvorgang wurde eingereiht.',
+        'already_active' => 'Ein anderer Vorgang für installierte Mods läuft bereits.',
+        'queue_required' => 'Hintergrundvorgänge benötigen eine asynchrone Laravel-Queue und einen laufenden Queue-Worker.',
+        'dispatch_failed' => 'Der Hintergrundvorgang konnte nicht eingereiht werden.',
+    ],
+
     'notifications' => [
         'install_success' => 'Installation abgeschlossen',
         'install_success_body' => ':name Version :version erfolgreich installiert',

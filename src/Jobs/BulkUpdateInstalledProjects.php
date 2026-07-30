@@ -1,0 +1,118 @@
+<?php
+
+namespace Boy132\MinecraftModrinth\Jobs;
+
+use App\Models\Server;
+use App\Repositories\Daemon\DaemonFileRepository;
+use Boy132\MinecraftModrinth\Enums\ModrinthProjectType;
+use Boy132\MinecraftModrinth\Services\InstalledOperationManager;
+use Boy132\MinecraftModrinth\Services\InstalledProjectUpdateService;
+use Illuminate\Container\Container;
+use Illuminate\Contracts\Queue\ShouldBeUnique;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Foundation\Queue\Queueable;
+use Throwable;
+
+final class BulkUpdateInstalledProjects implements ShouldBeUnique, ShouldQueue
+{
+    use Queueable;
+
+    public int $tries = 1;
+
+    public int $timeout = 900;
+
+    public bool $failOnTimeout = true;
+
+    public int $uniqueFor = 1200;
+
+    public function __construct(
+        public readonly int $serverId,
+        public readonly string $projectType,
+    ) {}
+
+    public function uniqueId(): string
+    {
+        return "mod-manager:bulk-update:{$this->serverId}:{$this->projectType}";
+    }
+
+    public function handle(
+        DaemonFileRepository $fileRepository,
+        InstalledProjectUpdateService $updates,
+        InstalledOperationManager $operations,
+    ): void {
+        $type = ModrinthProjectType::tryFrom($this->projectType);
+
+        if (!$type) {
+            return;
+        }
+
+        /** @var Server|null $server */
+        $server = Server::query()->with('egg')->find($this->serverId);
+
+        if (!$server) {
+            $operations->fail(
+                $this->serverId,
+                $type,
+                InstalledOperationManager::OPERATION_BULK_UPDATE,
+                'server_not_found',
+            );
+
+            return;
+        }
+
+        $operations->start(
+            $server,
+            $type,
+            InstalledOperationManager::OPERATION_BULK_UPDATE,
+        );
+
+        try {
+            $result = $updates->updateAll(
+                $server,
+                $fileRepository,
+                $type,
+                function (int $progress, int $total) use ($operations, $server, $type): void {
+                    $operations->progress(
+                        $server,
+                        $type,
+                        InstalledOperationManager::OPERATION_BULK_UPDATE,
+                        $progress,
+                        $total,
+                    );
+                },
+            );
+
+            $operations->complete(
+                $server,
+                $type,
+                InstalledOperationManager::OPERATION_BULK_UPDATE,
+                $result,
+            );
+        } catch (Throwable $exception) {
+            report($exception);
+
+            $operations->fail(
+                $server,
+                $type,
+                InstalledOperationManager::OPERATION_BULK_UPDATE,
+                'bulk_update_exception',
+            );
+        }
+    }
+
+    public function failed(?Throwable $exception): void
+    {
+        $type = ModrinthProjectType::tryFrom($this->projectType);
+
+        if (!$type) {
+            return;
+        }
+
+        Container::getInstance()->make(InstalledOperationManager::class)->fail(
+            $this->serverId,
+            $type,
+            InstalledOperationManager::OPERATION_BULK_UPDATE,
+            $exception === null ? 'bulk_update_job_failed' : 'bulk_update_job_exception',
+        );
+    }
+}

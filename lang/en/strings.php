@@ -99,6 +99,21 @@ return [
         'uninstall_description' => 'Are you sure you want to uninstall :name? This will permanently delete the file from your server.',
     ],
 
+    'operations' => [
+        'scan' => 'Installed-file scan',
+        'bulk_update' => 'Bulk update',
+        'checking' => 'Checking installed data…',
+        'queued' => ':operation is queued.',
+        'running' => ':operation is running…',
+        'running_progress' => ':operation is running (:progress / :total)…',
+        'completed' => ':operation completed.',
+        'failed' => ':operation failed.',
+        'dispatched' => 'The background operation has been queued.',
+        'already_active' => 'Another installed-mod operation is already running.',
+        'queue_required' => 'Background operations require an asynchronous Laravel queue and a running queue worker.',
+        'dispatch_failed' => 'The background operation could not be queued.',
+    ],
+
     'notifications' => [
         'install_success' => 'Installation completed',
         'install_success_body' => 'Successfully installed :name version :version',
