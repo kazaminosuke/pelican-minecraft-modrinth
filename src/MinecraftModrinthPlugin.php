@@ -94,6 +94,12 @@ class MinecraftModrinthPlugin implements HasPluginSettings, Plugin
                 .'</style>'
             ),
         );
+        $panel->renderHook(
+            PanelsRenderHook::BODY_END,
+            fn () => view('pelican-minecraft-modrinth::components.table-swr-cache'),
+            MinecraftModrinthProjectPage::class,
+        );
+
     }
 
     public function boot(Panel $panel): void {}

@@ -1873,6 +1873,11 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     EmbeddedTable::make(),
                 ])->extraAttributes([
                     'class' => 'mmr-table-scroll-ctn',
+                    'data-mmr-swr-scope' => json_encode([
+                        'user_id' => (string) user()->getKey(),
+                        'server_id' => (string) $server->getKey(),
+                        'project_type' => $type?->value,
+                    ], JSON_THROW_ON_ERROR),
                     // A CSS calc() estimate of "space above the table" is inherently
                     // fragile (topbar/sidebar height, and this page's own header
                     // wrapping, all vary), and getting it wrong causes the page
