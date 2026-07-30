@@ -3,14 +3,17 @@
 namespace Boy132\MinecraftModrinth\Sources;
 
 use App\Models\Server;
+use Boy132\MinecraftModrinth\Contracts\BatchLatestVersionSourceInterface;
 use Boy132\MinecraftModrinth\Contracts\ProjectSourceInterface;
 use Boy132\MinecraftModrinth\Enums\ModrinthProjectType;
 use Boy132\MinecraftModrinth\Enums\ProjectSourceKey;
+use Boy132\MinecraftModrinth\Support\LatestVersionLookupRequest;
+use Boy132\MinecraftModrinth\Support\LatestVersionLookupResult;
 use Boy132\MinecraftModrinth\Support\MinecraftVersionResolver;
 use Exception;
 use Illuminate\Support\Facades\Http;
 
-class ModrinthSource implements ProjectSourceInterface
+class ModrinthSource implements BatchLatestVersionSourceInterface, ProjectSourceInterface
 {
     protected const BASE_URL = 'https://api.modrinth.com/v2';
 
@@ -301,6 +304,139 @@ class ModrinthSource implements ProjectSourceInterface
     }
 
     /**
+     * @param array<int, LatestVersionLookupRequest> $requests
+     */
+    public function lookupLatestVersions(
+        array $requests,
+        Server $server,
+        ModrinthProjectType $type,
+    ): LatestVersionLookupResult {
+        $startedAt = microtime(true);
+        $validRequests = array_values(array_filter(
+            $requests,
+            fn ($request) => $request instanceof LatestVersionLookupRequest,
+        ));
+
+        if ($validRequests === []) {
+            return LatestVersionLookupResult::empty();
+        }
+
+        $minecraftLoader = $type->getModrinthLoader($server);
+        if (!$minecraftLoader) {
+            return LatestVersionLookupResult::failed($validRequests, 'No compatible Modrinth loader is configured.');
+        }
+
+        $minecraftVersion = MinecraftVersionResolver::resolve($server);
+        $versionsByKey = [];
+        $unresolvedKeys = [];
+        $failuresByKey = [];
+        $pendingByHash = [];
+        $cacheKeysByHash = [];
+
+        foreach ($validRequests as $request) {
+            $sha512 = $request->hash('sha512');
+
+            if ($sha512 === null) {
+                $unresolvedKeys[] = $request->key();
+
+                continue;
+            }
+
+            $cacheKey = 'modrinth_latest:'.md5($sha512.'|'.$minecraftVersion.'|'.$minecraftLoader);
+            $cached = cache()->get($cacheKey);
+
+            if (is_array($cached) && $cached !== []) {
+                $versionsByKey[$request->key()] = $cached;
+
+                continue;
+            }
+
+            $pendingByHash[$sha512][] = $request;
+            $cacheKeysByHash[$sha512] = $cacheKey;
+        }
+
+        $requestStartedAt = null;
+        $returnedHashCount = 0;
+
+        if ($pendingByHash !== []) {
+            $requestStartedAt = microtime(true);
+
+            try {
+                $payload = Http::asJson()
+                    ->timeout(10)
+                    ->connectTimeout(5)
+                    ->throw()
+                    ->post(self::BASE_URL.'/version_files/update', [
+                        'hashes' => array_keys($pendingByHash),
+                        'algorithm' => 'sha512',
+                        'loaders' => [$minecraftLoader],
+                        'game_versions' => [$minecraftVersion],
+                    ])
+                    ->json();
+
+                if (!is_array($payload)) {
+                    throw new Exception('Invalid Modrinth bulk latest-version response.');
+                }
+
+                $returnedHashCount = count($payload);
+
+                foreach ($pendingByHash as $hash => $hashRequests) {
+                    $version = $payload[$hash] ?? null;
+
+                    if (is_array($version) && $version !== []) {
+                        cache()->put($cacheKeysByHash[$hash], $version, now()->addMinutes(30));
+
+                        foreach ($hashRequests as $request) {
+                            $versionsByKey[$request->key()] = $version;
+                        }
+                    } else {
+                        foreach ($hashRequests as $request) {
+                            $unresolvedKeys[] = $request->key();
+                        }
+                    }
+                }
+            } catch (Exception $exception) {
+                report($exception);
+
+                foreach ($pendingByHash as $hashRequests) {
+                    foreach ($hashRequests as $request) {
+                        $failuresByKey[$request->key()] = $exception->getMessage();
+                    }
+                }
+            } finally {
+                logger()->info('Mod manager timing', [
+                    'stage' => 'modrinth_versions_bulk_request',
+                    'request_id' => request()->attributes->get('mmr_timing_request_id'),
+                    'endpoint' => '/version_files/update',
+                    'started_after_ms' => $this->getModManagerTimingElapsedMs($requestStartedAt),
+                    'finished_after_ms' => $this->getModManagerTimingElapsedMs(),
+                    'duration_ms' => (int) round((microtime(true) - $requestStartedAt) * 1000),
+                    'requested_hash_count' => count($pendingByHash),
+                    'returned_hash_count' => $returnedHashCount,
+                ]);
+            }
+        }
+
+        logger()->info('Mod manager timing', [
+            'stage' => 'modrinth_latest_lookup_batch',
+            'request_id' => request()->attributes->get('mmr_timing_request_id'),
+            'started_after_ms' => $this->getModManagerTimingElapsedMs($startedAt),
+            'finished_after_ms' => $this->getModManagerTimingElapsedMs(),
+            'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+            'requested_project_count' => count($validRequests),
+            'resolved_project_count' => count($versionsByKey),
+            'unresolved_project_count' => count($unresolvedKeys),
+            'failed_project_count' => count($failuresByKey),
+        ]);
+
+        return new LatestVersionLookupResult(
+            versionsByKey: $versionsByKey,
+            unresolvedKeys: $unresolvedKeys,
+            failuresByKey: $failuresByKey,
+        );
+    }
+
+    /**
      * @param array<string, string> $hashesByFilename [filename => sha512hash]
      * @return array<string, mixed> [sha512hash => versionData]
      */
@@ -487,5 +623,16 @@ class ModrinthSource implements ProjectSourceInterface
                 return null;
             }
         });
+    }
+
+    protected function getModManagerTimingElapsedMs(?float $timestamp = null): ?int
+    {
+        $startedAt = request()->attributes->get('mmr_timing_started_at');
+
+        if (!is_float($startedAt)) {
+            return null;
+        }
+
+        return (int) round((($timestamp ?? microtime(true)) - $startedAt) * 1000);
     }
 }

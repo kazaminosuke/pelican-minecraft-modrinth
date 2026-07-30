@@ -3,16 +3,19 @@
 namespace Boy132\MinecraftModrinth\Sources;
 
 use App\Models\Server;
+use Boy132\MinecraftModrinth\Contracts\BatchLatestVersionSourceInterface;
 use Boy132\MinecraftModrinth\Contracts\ProjectSourceInterface;
 use Boy132\MinecraftModrinth\Enums\MinecraftLoader;
 use Boy132\MinecraftModrinth\Enums\ModrinthProjectType;
 use Boy132\MinecraftModrinth\Enums\ProjectSourceKey;
+use Boy132\MinecraftModrinth\Support\LatestVersionLookupRequest;
+use Boy132\MinecraftModrinth\Support\LatestVersionLookupResult;
 use Boy132\MinecraftModrinth\Support\MinecraftVersionResolver;
 use Exception;
 use Illuminate\Http\Client\Pool;
 use Illuminate\Support\Facades\Http;
 
-class CurseForgeSource implements ProjectSourceInterface
+class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSourceInterface
 {
     protected const BASE_URL = 'https://api.curseforge.com/v1';
 
@@ -42,6 +45,9 @@ class CurseForgeSource implements ProjectSourceInterface
     protected const SORT_FIELD_LAST_UPDATED = 3;
 
     protected const SORT_FIELD_POPULARITY = 2;
+
+    /** @var array<string, string> */
+    protected array $lastWarmVersionFailures = [];
 
     public function getKey(): ProjectSourceKey
     {
@@ -254,13 +260,15 @@ class CurseForgeSource implements ProjectSourceInterface
     }
 
     /**
-     * Warm the same per-project cache used by getVersions().
+     * Warm a latest-only per-project cache for update detection.
      *
      * CurseForge's bulk mods endpoint contains latestFiles plus
      * latestFilesIndexes. When those indexes can be resolved to full files for
      * the active Minecraft version and loader, one request replaces all
      * per-project lookups. Any project whose bulk data is incomplete falls
      * back to its existing files endpoint so update detection remains exact.
+     * This cache is intentionally separate from the complete version history
+     * consumed by getVersions() and the versions modal.
      *
      * @param array<int, string> $projectIds
      * @return array<string, array<int, mixed>>
@@ -273,15 +281,17 @@ class CurseForgeSource implements ProjectSourceInterface
             return [];
         }
 
+        $this->lastWarmVersionFailures = [];
         $versionsByProjectId = [];
         $pending = [];
 
         foreach (array_values(array_unique($projectIds)) as $projectId) {
-            $cacheKey = "curseforge_files:$projectId:".md5(json_encode($params));
+            $projectId = (string) $projectId;
+            $cacheKey = "curseforge_latest:$projectId:".md5(json_encode($params));
             $cached = cache()->get($cacheKey);
 
             if (is_array($cached)) {
-                $versionsByProjectId[$projectId] = $this->normalizeVersions($cached);
+                $versionsByProjectId[$projectId] = $cached;
 
                 continue;
             }
@@ -305,9 +315,16 @@ class CurseForgeSource implements ProjectSourceInterface
         $bulkVersionsByProjectId = $this->extractBulkLatestVersions($bulkResponse, $params);
 
         foreach ($bulkVersionsByProjectId as $projectId => $payload) {
+            if (!isset($pending[$projectId])) {
+                continue;
+            }
+
             $cacheKey = $pending[$projectId];
-            cache()->put($cacheKey, $payload, now()->addMinutes(30));
-            $versionsByProjectId[$projectId] = $this->normalizeVersions($payload);
+            $versions = $this->normalizeVersions($payload);
+            if ($versions !== []) {
+                cache()->put($cacheKey, $versions, now()->addMinutes(30));
+                $versionsByProjectId[$projectId] = $versions;
+            }
             unset($pending[$projectId]);
         }
 
@@ -348,19 +365,89 @@ class CurseForgeSource implements ProjectSourceInterface
                 if (!is_array($payload)) {
                     throw new Exception("Invalid CurseForge versions response for project $projectId");
                 }
+
+                $versions = $this->normalizeVersions($payload);
             } catch (Exception $exception) {
                 report($exception);
-                $payload = [];
+                $this->lastWarmVersionFailures[(string) $projectId] = $exception->getMessage();
+
+                continue;
             }
 
-            cache()->put($cacheKey, $payload, now()->addMinutes(30));
-            $versionsByProjectId[$projectId] = $this->normalizeVersions($payload);
+            // Do not negative-cache a transient API failure or an empty result.
+            // A later request should be able to retry without waiting 30 minutes.
+            if ($versions !== []) {
+                cache()->put($cacheKey, $versions, now()->addMinutes(30));
+                $versionsByProjectId[$projectId] = $versions;
+            }
         }
 
         return $versionsByProjectId;
     }
 
-    /** @param array<int, string> $projectIds */
+    /**
+     * @param array<int, LatestVersionLookupRequest> $requests
+     */
+    public function lookupLatestVersions(
+        array $requests,
+        Server $server,
+        ModrinthProjectType $type,
+    ): LatestVersionLookupResult {
+        $startedAt = microtime(true);
+        $validRequests = array_values(array_filter(
+            $requests,
+            fn ($request) => $request instanceof LatestVersionLookupRequest,
+        ));
+
+        if ($validRequests === []) {
+            return LatestVersionLookupResult::empty();
+        }
+
+        $versionsByProjectId = $this->warmVersions(
+            array_map(fn (LatestVersionLookupRequest $request) => $request->projectId, $validRequests),
+            $server,
+            $type,
+        );
+
+        $versionsByKey = [];
+        $unresolvedKeys = [];
+        $failuresByKey = [];
+
+        foreach ($validRequests as $request) {
+            $version = $versionsByProjectId[$request->projectId][0] ?? null;
+
+            if (is_array($version)) {
+                $versionsByKey[$request->key()] = $version;
+            } elseif (isset($this->lastWarmVersionFailures[$request->projectId])) {
+                $failuresByKey[$request->key()] = $this->lastWarmVersionFailures[$request->projectId];
+            } else {
+                $unresolvedKeys[] = $request->key();
+            }
+        }
+
+        logger()->info('Mod manager timing', [
+            'stage' => 'curseforge_latest_lookup_batch',
+            'request_id' => request()->attributes->get('mmr_timing_request_id'),
+            'started_after_ms' => $this->getModManagerTimingElapsedMs($startedAt),
+            'finished_after_ms' => $this->getModManagerTimingElapsedMs(),
+            'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+            'requested_project_count' => count($validRequests),
+            'resolved_project_count' => count($versionsByKey),
+            'unresolved_project_count' => count($unresolvedKeys),
+            'failed_project_count' => count($failuresByKey),
+        ]);
+
+        return new LatestVersionLookupResult(
+            versionsByKey: $versionsByKey,
+            unresolvedKeys: $unresolvedKeys,
+            failuresByKey: $failuresByKey,
+        );
+    }
+
+    /**
+     * @param array<int, string> $projectIds
+     * @return array<string, mixed>
+     */
     protected function getBulkMods(array $projectIds): array
     {
         try {
@@ -461,7 +548,10 @@ class CurseForgeSource implements ProjectSourceInterface
         return $versionsByProjectId;
     }
 
-    /** @param array<int, string> $fileIds */
+    /**
+     * @param array<int, string> $fileIds
+     * @return array<string, mixed>
+     */
     protected function getBulkFiles(array $fileIds): array
     {
         $files = [];

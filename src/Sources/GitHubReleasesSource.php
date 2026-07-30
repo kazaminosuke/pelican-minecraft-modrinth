@@ -3,11 +3,17 @@
 namespace Boy132\MinecraftModrinth\Sources;
 
 use App\Models\Server;
+use Boy132\MinecraftModrinth\Contracts\BatchLatestVersionSourceInterface;
 use Boy132\MinecraftModrinth\Contracts\ProjectSourceInterface;
 use Boy132\MinecraftModrinth\Enums\ModrinthProjectType;
 use Boy132\MinecraftModrinth\Enums\ProjectSourceKey;
+use Boy132\MinecraftModrinth\Support\LatestVersionLookupRequest;
+use Boy132\MinecraftModrinth\Support\LatestVersionLookupResult;
 use Exception;
+use Illuminate\Http\Client\Pool;
+use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
+use Throwable;
 
 /**
  * Lightweight "direct tracking" source: unlike Modrinth/CurseForge/Hangar, GitHub
@@ -18,9 +24,13 @@ use Illuminate\Support\Facades\Http;
  * non-draft release is returned as-is by getVersions() - the admin is responsible
  * for picking the right one, same as they would on the repo's Releases page.
  */
-class GitHubReleasesSource implements ProjectSourceInterface
+class GitHubReleasesSource implements BatchLatestVersionSourceInterface, ProjectSourceInterface
 {
     protected const BASE_URL = 'https://api.github.com';
+
+    protected const GRAPHQL_BATCH_SIZE = 20;
+
+    protected const REST_POOL_SIZE = 4;
 
     public function getKey(): ProjectSourceKey
     {
@@ -130,6 +140,85 @@ class GitHubReleasesSource implements ProjectSourceInterface
     }
 
     /**
+     * Resolve only the latest release containing a JAR. This deliberately uses
+     * a cache separate from the full release history used by the modal.
+     *
+     * @param array<int, LatestVersionLookupRequest> $requests
+     */
+    public function lookupLatestVersions(
+        array $requests,
+        Server $server,
+        ModrinthProjectType $type,
+    ): LatestVersionLookupResult {
+        $requests = array_values(array_filter(
+            $requests,
+            fn ($request): bool => $request instanceof LatestVersionLookupRequest,
+        ));
+
+        if ($requests === []) {
+            return LatestVersionLookupResult::empty();
+        }
+
+        if (!$this->supportsProjectType($type)) {
+            return new LatestVersionLookupResult(unresolvedKeys: array_map(
+                fn (LatestVersionLookupRequest $request): string => $request->key(),
+                $requests,
+            ));
+        }
+
+        $versions = [];
+        $unresolved = [];
+        $failures = [];
+        $requestsByRepository = [];
+        $repositories = [];
+
+        foreach ($requests as $request) {
+            $parsed = $this->parseIdentifier($request->projectId);
+
+            if ($parsed === null) {
+                $unresolved[] = $request->key();
+                continue;
+            }
+
+            [$owner, $name] = $parsed;
+            $repositoryKey = strtolower("$owner/$name");
+            $requestsByRepository[$repositoryKey][] = $request;
+            $repositories[$repositoryKey] = ['owner' => $owner, 'name' => $name];
+        }
+
+        $pending = [];
+
+        foreach ($repositories as $repositoryKey => $repository) {
+            $cacheKey = 'github_latest_release:v1:'.$repositoryKey;
+            $cached = cache()->get($cacheKey);
+
+            if (is_array($cached)) {
+                foreach ($requestsByRepository[$repositoryKey] as $request) {
+                    $versions[$request->key()] = $cached;
+                }
+                continue;
+            }
+
+            $pending[$repositoryKey] = [...$repository, 'cache_key' => $cacheKey];
+        }
+
+        if ($pending !== []) {
+            $resolved = $this->token() !== ''
+                ? $this->lookupLatestVersionsWithGraphQl($pending, $requestsByRepository)
+                : $this->lookupLatestVersionsWithRestPool($pending, $requestsByRepository);
+            $versions = array_replace($versions, $resolved->versions());
+            $unresolved = array_merge($unresolved, $resolved->unresolvedKeys());
+            $failures = array_replace($failures, $resolved->failures());
+        }
+
+        return new LatestVersionLookupResult(
+            versionsByKey: $versions,
+            unresolvedKeys: $unresolved,
+            failuresByKey: $failures,
+        );
+    }
+
+    /**
      * @param array<string, string> $hashesByFilename
      * @return array<string, mixed>
      */
@@ -227,6 +316,394 @@ class GitHubReleasesSource implements ProjectSourceInterface
             'featured' => false,
             'files' => $files,
         ];
+    }
+
+    /**
+     * @param array<string, array{owner: string, name: string, cache_key: string}> $pending
+     * @param array<string, array<int, LatestVersionLookupRequest>> $requestsByRepository
+     */
+    protected function lookupLatestVersionsWithGraphQl(array $pending, array $requestsByRepository): LatestVersionLookupResult
+    {
+        $startedAt = microtime(true);
+        $versions = [];
+        $unresolved = [];
+        $failures = [];
+        $requestCount = 0;
+        $returnedProjects = 0;
+
+        foreach (array_chunk($pending, self::GRAPHQL_BATCH_SIZE, true) as $chunk) {
+            [$query, $variables, $aliases] = $this->buildGraphQlReleaseQuery($chunk);
+            $requestCount++;
+
+            try {
+                $response = Http::asJson()
+                    ->withHeaders([
+                        'Accept' => 'application/vnd.github+json',
+                        'X-GitHub-Api-Version' => '2022-11-28',
+                    ])
+                    ->withToken($this->token())
+                    ->timeout(10)
+                    ->connectTimeout(5)
+                    ->throw()
+                    ->post(self::BASE_URL.'/graphql', [
+                        'query' => $query,
+                        'variables' => $variables,
+                    ])
+                    ->json();
+
+                if (!is_array($response) || !is_array($response['data'] ?? null)) {
+                    $message = is_array($response) ? ($response['errors'][0]['message'] ?? null) : null;
+
+                    throw new Exception(is_string($message) ? $message : 'Invalid GitHub GraphQL response');
+                }
+            } catch (Throwable $exception) {
+                report($exception);
+
+                foreach (array_keys($chunk) as $repositoryKey) {
+                    $this->recordFailure($failures, $requestsByRepository[$repositoryKey], $exception->getMessage());
+                }
+                continue;
+            }
+
+            $errorsByAlias = $this->graphQlErrorsByAlias($response['errors'] ?? []);
+
+            foreach ($aliases as $alias => $repositoryKey) {
+                if (isset($errorsByAlias[$alias])) {
+                    $this->recordFailure($failures, $requestsByRepository[$repositoryKey], $errorsByAlias[$alias]);
+                    continue;
+                }
+
+                $repository = $response['data'][$alias] ?? null;
+                if (!is_array($repository)) {
+                    $this->recordUnresolved($unresolved, $requestsByRepository[$repositoryKey]);
+                    continue;
+                }
+
+                $version = $this->latestNormalizedGraphQlVersion($repository);
+                if ($version === null) {
+                    $this->recordUnresolved($unresolved, $requestsByRepository[$repositoryKey]);
+                    continue;
+                }
+
+                cache()->put($chunk[$repositoryKey]['cache_key'], $version, now()->addMinutes(30));
+                $returnedProjects++;
+
+                foreach ($requestsByRepository[$repositoryKey] as $request) {
+                    $versions[$request->key()] = $version;
+                }
+            }
+        }
+
+        $this->logLatestVersionsTiming(
+            'github_versions_graphql_request',
+            '/graphql',
+            $startedAt,
+            count($pending),
+            $returnedProjects,
+            $requestCount,
+            count($failures),
+        );
+
+        return new LatestVersionLookupResult(
+            versionsByKey: $versions,
+            unresolvedKeys: $unresolved,
+            failuresByKey: $failures,
+
+        );
+    }
+    /**
+     * @param array<string, array{owner: string, name: string, cache_key: string}> $pending
+     * @param array<string, array<int, LatestVersionLookupRequest>> $requestsByRepository
+     */
+    protected function lookupLatestVersionsWithRestPool(array $pending, array $requestsByRepository): LatestVersionLookupResult
+    {
+        $startedAt = microtime(true);
+        $versions = [];
+        $unresolved = [];
+        $failures = [];
+        $requestCount = 0;
+        $returnedProjects = 0;
+
+        foreach (array_chunk($pending, self::REST_POOL_SIZE, true) as $chunk) {
+            $aliases = [];
+
+            try {
+                $responses = Http::pool(function (Pool $pool) use ($chunk, &$aliases) {
+                    $poolRequests = [];
+
+                    foreach ($chunk as $repositoryKey => $repository) {
+                        $alias = 'github_'.sha1($repositoryKey);
+                        $aliases[$alias] = $repositoryKey;
+                        $poolRequests[] = $pool->as($alias)
+                            ->asJson()
+                            ->withHeaders([
+                                'Accept' => 'application/vnd.github+json',
+                                'X-GitHub-Api-Version' => '2022-11-28',
+                            ])
+                            ->timeout(10)
+                            ->connectTimeout(5)
+                            ->get(self::BASE_URL."/repos/{$repository['owner']}/{$repository['name']}/releases", [
+                                'per_page' => 30,
+                            ]);
+                    }
+
+                    return $poolRequests;
+                });
+                $requestCount += count($chunk);
+            } catch (Throwable $exception) {
+                report($exception);
+
+                foreach (array_keys($chunk) as $repositoryKey) {
+                    $this->recordFailure($failures, $requestsByRepository[$repositoryKey], $exception->getMessage());
+                }
+                continue;
+            }
+
+            foreach ($aliases as $alias => $repositoryKey) {
+                try {
+                    $response = $responses[$alias] ?? null;
+
+                    if (!$response instanceof Response || !$response->successful()) {
+                        throw new Exception("GitHub releases lookup failed for repository $repositoryKey");
+                    }
+
+                    $payload = $response->json();
+                    if (!is_array($payload)) {
+                        throw new Exception("Invalid GitHub releases response for repository $repositoryKey");
+                    }
+
+                    $version = $this->latestNormalizedRestVersion($payload);
+                } catch (Throwable $exception) {
+                    report($exception);
+                    $this->recordFailure($failures, $requestsByRepository[$repositoryKey], $exception->getMessage());
+                    continue;
+                }
+
+                if ($version === null) {
+                    $this->recordUnresolved($unresolved, $requestsByRepository[$repositoryKey]);
+                    continue;
+                }
+
+                cache()->put($chunk[$repositoryKey]['cache_key'], $version, now()->addMinutes(30));
+                $returnedProjects++;
+
+                foreach ($requestsByRepository[$repositoryKey] as $request) {
+                    $versions[$request->key()] = $version;
+                }
+            }
+        }
+
+        $this->logLatestVersionsTiming(
+            'github_versions_rest_parallel_request',
+            '/repos/{owner}/{repo}/releases',
+            $startedAt,
+            count($pending),
+            $returnedProjects,
+            $requestCount,
+            count($failures),
+        );
+
+        return new LatestVersionLookupResult(
+            versionsByKey: $versions,
+            unresolvedKeys: $unresolved,
+            failuresByKey: $failures,
+
+        );
+    }
+    /**
+     * @param array<string, array{owner: string, name: string, cache_key: string}> $repositories
+     * @return array{0: string, 1: array<string, string>, 2: array<string, string>}
+     */
+    protected function buildGraphQlReleaseQuery(array $repositories): array
+    {
+        $definitions = [];
+        $variables = [];
+        $fields = [];
+        $aliases = [];
+
+        foreach (array_keys($repositories) as $index => $repositoryKey) {
+            $repository = $repositories[$repositoryKey];
+            $alias = "repository_$index";
+            $ownerVariable = "owner_$index";
+            $nameVariable = "name_$index";
+            $definitions[] = '$'.$ownerVariable.': String!';
+            $definitions[] = '$'.$nameVariable.': String!';
+            $variables[$ownerVariable] = $repository['owner'];
+            $variables[$nameVariable] = $repository['name'];
+            $aliases[$alias] = $repositoryKey;
+            $fields[] = $alias.': repository(owner: $'.$ownerVariable.', name: $'.$nameVariable.') {
+                releases(first: 30, orderBy: {field: CREATED_AT, direction: DESC}) {
+                    nodes {
+                        databaseId
+                        name
+                        tagName
+                        description
+                        isDraft
+                        isPrerelease
+                        createdAt
+                        publishedAt
+                        releaseAssets(first: 100) {
+                            nodes {
+                                name
+                                downloadUrl
+                                downloadCount
+                                digest
+                            }
+                        }
+                    }
+                }
+            }';
+        }
+
+        return [
+            'query LatestReleases('.implode(', ', $definitions).') { '.implode("\n", $fields).' }',
+            $variables,
+            $aliases,
+        ];
+    }
+
+    /**
+     * @param array<int, mixed> $errors
+     * @return array<string, string>
+     */
+    protected function graphQlErrorsByAlias(array $errors): array
+    {
+        $messages = [];
+
+        foreach ($errors as $error) {
+            if (!is_array($error)) {
+                continue;
+            }
+
+            $alias = $error['path'][0] ?? null;
+            if (is_string($alias)) {
+                $messages[$alias] = (string) ($error['message'] ?? 'GitHub GraphQL lookup failed');
+            }
+        }
+
+
+        return $messages;
+    }
+    /**
+     * @param array<string, mixed> $repository
+     * @return array<string, mixed>|null
+     */
+    protected function latestNormalizedGraphQlVersion(array $repository): ?array
+    {
+        foreach ($repository['releases']['nodes'] ?? [] as $release) {
+            if (!is_array($release) || ($release['isDraft'] ?? false)) {
+                continue;
+            }
+
+            $assets = [];
+            foreach ($release['releaseAssets']['nodes'] ?? [] as $asset) {
+                if (!is_array($asset)) {
+                    continue;
+                }
+
+                $assets[] = [
+                    'name' => $asset['name'] ?? '',
+                    'browser_download_url' => $asset['downloadUrl'] ?? null,
+                    'download_count' => $asset['downloadCount'] ?? 0,
+                    'digest' => $asset['digest'] ?? null,
+                ];
+            }
+
+            $normalized = $this->normalizeVersion([
+                'id' => $release['databaseId'] ?? '',
+                'tag_name' => $release['tagName'] ?? '',
+                'name' => $release['name'] ?? '',
+                'body' => $release['description'] ?? null,
+                'draft' => $release['isDraft'] ?? false,
+                'prerelease' => $release['isPrerelease'] ?? false,
+                'created_at' => $release['createdAt'] ?? null,
+                'published_at' => $release['publishedAt'] ?? null,
+                'assets' => $assets,
+            ]);
+
+            if ($normalized !== null) {
+                return $normalized;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @param array<int, mixed> $releases
+     * @return array<string, mixed>|null
+     */
+    protected function latestNormalizedRestVersion(array $releases): ?array
+    {
+        foreach ($releases as $release) {
+            if (!is_array($release) || ($release['draft'] ?? false)) {
+                continue;
+            }
+
+            $normalized = $this->normalizeVersion($release);
+            if ($normalized !== null) {
+                return $normalized;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @param array<int, string> $unresolved
+     * @param array<int, LatestVersionLookupRequest> $requests
+     */
+    protected function recordUnresolved(array &$unresolved, array $requests): void
+    {
+        foreach ($requests as $request) {
+            $unresolved[] = $request->key();
+        }
+    }
+
+    /**
+     * @param array<string, string> $failures
+     * @param array<int, LatestVersionLookupRequest> $requests
+     */
+    protected function recordFailure(array &$failures, array $requests, string $message): void
+    {
+        foreach ($requests as $request) {
+            $failures[$request->key()] = $message;
+
+        }
+    }
+    protected function logLatestVersionsTiming(
+        string $stage,
+        string $endpoint,
+        float $startedAt,
+        int $requestedProjectCount,
+        int $returnedProjectCount,
+        int $requestCount,
+        int $failureCount,
+    ): void {
+        logger()->info('Mod manager timing', [
+            'stage' => $stage,
+            'request_id' => request()->attributes->get('mmr_timing_request_id'),
+            'endpoint' => $endpoint,
+            'started_after_ms' => $this->getModManagerTimingElapsedMs($startedAt),
+            'finished_after_ms' => $this->getModManagerTimingElapsedMs(),
+            'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+            'requested_project_count' => $requestedProjectCount,
+            'returned_project_count' => $returnedProjectCount,
+            'request_count' => $requestCount,
+            'pool_size' => $stage === 'github_versions_rest_parallel_request' ? self::REST_POOL_SIZE : null,
+            'failure_count' => $failureCount,
+        ]);
+    }
+
+    protected function getModManagerTimingElapsedMs(?float $timestamp = null): ?int
+    {
+        $requestStartedAt = request()->attributes->get('mmr_timing_started_at');
+
+        if (!is_float($requestStartedAt)) {
+            return null;
+        }
+
+        return (int) round((($timestamp ?? microtime(true)) - $requestStartedAt) * 1000);
     }
 
     /** @param array<string, mixed> $query */

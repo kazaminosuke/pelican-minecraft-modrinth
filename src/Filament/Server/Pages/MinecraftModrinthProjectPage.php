@@ -11,8 +11,8 @@ use Boy132\MinecraftModrinth\Enums\MinecraftLoader;
 use Boy132\MinecraftModrinth\Enums\ModrinthProjectType;
 use Boy132\MinecraftModrinth\Enums\ProjectSourceKey;
 use Boy132\MinecraftModrinth\Facades\MinecraftModrinth;
+use Boy132\MinecraftModrinth\Services\VersionLookupCoordinator;
 use Boy132\MinecraftModrinth\Support\CacheVersion;
-use Boy132\MinecraftModrinth\Sources\CurseForgeSource;
 use Boy132\MinecraftModrinth\Support\ProjectSourceRegistry;
 use Exception;
 use Filament\Actions\Action;
@@ -64,6 +64,9 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
     /** @var array<string, array<int, mixed>> Cache for version data by "source:project_id" */
     protected array $versionsCache = [];
+
+    /** @var array<string, array<string, mixed>|null> Latest compatible version by "source:project_id" */
+    protected array $latestVersionsCache = [];
 
     /** @var array<int, ProjectSourceInterface>|null */
     protected ?array $availableSources = null;
@@ -654,6 +657,18 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
         $this->installedModsIndex = null;
     }
 
+    protected function forgetVersionCaches(): void
+    {
+        $this->versionsCache = [];
+        $this->latestVersionsCache = [];
+    }
+
+    protected function forgetVersionCache(string $cacheIndex): void
+    {
+        unset($this->versionsCache[$cacheIndex]);
+        unset($this->latestVersionsCache[$cacheIndex]);
+    }
+
     /** @return array<int, mixed> */
     protected function getCachedVersions(string $projectId, string $sourceKey): array
     {
@@ -688,41 +703,93 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
         return $this->versionsCache[$cacheIndex];
     }
 
-    /** @param array<int, array<string, mixed>> $records */
-    protected function warmVisibleCurseForgeVersions(array $records, Server $server, ModrinthProjectType $type): void
+    /** @return array<string, mixed>|null */
+    protected function getCachedLatestVersion(string $projectId, string $sourceKey): ?array
     {
-        $projectIds = [];
+        $cacheIndex = "$sourceKey:$projectId";
+
+        if (!array_key_exists($cacheIndex, $this->latestVersionsCache)) {
+            $startedAt = microtime(true);
+            $installedMod = $this->getInstalledMod($projectId, $sourceKey);
+
+            /** @var Server $server */
+            $server = Filament::getTenant();
+            $type = static::detectProjectType($server);
+            $result = ($installedMod !== null && $type !== null)
+                ? app(VersionLookupCoordinator::class)->lookupInstalled([$installedMod], $server, $type)
+                : null;
+
+            $this->latestVersionsCache[$cacheIndex] = $result?->version($cacheIndex);
+            $durationMs = (int) round((microtime(true) - $startedAt) * 1000);
+            $this->modManagerTimingVersionLookups++;
+            $this->modManagerTimingVersionLookupDurationMs += $durationMs;
+
+            Log::info('Mod manager timing', [
+                'stage' => 'record_version_lookup',
+                'request_id' => $this->modManagerTimingRequestId,
+                'source' => $sourceKey,
+                'project_id' => $projectId,
+                'started_after_ms' => $this->getModManagerTimingElapsedMs($startedAt),
+                'finished_after_ms' => $this->getModManagerTimingElapsedMs(),
+                'duration_ms' => $durationMs,
+                'versions_count' => $this->latestVersionsCache[$cacheIndex] === null ? 0 : 1,
+                'coordinated' => true,
+            ]);
+        }
+
+        return $this->latestVersionsCache[$cacheIndex];
+    }
+
+    /** @param array<int, array<string, mixed>> $records */
+    protected function warmVisibleLatestVersions(array $records, Server $server, ModrinthProjectType $type): void
+    {
+        $installedMods = [];
 
         foreach ($records as $record) {
             $projectId = $record['project_id'] ?? null;
+            $sourceKey = $record['source'] ?? null;
 
-            if (!is_string($projectId) || $projectId === '' || $this->getInstalledMod($projectId, ProjectSourceKey::CurseForge->value) === null) {
+            if (!is_string($projectId) || $projectId === '' || !is_string($sourceKey) || $sourceKey === '') {
                 continue;
             }
 
-            $projectIds[] = $projectId;
+            $cacheIndex = "$sourceKey:$projectId";
+            if (array_key_exists($cacheIndex, $this->latestVersionsCache)) {
+                continue;
+            }
+
+            $installedMod = $this->getInstalledMod($projectId, $sourceKey);
+            if ($installedMod !== null) {
+                $installedMods[$cacheIndex] = $installedMod;
+            }
         }
 
-        if ($projectIds === []) {
+        if ($installedMods === []) {
             return;
         }
 
         $startedAt = microtime(true);
-        $source = app(CurseForgeSource::class);
-        $versionsByProjectId = $source->warmVersions($projectIds, $server, $type);
+        $result = app(VersionLookupCoordinator::class)->lookupInstalled(array_values($installedMods), $server, $type);
 
-        foreach ($projectIds as $projectId) {
-            $this->versionsCache[ProjectSourceKey::CurseForge->value.":$projectId"] = $versionsByProjectId[$projectId] ?? [];
+        foreach (array_keys($installedMods) as $cacheIndex) {
+            $this->latestVersionsCache[$cacheIndex] = $result->version($cacheIndex);
         }
+
+        $durationMs = (int) round((microtime(true) - $startedAt) * 1000);
+        $this->modManagerTimingVersionLookups += count($installedMods);
+        $this->modManagerTimingVersionLookupDurationMs += $durationMs;
 
         Log::info('Mod manager timing', [
             'stage' => 'record_version_lookup_batch',
             'request_id' => $this->modManagerTimingRequestId,
-            'source' => ProjectSourceKey::CurseForge->value,
+            'source' => 'coordinator',
             'started_after_ms' => $this->getModManagerTimingElapsedMs($startedAt),
             'finished_after_ms' => $this->getModManagerTimingElapsedMs(),
-            'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
-            'project_count' => count(array_unique($projectIds)),
+            'duration_ms' => $durationMs,
+            'project_count' => count($installedMods),
+            'resolved_count' => count($result->versions()),
+            'unresolved_count' => count($result->unresolvedKeys()),
+            'failed_count' => count($result->failures()),
         ]);
     }
 
@@ -948,7 +1015,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
         if ($updatedCount > 0 || $failedCount > 0) {
             $this->forgetInstalledModsMetadata();
-            $this->versionsCache = [];
+            $this->forgetVersionCaches();
         }
 
         return [
@@ -1060,6 +1127,10 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     $offset = ($page - 1) * $perPage;
                     $pagedInstalledMods = array_slice($orderedInstalledMods, $offset, $perPage);
 
+                    if ($pagedInstalledMods !== [] && $type !== null) {
+                        $this->warmVisibleLatestVersions($pagedInstalledMods, $server, $type);
+                    }
+
                     $projects = $pagedInstalledMods
                         ? app(ProjectSourceRegistry::class)->hydrateInstalled($pagedInstalledMods, $server)
                         : [];
@@ -1115,9 +1186,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     return $hit;
                 }, $response['hits']);
 
-                if ($currentSource instanceof CurseForgeSource) {
-                    $this->warmVisibleCurseForgeVersions($hits, $server, $type);
-                }
+                $this->warmVisibleLatestVersions($hits, $server, $type);
 
                 return new LengthAwarePaginator($hits, $response['total_hits'], 20, $page);
             })
@@ -1292,7 +1361,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                                             $this->performInstallOrUpdate($server, $fileRepository, $record, $versionData, $primaryFile, $installedMod);
 
                                             $this->forgetInstalledModsMetadata();
-                                            $this->versionsCache = [];
+                                            $this->forgetVersionCaches();
                                             $this->js('$wire.$refresh()');
 
                                             Notification::make()
@@ -1307,7 +1376,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                                             report($exception);
 
                                             $this->forgetInstalledModsMetadata();
-                                            $this->versionsCache = [];
+                                            $this->forgetVersionCaches();
                                             $this->js('$wire.$refresh()');
 
                                             Notification::make()
@@ -1384,7 +1453,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                             $this->performInstallOrUpdate($server, $fileRepository, $record, $latestVersion, $primaryFile);
 
                             $this->forgetInstalledModsMetadata();
-                            $this->versionsCache = [];
+                            $this->forgetVersionCaches();
 
                             Notification::make()
                                 ->title(trans('pelican-minecraft-modrinth::strings.notifications.install_success'))
@@ -1398,7 +1467,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                             report($exception);
 
                             $this->forgetInstalledModsMetadata();
-                            $this->versionsCache = [];
+                            $this->forgetVersionCaches();
 
                             Notification::make()
                                 ->title(trans('pelican-minecraft-modrinth::strings.notifications.install_failed'))
@@ -1426,24 +1495,24 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                             return false;
                         }
 
-                        $versions = $this->getCachedVersions($record['project_id'], $sourceKey);
+                        $latestVersion = $this->getCachedLatestVersion($record['project_id'], $sourceKey);
 
-                        if (empty($versions)) {
+                        if ($latestVersion === null) {
                             return false;
                         }
 
-                        return $installedMod['version_id'] !== $versions[0]['id'];
+                        return $installedMod['version_id'] !== ($latestVersion['id'] ?? null);
                     })
                     ->requiresConfirmation()
                     ->modalHeading(trans('pelican-minecraft-modrinth::strings.modals.update_heading'))
                     ->modalDescription(function (array $record) {
                         $sourceKey = $record['source'] ?? ProjectSourceKey::Modrinth->value;
                         $installedMod = $this->getInstalledMod($record['project_id'], $sourceKey);
-                        $versions = $this->getCachedVersions($record['project_id'], $sourceKey);
+                        $latestVersion = $this->getCachedLatestVersion($record['project_id'], $sourceKey);
 
                         return trans('pelican-minecraft-modrinth::strings.modals.update_description', [
                             'old_version' => $installedMod['version_number'] ?? 'unknown',
-                            'new_version' => $versions[0]['version_number'] ?? 'unknown',
+                            'new_version' => $latestVersion['version_number'] ?? 'unknown',
                         ]);
                     })
                     ->action(function (array $record, DaemonFileRepository $fileRepository) {
@@ -1465,13 +1534,15 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                                 throw new Exception('Source unavailable');
                             }
 
-                            $versions = $source->getVersions($record['project_id'], $server, $type);
+                            $latestVersion = $this->getCachedLatestVersion($record['project_id'], $sourceKey->value);
+                            if ($latestVersion === null) {
+                                $versions = $source->getVersions($record['project_id'], $server, $type);
+                                if (empty($versions)) {
+                                    throw new Exception('No compatible versions found');
+                                }
 
-                            if (empty($versions)) {
-                                throw new Exception('No compatible versions found');
+                                $latestVersion = $versions[0];
                             }
-
-                            $latestVersion = $versions[0];
 
                             if (!isset($latestVersion['id'], $latestVersion['version_number'], $latestVersion['files'])) {
                                 throw new Exception('Invalid version data structure');
@@ -1486,7 +1557,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                             $this->performInstallOrUpdate($server, $fileRepository, $record, $latestVersion, $primaryFile, $installedMod);
 
                             $this->forgetInstalledModsMetadata();
-                            $this->versionsCache = [];
+                            $this->forgetVersionCaches();
 
                             Notification::make()
                                 ->title(trans('pelican-minecraft-modrinth::strings.notifications.update_success'))
@@ -1499,7 +1570,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                             report($exception);
 
                             $this->forgetInstalledModsMetadata();
-                            $this->versionsCache = [];
+                            $this->forgetVersionCaches();
 
                             Notification::make()
                                 ->title(trans('pelican-minecraft-modrinth::strings.notifications.update_failed'))
@@ -1528,13 +1599,13 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                             return false;
                         }
 
-                        $versions = $this->getCachedVersions($record['project_id'], $sourceKey);
+                        $latestVersion = $this->getCachedLatestVersion($record['project_id'], $sourceKey);
 
-                        if (empty($versions)) {
+                        if ($latestVersion === null) {
                             return true;
                         }
 
-                        return $installedMod['version_id'] === $versions[0]['id'];
+                        return $installedMod['version_id'] === ($latestVersion['id'] ?? null);
                     }),
                 Action::make('uninstall')
                     ->iconButton()
@@ -1605,10 +1676,10 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                                     );
                                 }
 
-                                unset($this->versionsCache["{$sourceKey->value}:{$record['project_id']}"]);
+                                $this->forgetVersionCache("{$sourceKey->value}:{$record['project_id']}");
                             } else {
                                 $this->forgetInstalledModsMetadata();
-                                $this->versionsCache = [];
+                                $this->forgetVersionCaches();
                             }
 
                             if ($this->activeTab === 'installed') {
@@ -1626,7 +1697,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                             report($exception);
 
                             $this->forgetInstalledModsMetadata();
-                            $this->versionsCache = [];
+                            $this->forgetVersionCaches();
 
                             if ($this->activeTab === 'installed') {
                                 $this->js('$wire.$refresh()');
@@ -1725,7 +1796,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                         $this->performInstallOrUpdate($server, $fileRepository, $record, $latestVersion, $primaryFile);
 
                         $this->forgetInstalledModsMetadata();
-                        $this->versionsCache = [];
+                        $this->forgetVersionCaches();
                         $this->js('$wire.$refresh()');
 
                         Notification::make()

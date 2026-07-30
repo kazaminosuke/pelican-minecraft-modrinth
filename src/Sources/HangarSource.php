@@ -3,16 +3,22 @@
 namespace Boy132\MinecraftModrinth\Sources;
 
 use App\Models\Server;
+use Boy132\MinecraftModrinth\Contracts\BatchLatestVersionSourceInterface;
 use Boy132\MinecraftModrinth\Contracts\ProjectSourceInterface;
 use Boy132\MinecraftModrinth\Enums\MinecraftLoader;
 use Boy132\MinecraftModrinth\Enums\ModrinthProjectType;
 use Boy132\MinecraftModrinth\Enums\ProjectSourceKey;
 use Boy132\MinecraftModrinth\Support\CacheVersion;
+use Boy132\MinecraftModrinth\Support\LatestVersionLookupRequest;
+use Boy132\MinecraftModrinth\Support\LatestVersionLookupResult;
 use Boy132\MinecraftModrinth\Support\MinecraftVersionResolver;
 use Exception;
+use Illuminate\Http\Client\Pool;
+use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
+use Throwable;
 
-class HangarSource implements ProjectSourceInterface
+class HangarSource implements BatchLatestVersionSourceInterface, ProjectSourceInterface
 {
     protected const BASE_URL = 'https://hangar.papermc.io/api/v1';
 
@@ -33,6 +39,9 @@ class HangarSource implements ProjectSourceInterface
      * longer than the other API-response caches in this codebase.
      */
     protected const HASH_MATCH_CACHE_DAYS = 7;
+
+    /** Hangar has no bulk endpoint, so bound the concurrent fallbacks. */
+    protected const LATEST_VERSION_POOL_SIZE = 4;
 
     public function getKey(): ProjectSourceKey
     {
@@ -195,6 +204,113 @@ class HangarSource implements ProjectSourceInterface
     }
 
     /**
+     * @param array<int, LatestVersionLookupRequest> $requests
+     */
+    public function lookupLatestVersions(
+        array $requests,
+        Server $server,
+        ModrinthProjectType $type,
+    ): LatestVersionLookupResult {
+        $requests = array_values(array_filter(
+            $requests,
+            fn ($request): bool => $request instanceof LatestVersionLookupRequest,
+        ));
+
+        if ($requests === []) {
+            return LatestVersionLookupResult::empty();
+        }
+
+        $platform = $this->platformFor($server);
+
+        if ($type !== ModrinthProjectType::Plugin || $platform === null) {
+            return new LatestVersionLookupResult(unresolvedKeys: array_map(
+                fn (LatestVersionLookupRequest $request): string => $request->key(),
+                $requests,
+            ));
+        }
+
+        $params = [
+            'platform' => $platform,
+            'platformVersion' => MinecraftVersionResolver::resolve($server),
+            'limit' => self::PAGE_SIZE,
+        ];
+        $requestsByProject = [];
+        $versions = [];
+        $unresolved = [];
+        $failures = [];
+        $pending = [];
+        $cacheHits = 0;
+
+        foreach ($requests as $request) {
+            $requestsByProject[$request->projectId][] = $request;
+        }
+
+        foreach ($requestsByProject as $projectId => $projectRequests) {
+            $cacheKey = 'hangar_latest_version:v1:'.$projectId.':'.md5(json_encode($params));
+            $cached = cache()->get($cacheKey);
+
+            if (is_array($cached)) {
+                foreach ($projectRequests as $request) {
+                    $versions[$request->key()] = $cached;
+                }
+                $cacheHits += count($projectRequests);
+                continue;
+            }
+
+            $pending[$projectId] = $cacheKey;
+        }
+
+        $startedAt = microtime(true);
+        $successfulProjects = 0;
+        $requestCount = 0;
+
+        foreach (array_chunk(array_keys($pending), self::LATEST_VERSION_POOL_SIZE) as $projectIds) {
+            [$resolved, $chunkFailures] = $this->fetchLatestVersionChunk($projectIds, $params, $platform);
+            $requestCount += count($projectIds);
+
+            foreach ($projectIds as $projectId) {
+                if (isset($chunkFailures[$projectId])) {
+                    foreach ($requestsByProject[$projectId] as $request) {
+                        $failures[$request->key()] = $chunkFailures[$projectId];
+                    }
+                    continue;
+                }
+
+                if (!isset($resolved[$projectId])) {
+                    foreach ($requestsByProject[$projectId] as $request) {
+                        $unresolved[] = $request->key();
+                    }
+                    continue;
+                }
+
+                cache()->put($pending[$projectId], $resolved[$projectId], now()->addMinutes(30));
+                $successfulProjects++;
+
+                foreach ($requestsByProject[$projectId] as $request) {
+                    $versions[$request->key()] = $resolved[$projectId];
+                }
+            }
+        }
+
+        if ($pending !== []) {
+            $this->logLatestVersionsTiming(
+                $startedAt,
+                count($pending),
+                $successfulProjects,
+                $requestCount,
+                $cacheHits,
+                count($failures),
+            );
+        }
+
+        return new LatestVersionLookupResult(
+            versionsByKey: $versions,
+            unresolvedKeys: $unresolved,
+            failuresByKey: $failures,
+        );
+    }
+
+    /**
      * @param array<string, string> $hashesByFilename [filename => sha256hash]
      * @return array<string, mixed> [sha256hash => normalized version data]
      */
@@ -215,7 +331,7 @@ class HangarSource implements ProjectSourceInterface
 
             $project = $this->getJson("/versions/hash/$hash");
 
-            if (!is_array($project) || !isset($project['id'])) {
+            if (!isset($project['id'])) {
                 continue;
             }
 
@@ -385,6 +501,122 @@ class HangarSource implements ProjectSourceInterface
                 ],
             ],
         ];
+    }
+
+    /**
+     * @param array<int, string> $projectIds
+     * @param array<string, int|string> $params
+     * @return array{0: array<string, array<string, mixed>>, 1: array<string, string>}
+     */
+    protected function fetchLatestVersionChunk(array $projectIds, array $params, string $platform): array
+    {
+        $aliases = [];
+
+        try {
+            $responses = Http::pool(function (Pool $pool) use ($projectIds, $params, &$aliases) {
+                $poolRequests = [];
+
+                foreach ($projectIds as $index => $projectId) {
+                    $alias = "hangar_$index";
+                    $aliases[$alias] = $projectId;
+                    $poolRequests[] = $pool->as($alias)
+                        ->asJson()
+                        ->timeout(10)
+                        ->connectTimeout(5)
+                        ->get(self::BASE_URL."/projects/$projectId/versions", $params);
+                }
+
+                return $poolRequests;
+            });
+        } catch (Throwable $exception) {
+            report($exception);
+
+            return [[], array_fill_keys($projectIds, $exception->getMessage())];
+        }
+
+        $resolved = [];
+        $failures = [];
+
+        foreach ($aliases as $alias => $projectId) {
+            try {
+                $response = $responses[$alias] ?? null;
+
+                if (!$response instanceof Response || !$response->successful()) {
+                    throw new Exception("Hangar versions lookup failed for project $projectId");
+                }
+
+                $payload = $response->json();
+
+                if (!is_array($payload)) {
+                    throw new Exception("Invalid Hangar versions response for project $projectId");
+                }
+
+                $version = $this->latestNormalizedVersion($payload, $platform);
+                if ($version !== null) {
+                    $resolved[$projectId] = $version;
+                }
+            } catch (Throwable $exception) {
+                report($exception);
+                $failures[$projectId] = $exception->getMessage();
+            }
+        }
+
+        return [$resolved, $failures];
+    }
+
+    /**
+     * @param array<string, mixed> $response
+     * @return array<string, mixed>|null
+     */
+    protected function latestNormalizedVersion(array $response, string $platform): ?array
+    {
+        foreach ($response['result'] ?? [] as $version) {
+            if (!is_array($version)) {
+                continue;
+            }
+
+            $normalized = $this->normalizeVersion($version, $platform);
+            if ($normalized !== null) {
+                return $normalized;
+            }
+        }
+
+        return null;
+    }
+
+    protected function logLatestVersionsTiming(
+        float $startedAt,
+        int $requestedProjectCount,
+        int $returnedProjectCount,
+        int $requestCount,
+        int $cacheHitCount,
+        int $failureCount,
+    ): void {
+        logger()->info('Mod manager timing', [
+            'stage' => 'hangar_versions_parallel_request',
+            'request_id' => request()->attributes->get('mmr_timing_request_id'),
+            'endpoint' => '/projects/{project}/versions',
+            'started_after_ms' => $this->getModManagerTimingElapsedMs($startedAt),
+            'finished_after_ms' => $this->getModManagerTimingElapsedMs(),
+            'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+            'requested_project_count' => $requestedProjectCount,
+            'returned_project_count' => $returnedProjectCount,
+            'request_count' => $requestCount,
+            'pool_size' => self::LATEST_VERSION_POOL_SIZE,
+            'cache_hit_count' => $cacheHitCount,
+            'failure_count' => $failureCount,
+        ]);
+    }
+
+    protected function getModManagerTimingElapsedMs(?float $timestamp = null): ?int
+    {
+        $requestStartedAt = request()->attributes->get('mmr_timing_started_at');
+
+        if (!is_float($requestStartedAt)) {
+            return null;
+        }
+
+        return (int) round((($timestamp ?? microtime(true)) - $requestStartedAt) * 1000);
     }
 
     /** @param array<string, mixed> $query */
