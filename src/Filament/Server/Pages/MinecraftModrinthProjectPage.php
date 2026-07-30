@@ -203,8 +203,35 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
         );
 
         $this->loadDefaultActiveTab();
+        $this->refreshInstalledScanDataReady();
         $this->refreshInstalledOperationState();
         $this->queueTableHeightRecalculation();
+    }
+
+    /**
+     * A cheap cache-only check (no Wings API call, unlike the deferred
+     * table's own scan) so the very first render already knows whether a
+     * valid scan result exists - without this, installedScanDataReady stays
+     * at its default false until the deferred table's records() closure
+     * runs, so the status badge visibly flashes its "checking" state before
+     * disappearing a moment later even when the data was ready all along.
+     */
+    protected function refreshInstalledScanDataReady(): void
+    {
+        if ($this->activeTab !== 'installed') {
+            return;
+        }
+
+        /** @var Server $server */
+        $server = Filament::getTenant();
+        $type = static::detectProjectType($server);
+
+        if (!$type) {
+            return;
+        }
+
+        $scanCacheKey = MinecraftModrinth::getHashScanCacheKey($server, $type);
+        $this->installedScanDataReady = InstalledScanResult::fromCache(Cache::get($scanCacheKey)) !== null;
     }
 
     /** @return array<string, string> */
@@ -258,6 +285,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
         // with far fewer results) - plus resets the column manager state. It was
         // being silently dropped by this method overriding it without calling it.
         $this->baseUpdatedActiveTab();
+        $this->refreshInstalledScanDataReady();
         $this->refreshInstalledOperationState();
 
         // Category IDs and the Modrinth-only environment filter are scoped to
@@ -1875,7 +1903,19 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                                 InstalledOperationState::STATUS_COMPLETED => 'success',
                                 InstalledOperationState::STATUS_FAILED => 'danger',
                                 default => $this->operationQueueWarningShown ? 'danger' : 'gray',
-                            }),
+                            })
+                            // TextEntry has no dedicated hook for extra icon
+                            // attributes (unlike ImageColumn's
+                            // extraImgAttributes()) - Filament's own
+                            // generate_icon_html() puts the "fi-icon" class
+                            // directly on the rendered <svg>, so scoping the
+                            // spin animation through this wrapper class and
+                            // a descendant selector (like the existing
+                            // .mcloader-badge rule below) reaches it without
+                            // needing that hook.
+                            ->extraAttributes(fn () => $this->installedOperationIsActive()
+                                ? ['class' => 'mmr-installed-operation-spinning']
+                                : []),
                     ])
                     ->extraAttributes(fn () => $this->pollInstalledOperations
                         ? ['wire:poll.2s' => 'pollInstalledOperation']
@@ -2010,10 +2050,35 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
         return !$this->installedScanDataReady;
     }
 
+    /**
+     * Whether the status badge's loader icon should spin - true while
+     * something is queued, running, or about to be dispatched, false for
+     * the terminal completed/failed states and the static queue-config
+     * warning (all of which mean nothing is actually in progress anymore).
+     */
+    protected function installedOperationIsActive(): bool
+    {
+        $status = $this->installedOperation['status'] ?? null;
+
+        if (in_array($status, [InstalledOperationState::STATUS_COMPLETED, InstalledOperationState::STATUS_FAILED], true)) {
+            return false;
+        }
+
+        return !($status === null && $this->operationQueueWarningShown);
+    }
+
     protected function shouldPollInstalledOperation(?InstalledOperationState $state): bool
     {
         if ($state === null) {
-            return $this->activeTab === 'installed' && !$this->operationQueueWarningShown;
+            // A valid scan result already covers this case - see
+            // shouldShowInstalledOperationStatus() - so there is nothing to
+            // poll for. Without this, a caller like mount() that already
+            // knows installedScanDataReady is true would still enable
+            // polling here, and the badge would flash its "checking" state
+            // until the next request corrected it.
+            return $this->activeTab === 'installed'
+                && !$this->operationQueueWarningShown
+                && !$this->installedScanDataReady;
         }
 
         if ($state->isActive()) {

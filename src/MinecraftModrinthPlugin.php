@@ -91,6 +91,16 @@ class MinecraftModrinthPlugin implements HasPluginSettings, Plugin
                 // underneath it; its own background (set by Filament) keeps rows
                 // from showing through.
                 .'.mmr-table-scroll-ctn .fi-ta-table>thead{position:sticky;top:0;z-index:1;}'
+                // TextEntry exposes no extraImgAttributes()-style hook for
+                // its icon, so this class goes on the entry's own wrapper
+                // (via ->extraAttributes()) and reaches the icon - rendered
+                // by Filament's generate_icon_html() as an inline <svg
+                // class="fi-icon ...">, same as the .mcloader-badge rule
+                // above - through a descendant selector instead. Matches
+                // Filament's own .fi-loading-indicator (motion-safe:animate-spin)
+                // in respecting a reduced-motion preference.
+                .'@keyframes mmr-spin{to{transform:rotate(360deg);}}'
+                .'@media (prefers-reduced-motion: no-preference){.mmr-installed-operation-spinning .fi-icon{animation:mmr-spin 1s linear infinite;}}'
                 .'</style>'
             ),
         );
