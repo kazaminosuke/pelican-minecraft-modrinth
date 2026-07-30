@@ -320,7 +320,14 @@
 
                     if (
                         name === 'id'
-                        || name === 'style'
+                        // Filament's ImageColumn sizes <img> purely via an
+                        // inline height/width style (no size-related CSS
+                        // class exists) - stripping it here made every
+                        // cached thumbnail flash at its natural/full size
+                        // before the real morph replaced it. That style is
+                        // Filament-generated column config, not record
+                        // data, so keeping it on <img> is safe.
+                        || (name === 'style' && !(element instanceof HTMLImageElement))
                         || name === 'name'
                         || name === 'value'
                         || name === 'checked'
