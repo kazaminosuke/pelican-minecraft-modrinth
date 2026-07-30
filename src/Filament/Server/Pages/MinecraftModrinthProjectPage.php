@@ -596,20 +596,32 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
             $type = static::detectProjectType($server);
             $generation = CacheVersion::hydration($server);
-            $cacheKey = "installed_metadata_display:v1:{$server->id}:".($type?->value ?? 'unknown').":{$generation}";
+            $typeKey = $type instanceof ModrinthProjectType ? $type->value : 'unknown';
+            $cacheKey = "installed_metadata_display:v2:{$server->id}:{$typeKey}:{$generation}";
+            $cached = Cache::get($cacheKey);
+            $cacheHit = is_array($cached);
+            $metadataStatus = 'cache';
 
-            $cacheHit = Cache::has($cacheKey);
+            if ($cacheHit) {
+                $this->installedModsMetadata = $cached;
+            } else {
+                $metadataResult = MinecraftModrinth::getInstalledMetadataReadResult($server, $fileRepository, $type);
+                $this->installedModsMetadata = $metadataResult->document->installedMods();
+                $metadataStatus = $metadataResult->status->value;
 
-            $this->installedModsMetadata = Cache::remember(
-                $cacheKey,
-                now()->addMinutes(5),
-                fn () => MinecraftModrinth::getInstalledModsMetadata($server, $fileRepository, $type),
-            );
+                // Never turn a transient Wings/metadata read failure into five
+                // minutes of an apparently empty Installed tab. A valid empty
+                // current/legacy document remains authoritative and cacheable.
+                if ($metadataResult->isAuthoritative()) {
+                    Cache::put($cacheKey, $this->installedModsMetadata, now()->addMinutes(5));
+                }
+            }
 
             Log::info('Mod manager timing', [
                 'stage' => 'installed_metadata',
                 'request_id' => $this->modManagerTimingRequestId,
                 'cache_hit' => $cacheHit,
+                'metadata_status' => $metadataStatus,
                 'started_after_ms' => $this->getModManagerTimingElapsedMs($startedAt),
                 'finished_after_ms' => $this->getModManagerTimingElapsedMs(),
                 'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),

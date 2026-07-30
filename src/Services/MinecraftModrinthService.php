@@ -7,11 +7,16 @@ use App\Repositories\Daemon\DaemonFileRepository;
 use Boy132\MinecraftModrinth\Contracts\ProjectSourceInterface;
 use Boy132\MinecraftModrinth\Enums\ModrinthProjectType;
 use Boy132\MinecraftModrinth\Enums\ProjectSourceKey;
+use Boy132\MinecraftModrinth\Repositories\InstalledMetadataRepository;
 use Boy132\MinecraftModrinth\Sources\CurseForgeSource;
 use Boy132\MinecraftModrinth\Sources\HangarSource;
 use Boy132\MinecraftModrinth\Sources\ModrinthSource;
 use Boy132\MinecraftModrinth\Support\CacheVersion;
 use Boy132\MinecraftModrinth\Support\CurseForgeFingerprint;
+use Boy132\MinecraftModrinth\Support\InstalledMetadataDocument;
+use Boy132\MinecraftModrinth\Support\InstalledMetadataReadResult;
+use Boy132\MinecraftModrinth\Support\InstalledMetadataReadStatus;
+use Boy132\MinecraftModrinth\Support\InstalledScanResult;
 use Boy132\MinecraftModrinth\Support\MinecraftVersionResolver;
 use Exception;
 use Illuminate\Support\Facades\Cache;
@@ -23,12 +28,11 @@ class MinecraftModrinthService
 
     private const HASH_SCAN_LOCK_SECONDS = 180;
 
-    private const HASH_SCAN_LOCK_WAIT_SECONDS = 190;
-
     public function __construct(
         protected ModrinthSource $source,
         protected CurseForgeSource $curseForgeSource,
         protected HangarSource $hangarSource,
+        protected InstalledMetadataRepository $metadataRepository,
     ) {}
 
     /** @var array<int, array<string, string>|null> */
@@ -107,74 +111,74 @@ class MinecraftModrinthService
         return $this->source->findVersionsByHash($hashMap);
     }
 
-    /**
-     * Scans the mods/plugins folder, hashes unknown JARs, looks them up on Modrinth,
-     * imports matches into metadata, and returns filenames not found on Modrinth.
-     *
-     * @return array<string>  Filenames with no Modrinth match
-     *
-     * @throws Exception
-     */
+    /** @return array<int, string> */
     public function scanAndImportMods(Server $server, DaemonFileRepository $fileRepository, ?ModrinthProjectType $type = null): array
     {
-        // A second request can wait for a cold scan, so extend the limit before
-        // attempting the lock rather than only after entering performScan().
+        return $this->scanAndImportModsResult($server, $fileRepository, $type)->unknownFiles;
+    }
+
+    public function scanAndImportModsResult(Server $server, DaemonFileRepository $fileRepository, ?ModrinthProjectType $type = null): InstalledScanResult
+    {
         set_time_limit(240);
 
         $startedAt = microtime(true);
         $resolvedType = $type ?? ModrinthProjectType::fromServer($server);
         $cacheKey = $this->getHashScanCacheKey($server, $resolvedType);
-        $cached = Cache::get($cacheKey);
-        $cacheHit = is_array($cached);
+        $cachedResult = InstalledScanResult::fromCache(Cache::get($cacheKey));
         $scanExecuted = false;
-        $lockWaitMs = 0;
         $this->hashScanWingsGetCount = 0;
 
-        if ($cacheHit) {
-            $unknownFiles = $cached;
+        if ($cachedResult !== null) {
+            $result = $cachedResult;
         } else {
-            $lockRequestedAt = microtime(true);
-            $lockAcquiredAt = null;
+            $lock = Cache::lock($cacheKey.':lock', self::HASH_SCAN_LOCK_SECONDS);
 
-            $unknownFiles = Cache::lock($cacheKey.':lock', self::HASH_SCAN_LOCK_SECONDS)
-                ->block(self::HASH_SCAN_LOCK_WAIT_SECONDS, function () use ($cacheKey, $server, $fileRepository, $resolvedType, &$lockAcquiredAt, &$scanExecuted) {
-                    $lockAcquiredAt = microtime(true);
-                    $cachedAfterLock = Cache::get($cacheKey);
+            if (!$lock->get()) {
+                $result = InstalledScanResult::failed('scan_in_progress');
+            } else {
+                try {
+                    $cachedAfterLock = InstalledScanResult::fromCache(Cache::get($cacheKey));
 
-                    if (is_array($cachedAfterLock)) {
-                        return $cachedAfterLock;
+                    if ($cachedAfterLock !== null) {
+                        $result = $cachedAfterLock;
+                    } else {
+                        $scanExecuted = true;
+                        $result = $this->performScan($server, $fileRepository, $resolvedType);
+
+                        // A normal empty folder is a successful, authoritative
+                        // result and is cacheable. Transport errors and malformed
+                        // Wings responses are failures and must never poison the
+                        // Installed tab with a cached empty result.
+                        if ($result->successful) {
+                            Cache::put($cacheKey, $result->toCachePayload(), now()->addMinutes(self::HASH_SCAN_CACHE_MINUTES));
+                        }
                     }
-
-                    $scanExecuted = true;
-                    $result = $this->performScan($server, $fileRepository, $resolvedType);
-                    Cache::put($cacheKey, $result, now()->addMinutes(self::HASH_SCAN_CACHE_MINUTES));
-
-                    return $result;
-                });
-
-            if (is_float($lockAcquiredAt)) {
-                $lockWaitMs = (int) round(($lockAcquiredAt - $lockRequestedAt) * 1000);
+                } finally {
+                    $lock->release();
+                }
             }
         }
 
         $this->logModManagerTiming('installed_scan', $startedAt, [
             'cache_key' => $cacheKey,
-            'cache_hit' => $cacheHit,
-            'cache_filled_while_waiting' => !$cacheHit && !$scanExecuted,
+            'cache_hit' => $result->cacheHit,
             'scan_executed' => $scanExecuted,
-            'lock_wait_ms' => $lockWaitMs,
+            'successful' => $result->successful,
+            'failure' => $result->failure,
             'wings_get_count' => $this->hashScanWingsGetCount,
-            'unknown_files_count' => count($unknownFiles),
+            'disk_file_count' => $result->diskFileCount,
+            'unknown_files_count' => count($result->unknownFiles),
         ]);
 
-        return $unknownFiles;
+        return $result;
     }
 
     public function getHashScanCacheKey(Server $server, ?ModrinthProjectType $type = null): string
     {
         $resolvedType = $type ?? ModrinthProjectType::fromServer($server);
+        $typeKey = $resolvedType instanceof ModrinthProjectType ? $resolvedType->value : 'unknown';
 
-        return "{$this->source->getKey()->value}_hash_scan:{$server->id}:".($resolvedType?->value ?? 'unknown');
+        return "installed_scan:v2:{$server->id}:{$typeKey}";
     }
 
     /**
@@ -289,86 +293,123 @@ class MinecraftModrinthService
         return $properties;
     }
 
-    /**
-     * @return array<string>  Filenames with no Modrinth match
-     *
-     * @throws Exception
-     */
-    protected function performScan(Server $server, DaemonFileRepository $fileRepository, ?ModrinthProjectType $type = null): array
+    protected function performScan(Server $server, DaemonFileRepository $fileRepository, ?ModrinthProjectType $type = null): InstalledScanResult
     {
-        // Large modpacks require several remote file reads. This applies only to
-        // the explicit installed-file scan, not to the rest of the request.
         set_time_limit(120);
 
         $type ??= ModrinthProjectType::fromServer($server);
 
         if (!$type) {
-            return [];
+            return InstalledScanResult::failed('unsupported_project_type');
         }
 
         try {
-            $directoryContents = $fileRepository->setServer($server)->getDirectory($this->getProjectFolder($server, $fileRepository, $type));
+            $folder = $this->getProjectFolder($server, $fileRepository, $type);
+            $directoryContents = $fileRepository->setServer($server)->getDirectory($folder);
         } catch (Exception $exception) {
             report($exception);
 
-            return [];
+            return InstalledScanResult::failed('wings_directory_unavailable');
         }
 
         if (!is_array($directoryContents) || isset($directoryContents['error'])) {
-            return [];
+            return InstalledScanResult::failed('wings_directory_invalid');
         }
 
         $extension = $type->getFileExtension();
+        $diskFiles = [];
 
-        $diskFiles = collect($directoryContents)
-            ->filter(fn ($item) => is_array($item) && isset($item['name']) && str($item['name'])->lower()->endsWith($extension))
-            ->pluck('name')
-            ->values()
-            ->toArray();
+        foreach ($directoryContents as $item) {
+            if (!is_array($item)
+                || !is_string($item['name'] ?? null)
+                || !str($item['name'])->lower()->endsWith($extension)
+                || ($item['directory'] ?? false) === true
+                || (array_key_exists('file', $item) && $item['file'] !== true)) {
+                continue;
+            }
 
-        $installedModsMetadata = $this->getInstalledModsMetadata($server, $fileRepository, $type);
+            $filename = $item['name'];
+            $key = strtolower($filename);
+            $signature = $this->normalizeFileSignature($item);
 
-        $diskFilesLower = array_flip(array_map('strtolower', $diskFiles));
-        $filteredInstalledModsMetadata = array_values(array_filter(
-            $installedModsMetadata,
-            fn ($installedMod) => isset($diskFilesLower[strtolower($installedMod['filename'])])
-        ));
+            // A case-insensitive filename collision is not safe to identify by
+            // the persisted index. Keep the first display name, but force a
+            // fresh hash by discarding its reusable signature.
+            if (isset($diskFiles[$key])) {
+                $diskFiles[$key]['file_signature'] = null;
 
-        if (count($filteredInstalledModsMetadata) !== count($installedModsMetadata)) {
-            $this->saveInstalledModsMetadata($server, $fileRepository, $filteredInstalledModsMetadata, $type);
+                continue;
+            }
+
+            $diskFiles[$key] = [
+                'filename' => $filename,
+                'file_signature' => $signature,
+            ];
         }
 
-        $installedModsMetadata = $filteredInstalledModsMetadata;
+        $metadataResult = $this->metadataRepository->read($server, $fileRepository, $folder);
 
-        if (empty($diskFiles)) {
-            return [];
+        if (in_array($metadataResult->status, [InstalledMetadataReadStatus::Invalid, InstalledMetadataReadStatus::Unavailable], true)) {
+            return InstalledScanResult::failed('metadata_unavailable');
         }
 
-        $knownFilenames = [];
-        foreach ($installedModsMetadata as $installedMod) {
-            $knownFilenames[strtolower($installedMod['filename'])] = true;
+        $originalDocument = $metadataResult->document;
+        $installedByFilename = [];
+        foreach ($originalDocument->installedMods() as $entry) {
+            $filename = $entry['filename'] ?? null;
+
+            if (is_string($filename) && $filename !== '') {
+                $installedByFilename[strtolower($filename)] = $entry;
+            }
         }
 
-        $unknownFiles = array_values(
-            array_filter($diskFiles, function ($name) use ($knownFilenames) {
-                $normalizedName = strtolower($name);
+        $unresolvedByFilename = [];
+        foreach ($originalDocument->unresolvedFiles() as $entry) {
+            $filename = $entry['filename'] ?? null;
 
-                return !isset($knownFilenames[$normalizedName]);
-            })
-        );
-
-        if (empty($unknownFiles)) {
-            return [];
+            if (is_string($filename) && $filename !== '') {
+                $unresolvedByFilename[strtolower($filename)] = $entry;
+            }
         }
 
-        $matchedFilenames = [];
-        $remainingFilenames = $unknownFiles;
-        $folder = $this->getProjectFolder($server, $fileRepository, $type);
+        $scannedInstalled = [];
+        $filesToResolve = [];
+        $hashesByFilename = [];
+        $reusedHashCount = 0;
+
+        foreach ($diskFiles as $key => $diskFile) {
+            $existingInstalled = $installedByFilename[$key] ?? null;
+            $indexed = $existingInstalled ?? ($unresolvedByFilename[$key] ?? null);
+            $reusableHashes = is_array($indexed)
+                ? $this->reusableHashes($indexed, $diskFile['file_signature'])
+                : null;
+
+            if ($existingInstalled !== null && $reusableHashes !== null) {
+                $existingInstalled['file_signature'] = $diskFile['file_signature'];
+                $existingInstalled['hashes'] = $reusableHashes;
+                $scannedInstalled[] = $existingInstalled;
+
+                continue;
+            }
+
+            $filename = $diskFile['filename'];
+            $filesToResolve[$filename] = $diskFile;
+
+            if ($reusableHashes !== null) {
+                $hashesByFilename[$filename] = $reusableHashes;
+                $reusedHashCount++;
+            }
+        }
+
         $hashResolutionStartedAt = microtime(true);
         $hashComputationStartedAt = microtime(true);
-        $hashesByFilename = [];
+        $hashFailures = [];
 
-        foreach ($unknownFiles as $filename) {
+        foreach ($filesToResolve as $filename => $diskFile) {
+            if (isset($hashesByFilename[$filename])) {
+                continue;
+            }
+
             try {
                 $hashesByFilename[$filename] = $this->computeDaemonFileHashes(
                     $fileRepository,
@@ -377,19 +418,26 @@ class MinecraftModrinthService
                 );
             } catch (Exception $exception) {
                 report($exception);
+                $hashFailures[] = $filename;
             }
         }
 
         $this->logModManagerTiming('hash_computation', $hashComputationStartedAt, [
             'source' => 'shared',
             'algorithms' => ['murmur2', 'sha512', 'sha256'],
-            'files_count' => count($unknownFiles),
-            'hashed_files_count' => count($hashesByFilename),
+            'files_count' => count($filesToResolve),
+            'hashed_files_count' => count($hashesByFilename) - $reusedHashCount,
+            'reused_hashes_count' => $reusedHashCount,
             'wings_get_count' => $this->hashScanWingsGetCount,
+            'failed_files_count' => count($hashFailures),
         ]);
 
+        $remainingFilenames = array_keys($filesToResolve);
+        $matchedEntries = [];
+        $lookupFailures = [];
+
         foreach ($this->getHashLookupSourcesInPriorityOrder() as $hashSource) {
-            if (empty($remainingFilenames)) {
+            if ($remainingFilenames === []) {
                 break;
             }
 
@@ -403,7 +451,7 @@ class MinecraftModrinthService
                 continue;
             }
 
-            $hashMap = []; // [filename => hash]
+            $hashMap = [];
             foreach ($remainingFilenames as $filename) {
                 $hash = $hashesByFilename[$filename][$algorithm] ?? null;
 
@@ -417,7 +465,13 @@ class MinecraftModrinthService
             }
 
             $hashLookupStartedAt = microtime(true);
-            $versionsByHash = $hashSource->findVersionsByHash($hashMap);
+            try {
+                $versionsByHash = $hashSource->findVersionsByHash($hashMap);
+            } catch (Exception $exception) {
+                report($exception);
+                $lookupFailures[] = $hashSource->getKey()->value;
+                $versionsByHash = [];
+            }
 
             $this->logModManagerTiming('hash_lookup', $hashLookupStartedAt, [
                 'source' => $hashSource->getKey()->value,
@@ -425,22 +479,17 @@ class MinecraftModrinthService
                 'matches_count' => count($versionsByHash),
             ]);
 
-            if (empty($versionsByHash)) {
+            if ($versionsByHash === []) {
                 continue;
             }
 
             $hashToFilenames = [];
             foreach ($hashMap as $filename => $hash) {
-                if (!isset($hashToFilenames[$hash])) {
-                    $hashToFilenames[$hash] = [];
-                }
-
                 $hashToFilenames[$hash][] = $filename;
             }
 
-            $matchedVersions = []; // [filename => versionData]
+            $matchedVersions = [];
             $projectIds = [];
-
             foreach ($versionsByHash as $hash => $versionData) {
                 if (!isset($hashToFilenames[$hash]) || !is_array($versionData) || !isset($versionData['project_id'])) {
                     continue;
@@ -450,16 +499,16 @@ class MinecraftModrinthService
                     $matchedVersions[$filename] = $versionData;
                 }
 
-                $projectIds[] = $versionData['project_id'];
+                $projectIds[] = (string) $versionData['project_id'];
             }
 
-            if (empty($matchedVersions)) {
+            if ($matchedVersions === []) {
                 continue;
             }
 
             $projectLookupStartedAt = microtime(true);
             try {
-                $projectsMap = $hashSource->getProjectsByIds(array_unique($projectIds));
+                $projectsMap = $hashSource->getProjectsByIds(array_values(array_unique($projectIds)));
             } catch (Exception $exception) {
                 report($exception);
                 $projectsMap = [];
@@ -471,53 +520,254 @@ class MinecraftModrinthService
                 'projects_count' => count($projectsMap),
             ]);
 
-            $metadataPersistenceStartedAt = microtime(true);
             foreach ($matchedVersions as $filename => $versionData) {
                 if (!isset($versionData['project_id'], $versionData['id'], $versionData['version_number'])) {
                     continue;
                 }
 
-                $projectId = $versionData['project_id'];
+                $projectId = (string) $versionData['project_id'];
                 $project = $projectsMap[$projectId] ?? null;
+                $entry = [
+                    'source' => $hashSource->getKey()->value,
+                    'project_id' => $projectId,
+                    'project_slug' => $project['slug'] ?? $projectId,
+                    'project_title' => $project['title'] ?? $projectId,
+                    'version_id' => (string) $versionData['id'],
+                    'version_number' => (string) $versionData['version_number'],
+                    'filename' => $filename,
+                    'installed_at' => now()->toIso8601String(),
+                    'file_signature' => $filesToResolve[$filename]['file_signature'],
+                    'hashes' => $hashesByFilename[$filename],
+                ];
+                $author = $this->resolveMatchAuthor($hashSource, $project, $versionData);
 
-                $saved = $this->saveModMetadata(
-                    server: $server,
-                    fileRepository: $fileRepository,
-                    projectId: $projectId,
-                    projectSlug: $project['slug'] ?? $projectId,
-                    projectTitle: $project['title'] ?? $projectId,
-                    versionId: $versionData['id'],
-                    versionNumber: $versionData['version_number'],
-                    filename: $filename,
-                    author: $this->resolveMatchAuthor($hashSource, $project, $versionData),
-                    type: $type,
-                    source: $hashSource->getKey(),
-                );
-
-                if ($saved) {
-                    $matchedFilenames[] = $filename;
+                if ($author !== null) {
+                    $entry['author'] = $author;
                 }
+
+                $matchedEntries[$filename] = $entry;
             }
 
-            $this->logModManagerTiming('hash_metadata_persistence', $metadataPersistenceStartedAt, [
-                'source' => $hashSource->getKey()->value,
-                'matched_files_count' => count($matchedVersions),
-                'saved_files_count' => count($matchedFilenames),
-            ]);
-
-            $remainingFilenames = array_values(array_diff($remainingFilenames, $matchedFilenames));
+            $remainingFilenames = array_values(array_diff($remainingFilenames, array_keys($matchedEntries)));
         }
 
-        $this->logModManagerTiming('hash_resolution', $hashResolutionStartedAt, [
-            'unknown_files_count' => count($unknownFiles),
-            'matched_files_count' => count($matchedFilenames),
-            'remaining_files_count' => count($remainingFilenames),
-            'wings_get_count' => $this->hashScanWingsGetCount,
+        foreach ($matchedEntries as $entry) {
+            $scannedInstalled = $this->upsertInstalledEntry($scannedInstalled, $entry);
+        }
+
+        $scannedUnresolved = [];
+        foreach ($remainingFilenames as $filename) {
+            $entry = [
+                'filename' => $filename,
+                'file_signature' => $filesToResolve[$filename]['file_signature'],
+                'last_checked_at' => now()->toIso8601String(),
+            ];
+
+            if (isset($hashesByFilename[$filename])) {
+                $entry['hashes'] = $hashesByFilename[$filename];
+            }
+
+            $scannedUnresolved[] = $entry;
+        }
+
+        $metadataPersistenceStartedAt = microtime(true);
+        $saved = $this->metadataRepository->mutate(
+            $server,
+            $fileRepository,
+            $folder,
+            fn (InstalledMetadataDocument $latest): InstalledMetadataDocument => $this->rebaseScanDocument(
+                $originalDocument,
+                $latest,
+                $scannedInstalled,
+                $scannedUnresolved,
+            ),
+        );
+
+        $this->logModManagerTiming('hash_metadata_persistence', $metadataPersistenceStartedAt, [
+            'source' => 'all',
+            'matched_files_count' => count($matchedEntries),
+            'saved_files_count' => $saved ? count($matchedEntries) : 0,
+            'writes_count' => $saved ? 1 : 0,
         ]);
 
-        return array_values(
-            array_filter($unknownFiles, fn ($name) => !in_array($name, $matchedFilenames, true))
-        );
+        $failure = !$saved
+            ? 'metadata_write_failed'
+            : ($hashFailures !== []
+                ? 'hash_computation_partial_failure'
+                : ($lookupFailures !== [] ? 'hash_lookup_partial_failure' : null));
+
+        $this->logModManagerTiming('hash_resolution', $hashResolutionStartedAt, [
+            'unknown_files_count' => count($filesToResolve),
+            'matched_files_count' => count($matchedEntries),
+            'remaining_files_count' => count($remainingFilenames),
+            'wings_get_count' => $this->hashScanWingsGetCount,
+            'failure' => $failure,
+        ]);
+
+        if ($failure !== null) {
+            return InstalledScanResult::failed($failure, $remainingFilenames, count($diskFiles));
+        }
+
+        return InstalledScanResult::success($remainingFilenames, count($diskFiles));
+    }
+
+    /**
+     * @param array<string, mixed> $item
+     * @return array{size: int, modified_at: string}|null
+     */
+    protected function normalizeFileSignature(array $item): ?array
+    {
+        $size = $item['size'] ?? null;
+        $modified = $item['modified'] ?? null;
+
+        if (!is_numeric($size) || (!is_string($modified) && !is_numeric($modified))) {
+            return null;
+        }
+
+        return [
+            'size' => (int) $size,
+            'modified_at' => (string) $modified,
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $entry
+     * @param array{size: int, modified_at: string}|null $signature
+     * @return array{murmur2: string, sha512: string, sha256: string}|null
+     */
+    protected function reusableHashes(array $entry, ?array $signature): ?array
+    {
+        if ($signature === null || ($entry['file_signature'] ?? null) !== $signature || !is_array($entry['hashes'] ?? null)) {
+            return null;
+        }
+
+        $hashes = [];
+        foreach (['murmur2', 'sha512', 'sha256'] as $algorithm) {
+            $hash = $entry['hashes'][$algorithm] ?? null;
+
+            if (!is_string($hash) || $hash === '') {
+                return null;
+            }
+
+            $hashes[$algorithm] = $hash;
+        }
+
+        return $hashes;
+    }
+
+    /**
+     * Rebase the scan onto metadata changes made while hashing. New installs,
+     * updates, and removals win over the older directory snapshot.
+     *
+     * @param array<int, array<string, mixed>> $scannedInstalled
+     * @param array<int, array<string, mixed>> $scannedUnresolved
+     */
+    protected function rebaseScanDocument(
+        InstalledMetadataDocument $original,
+        InstalledMetadataDocument $latest,
+        array $scannedInstalled,
+        array $scannedUnresolved,
+    ): InstalledMetadataDocument {
+        $originalInstalled = $this->indexInstalledEntries($original->installedMods());
+        $latestInstalled = $this->indexInstalledEntries($latest->installedMods());
+
+        foreach ($originalInstalled as $identity => $entry) {
+            if (!isset($latestInstalled[$identity])) {
+                $scannedInstalled = array_values(array_filter(
+                    $scannedInstalled,
+                    fn (array $candidate): bool => $this->installedEntryIdentity($candidate) !== $identity,
+                ));
+            } elseif ($latestInstalled[$identity] != $entry) {
+                $scannedInstalled = $this->upsertInstalledEntry($scannedInstalled, $latestInstalled[$identity]);
+            }
+        }
+
+        foreach ($latestInstalled as $identity => $entry) {
+            if (!isset($originalInstalled[$identity])) {
+                $scannedInstalled = $this->upsertInstalledEntry($scannedInstalled, $entry);
+            }
+        }
+
+        $originalUnresolved = $this->indexEntriesByFilename($original->unresolvedFiles());
+        $latestUnresolved = $this->indexEntriesByFilename($latest->unresolvedFiles());
+        $scannedUnresolved = $this->indexEntriesByFilename($scannedUnresolved);
+
+        foreach ($originalUnresolved as $filename => $entry) {
+            if (!isset($latestUnresolved[$filename])) {
+                unset($scannedUnresolved[$filename]);
+            } elseif ($latestUnresolved[$filename] != $entry) {
+                $scannedUnresolved[$filename] = $latestUnresolved[$filename];
+            }
+        }
+
+        foreach ($latestUnresolved as $filename => $entry) {
+            if (!isset($originalUnresolved[$filename])) {
+                $scannedUnresolved[$filename] = $entry;
+            }
+        }
+
+        return $latest
+            ->withInstalledMods(array_values($scannedInstalled))
+            ->withUnresolvedFiles(array_values($scannedUnresolved));
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $entries
+     * @return array<string, array<string, mixed>>
+     */
+    protected function indexInstalledEntries(array $entries): array
+    {
+        $indexed = [];
+
+        foreach ($entries as $entry) {
+            $indexed[$this->installedEntryIdentity($entry)] = $entry;
+        }
+
+        return $indexed;
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $entries
+     * @return array<string, array<string, mixed>>
+     */
+    protected function indexEntriesByFilename(array $entries): array
+    {
+        $indexed = [];
+
+        foreach ($entries as $entry) {
+            $filename = strtolower((string) ($entry['filename'] ?? ''));
+
+            if ($filename !== '') {
+                $indexed[$filename] = $entry;
+            }
+        }
+
+        return $indexed;
+    }
+
+    /** @param array<string, mixed> $entry */
+    protected function installedEntryIdentity(array $entry): string
+    {
+        return ($entry['source'] ?? ProjectSourceKey::Modrinth->value).':'.($entry['project_id'] ?? '').':'.strtolower((string) ($entry['filename'] ?? ''));
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $entries
+     * @param array<string, mixed> $entry
+     * @return array<int, array<string, mixed>>
+     */
+    protected function upsertInstalledEntry(array $entries, array $entry): array
+    {
+        $identity = $this->installedEntryIdentity($entry);
+        $filename = strtolower((string) ($entry['filename'] ?? ''));
+        $entries = array_values(array_filter(
+            $entries,
+            fn (array $candidate): bool => $this->installedEntryIdentity($candidate) !== $identity
+                && strtolower((string) ($candidate['filename'] ?? '')) !== $filename,
+        ));
+        $entries[] = $entry;
+
+        return $entries;
     }
 
     /**
@@ -591,24 +841,6 @@ class MinecraftModrinthService
         return (is_string($author) && $author !== '') ? $author : null;
     }
 
-    /**
-     * @throws Exception
-     */
-    protected function getMetadataFilePath(Server $server, DaemonFileRepository $fileRepository, ?ModrinthProjectType $type = null): string
-    {
-        return $this->resolveMetadataFolder($server, $fileRepository, $type).'/.pelican-mod-manager.json';
-    }
-
-    /**
-     * Path of the metadata file used by plugin versions prior to the multi-source
-     * rework. Only ever read from (as a fallback), never written to.
-     *
-     * @throws Exception
-     */
-    protected function getLegacyMetadataFilePath(Server $server, DaemonFileRepository $fileRepository, ?ModrinthProjectType $type = null): string
-    {
-        return $this->resolveMetadataFolder($server, $fileRepository, $type).'/.modrinth-metadata.json';
-    }
 
     /**
      * @throws Exception
@@ -625,80 +857,27 @@ class MinecraftModrinthService
     }
 
     /**
-     * Reads installed-mod metadata from the current metadata file, falling back to
-     * the legacy pre-multi-source file (defaulting its entries to the Modrinth
-     * source) only when the current file doesn't exist or can't be parsed. An
-     * existing-but-empty current file is authoritative and does NOT fall back,
-     * so mods removed after a migration don't reappear.
-     *
-     * @return array<int, array{source: string, project_id: string, project_slug: string, project_title: string, version_id: string, version_number: string, filename: string, installed_at: string, author?: string}>
+     * Read the complete installed metadata document, including the persistent
+     * file-signature and hash index used by incremental scans.
      */
-    public function getInstalledModsMetadata(Server $server, DaemonFileRepository $fileRepository, ?ModrinthProjectType $type = null): array
+    public function getInstalledMetadataReadResult(Server $server, DaemonFileRepository $fileRepository, ?ModrinthProjectType $type = null): InstalledMetadataReadResult
     {
         try {
-            $metadataPath = $this->getMetadataFilePath($server, $fileRepository, $type);
-        } catch (Exception $exception) {
-            return [];
+            $folder = $this->resolveMetadataFolder($server, $fileRepository, $type);
+        } catch (Exception) {
+            return new InstalledMetadataReadResult(
+                InstalledMetadataDocument::empty(),
+                InstalledMetadataReadStatus::Unavailable,
+            );
         }
 
-        $entries = $this->readMetadataEntries($server, $fileRepository, $metadataPath);
-
-        if ($entries !== null) {
-            return $entries;
-        }
-
-        try {
-            $legacyMetadataPath = $this->getLegacyMetadataFilePath($server, $fileRepository, $type);
-        } catch (Exception $exception) {
-            return [];
-        }
-
-        return $this->readMetadataEntries($server, $fileRepository, $legacyMetadataPath) ?? [];
+        return $this->metadataRepository->read($server, $fileRepository, $folder);
     }
 
-    /**
-     * @return array<int, array<string, mixed>>|null  null when the file is missing/unreadable/invalid
-     */
-    protected function readMetadataEntries(Server $server, DaemonFileRepository $fileRepository, string $metadataPath): ?array
+    /** @return array<int, array<string, mixed>> */
+    public function getInstalledModsMetadata(Server $server, DaemonFileRepository $fileRepository, ?ModrinthProjectType $type = null): array
     {
-        try {
-            $content = $fileRepository->setServer($server)->getContent($metadataPath);
-        } catch (Exception $exception) {
-            return null;
-        }
-
-        $metadata = json_decode($content, true);
-
-        if (!is_array($metadata) || !isset($metadata['installed_mods']) || !is_array($metadata['installed_mods'])) {
-            return null;
-        }
-
-        $validInstalledMods = [];
-        $requiredKeys = [
-            'project_id',
-            'project_slug',
-            'project_title',
-            'version_id',
-            'version_number',
-            'filename',
-            'installed_at',
-        ];
-
-        $requiredKeysFlipped = array_flip($requiredKeys);
-
-        foreach ($metadata['installed_mods'] as $entry) {
-            if (!is_array($entry)) {
-                continue;
-            }
-
-            $missingKeys = array_diff_key($requiredKeysFlipped, $entry);
-            if (empty($missingKeys)) {
-                $entry['source'] ??= ProjectSourceKey::Modrinth->value;
-                $validInstalledMods[] = $entry;
-            }
-        }
-
-        return $validInstalledMods;
+        return $this->getInstalledMetadataReadResult($server, $fileRepository, $type)->document->installedMods();
     }
 
     public function saveModMetadata(
@@ -715,114 +894,107 @@ class MinecraftModrinthService
         ProjectSourceKey $source = ProjectSourceKey::Modrinth
     ): bool {
         try {
-            return Cache::lock("modrinth_metadata:{$server->id}", 10)->block(5, function () use ($server, $fileRepository, $projectId, $projectSlug, $projectTitle, $versionId, $versionNumber, $filename, $author, $type, $source) {
-                $metadata = [
-                    'installed_mods' => $this->getInstalledModsMetadata($server, $fileRepository, $type),
-                ];
-
-                $metadata['installed_mods'] = collect($metadata['installed_mods'])
-                    ->filter(fn ($mod) => !($mod['source'] === $source->value && $mod['project_id'] === $projectId) && strtolower($mod['filename']) !== strtolower($filename))
-                    ->values()
-                    ->toArray();
-
-                $modEntry = [
-                    'source' => $source->value,
-                    'project_id' => $projectId,
-                    'project_slug' => $projectSlug,
-                    'project_title' => $projectTitle,
-                    'version_id' => $versionId,
-                    'version_number' => $versionNumber,
-                    'filename' => $filename,
-                    'installed_at' => now()->toIso8601String(),
-                ];
-
-                if ($author !== null) {
-                    $modEntry['author'] = $author;
-                }
-
-                $metadata['installed_mods'][] = $modEntry;
-
-                $metadataPath = $this->getMetadataFilePath($server, $fileRepository, $type);
-                $response = $fileRepository->setServer($server)->putContent(
-                    $metadataPath,
-                    json_encode($metadata, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)
-                );
-
-                if ($response->failed()) {
-                    return false;
-                }
-
-                CacheVersion::bumpHydration($server);
-
-                return true;
-            }) === true;
+            $folder = $this->resolveMetadataFolder($server, $fileRepository, $type);
         } catch (Exception $exception) {
             report($exception);
 
             return false;
         }
+
+        $entry = [
+            'source' => $source->value,
+            'project_id' => $projectId,
+            'project_slug' => $projectSlug,
+            'project_title' => $projectTitle,
+            'version_id' => $versionId,
+            'version_number' => $versionNumber,
+            'filename' => $filename,
+            'installed_at' => now()->toIso8601String(),
+        ];
+
+        if ($author !== null) {
+            $entry['author'] = $author;
+        }
+
+        return $this->metadataRepository->mutate(
+            $server,
+            $fileRepository,
+            $folder,
+            function (InstalledMetadataDocument $document) use ($entry, $source, $projectId, $filename): InstalledMetadataDocument {
+                $installedMods = array_values(array_filter(
+                    $document->installedMods(),
+                    fn (array $mod): bool => !(($mod['source'] ?? ProjectSourceKey::Modrinth->value) === $source->value && ($mod['project_id'] ?? null) === $projectId)
+                        && strtolower((string) ($mod['filename'] ?? '')) !== strtolower($filename),
+                ));
+                $installedMods[] = $entry;
+
+                $unresolvedFiles = array_values(array_filter(
+                    $document->unresolvedFiles(),
+                    fn (array $file): bool => strtolower((string) ($file['filename'] ?? '')) !== strtolower($filename),
+                ));
+
+                return $document
+                    ->withInstalledMods($installedMods)
+                    ->withUnresolvedFiles($unresolvedFiles);
+            },
+        );
     }
 
-    /**
-     * @param array<int, array{source: string, project_id: string, project_slug: string, project_title: string, version_id: string, version_number: string, filename: string, installed_at: string, author?: string}> $installedMods
-     */
+    /** @param array<int, array<string, mixed>> $installedMods */
     protected function saveInstalledModsMetadata(Server $server, DaemonFileRepository $fileRepository, array $installedMods, ?ModrinthProjectType $type = null): bool
     {
         try {
-            return Cache::lock("modrinth_metadata:{$server->id}", 10)->block(5, function () use ($server, $fileRepository, $installedMods, $type) {
-                $metadataPath = $this->getMetadataFilePath($server, $fileRepository, $type);
-                $response = $fileRepository->setServer($server)->putContent(
-                    $metadataPath,
-                    json_encode(['installed_mods' => array_values($installedMods)], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)
-                );
-
-                if ($response->failed()) {
-                    return false;
-                }
-
-                CacheVersion::bumpHydration($server);
-
-                return true;
-            }) === true;
+            $folder = $this->resolveMetadataFolder($server, $fileRepository, $type);
         } catch (Exception $exception) {
             report($exception);
 
             return false;
         }
+
+        return $this->metadataRepository->mutate(
+            $server,
+            $fileRepository,
+            $folder,
+            fn (InstalledMetadataDocument $document): InstalledMetadataDocument => $document->withInstalledMods(array_values($installedMods)),
+        );
+    }
+
+    public function saveInstalledMetadataDocument(Server $server, DaemonFileRepository $fileRepository, InstalledMetadataDocument $document, ?ModrinthProjectType $type = null): bool
+    {
+        try {
+            $folder = $this->resolveMetadataFolder($server, $fileRepository, $type);
+        } catch (Exception $exception) {
+            report($exception);
+
+            return false;
+        }
+
+        return $this->metadataRepository->replace($server, $fileRepository, $folder, $document);
     }
 
     public function removeModMetadata(Server $server, DaemonFileRepository $fileRepository, string $projectId, ?ModrinthProjectType $type = null, ProjectSourceKey $source = ProjectSourceKey::Modrinth): bool
     {
         try {
-            return Cache::lock("modrinth_metadata:{$server->id}", 10)->block(5, function () use ($server, $fileRepository, $projectId, $type, $source) {
-                $metadata = [
-                    'installed_mods' => $this->getInstalledModsMetadata($server, $fileRepository, $type),
-                ];
-
-                $metadata['installed_mods'] = collect($metadata['installed_mods'])
-                    ->filter(fn ($mod) => !($mod['source'] === $source->value && $mod['project_id'] === $projectId))
-                    ->values()
-                    ->toArray();
-
-                $metadataPath = $this->getMetadataFilePath($server, $fileRepository, $type);
-                $response = $fileRepository->setServer($server)->putContent(
-                    $metadataPath,
-                    json_encode($metadata, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)
-                );
-
-                if ($response->failed()) {
-                    return false;
-                }
-
-                CacheVersion::bumpHydration($server);
-
-                return true;
-            }) === true;
+            $folder = $this->resolveMetadataFolder($server, $fileRepository, $type);
         } catch (Exception $exception) {
             report($exception);
 
             return false;
         }
+
+        return $this->metadataRepository->mutate(
+            $server,
+            $fileRepository,
+            $folder,
+            function (InstalledMetadataDocument $document) use ($projectId, $source): InstalledMetadataDocument {
+                $installedMods = array_values(array_filter(
+                    $document->installedMods(),
+                    fn (array $mod): bool => !(($mod['source'] ?? ProjectSourceKey::Modrinth->value) === $source->value && ($mod['project_id'] ?? null) === $projectId),
+                ));
+
+                return $document->withInstalledMods($installedMods);
+            },
+        );
     }
 
     /** @return array{source: string, project_id: string, project_slug: string, project_title: string, version_id: string, version_number: string, filename: string, installed_at: string, author?: string}|null */
