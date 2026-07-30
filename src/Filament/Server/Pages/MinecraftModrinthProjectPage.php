@@ -1222,7 +1222,29 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
             ->columns([
                 ImageColumn::make('icon_url')
                     ->label('')
-                    ->extraImgAttributes(['loading' => 'lazy', 'decoding' => 'async']),
+                    // ImageColumn only emits an inline height by default
+                    // (2.5rem); width stays null unless circular/square, so a
+                    // non-square icon renders at its natural aspect width and
+                    // drags the whole column out with it, leaving square icons
+                    // left-aligned in the widened cell. Pinning both axes makes
+                    // the cell width independent of any individual image.
+                    ->imageWidth('2.5rem')
+                    ->imageHeight('2.5rem')
+                    // With both axes fixed, Filament's own stylesheet
+                    // (.fi-ta-image img { object-cover object-center }) would
+                    // now start cropping non-square icons - it was a no-op
+                    // while the box matched the natural aspect ratio. Inline
+                    // beats that class rule without !important, and Laravel's
+                    // ComponentAttributeBag::merge() appends rather than
+                    // replaces the style attribute, so the height/width
+                    // ImageColumn adds afterwards survives alongside it.
+                    // object-position stays centered from object-center, so
+                    // contain centers the image on both axes inside the box.
+                    ->extraImgAttributes([
+                        'loading' => 'lazy',
+                        'decoding' => 'async',
+                        'style' => 'object-fit: contain;',
+                    ]),
                 TextColumn::make('title')
                     ->label(trans('pelican-minecraft-modrinth::strings.table.columns.title'))
                     ->searchable()
@@ -1896,7 +1918,18 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                         TextEntry::make('installed_operation_status')
                             ->hiddenLabel()
                             ->state(fn () => $this->installedOperationStatus())
-                            ->icon('tabler-loader-2')
+                            // Mirrors installedOperationIsActive()'s split: the
+                            // spinning loader belongs only to states that are
+                            // genuinely still in flight. The terminal states get
+                            // an icon that reads as an outcome instead, so a
+                            // finished scan no longer looks like a running one.
+                            ->icon(fn () => match ($this->installedOperation['status'] ?? null) {
+                                InstalledOperationState::STATUS_COMPLETED => 'tabler-check',
+                                InstalledOperationState::STATUS_FAILED => 'tabler-alert-triangle',
+                                default => $this->operationQueueWarningShown
+                                    ? 'tabler-alert-triangle'
+                                    : 'tabler-loader-2',
+                            })
                             ->badge()
                             ->color(fn () => match ($this->installedOperation['status'] ?? null) {
                                 InstalledOperationState::STATUS_RUNNING => 'info',
