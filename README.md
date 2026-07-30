@@ -33,19 +33,19 @@ Also ensure the egg has the `minecraft` tag and a matching loader tag (for examp
 Use this URL in the Pelican Panel plugin installer:
 
 ```txt
-https://github.com/YONN2222/pelican-minecraft-modrinth/releases/latest/download/pelican-minecraft-modrinth.zip
+https://github.com/kazaminosuke/pelican-minecraft-modrinth/releases/latest/download/pelican-minecraft-modrinth.zip
 ```
 
 ### Option 2: Upload ZIP
 
-1. Go to the [Releases](https://github.com/YONN2222/pelican-minecraft-modrinth/releases) page
+1. Go to the [Releases](https://github.com/kazaminosuke/pelican-minecraft-modrinth/releases) page
 2. Download the latest plugin ZIP
 3. Open the Pelican Panel plugin installer
 4. Upload the ZIP file
 
 ## Repository
 
-https://github.com/YONN2222/pelican-minecraft-modrinth
+https://github.com/kazaminosuke/pelican-minecraft-modrinth
 
 ## License
 
