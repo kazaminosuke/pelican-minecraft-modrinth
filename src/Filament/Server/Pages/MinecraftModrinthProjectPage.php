@@ -98,6 +98,17 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
     /** Enable polling only while an Installed operation needs observation. */
     public bool $pollInstalledOperations = false;
 
+    /**
+     * Whether a still-valid scan result already exists, independent of any
+     * background-operation state. Once a completed operation's cache entry
+     * is forgotten (see pollInstalledOperation()), installedOperation goes
+     * back to null even though the data itself is fine - without this flag,
+     * installedOperationStatus() cannot tell that apart from "nothing has
+     * been checked yet" and gets stuck showing its "checking" fallback with
+     * polling already disabled, i.e. permanently.
+     */
+    public bool $installedScanDataReady = false;
+
     /** Per-request timing state used only by temporary initial-load diagnostics. */
     protected float $modManagerTimingStartedAt = 0.0;
 
@@ -1018,6 +1029,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     $installedMods = $this->getInstalledModsMetadata();
                     $unknownFiles = $scanResult === null ? [] : $scanResult->unknownFiles;
                     $this->unknownFiles = $unknownFiles;
+                    $this->installedScanDataReady = $scanResult !== null;
 
                     if ($scanResult !== null) {
                         $this->installedFilesCount = $scanResult->diskFileCount;
@@ -1868,7 +1880,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     ->extraAttributes(fn () => $this->pollInstalledOperations
                         ? ['wire:poll.2s' => 'pollInstalledOperation']
                         : [])
-                    ->visible(fn () => $this->activeTab === 'installed'),
+                    ->visible(fn () => $this->activeTab === 'installed' && $this->shouldShowInstalledOperationStatus()),
                 Group::make([
                     EmbeddedTable::make(),
                 ])->extraAttributes([
@@ -1981,6 +1993,21 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
         $this->pollInstalledOperations = $this->shouldPollInstalledOperation($state);
 
         return $state;
+    }
+
+    /**
+     * There is nothing worth showing once a background operation's cache
+     * entry has been forgotten (see pollInstalledOperation()) and a valid
+     * scan result already exists to take its place - installedOperation is
+     * null in that case, but not because anything is still being checked.
+     */
+    protected function shouldShowInstalledOperationStatus(): bool
+    {
+        if ($this->installedOperation !== null || $this->pollInstalledOperations || $this->operationQueueWarningShown) {
+            return true;
+        }
+
+        return !$this->installedScanDataReady;
     }
 
     protected function shouldPollInstalledOperation(?InstalledOperationState $state): bool
