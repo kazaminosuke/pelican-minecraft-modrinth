@@ -492,6 +492,20 @@
             overlay.setAttribute('aria-hidden', 'true');
             overlay.setAttribute('inert', '');
             overlay.inert = true;
+            // wrapper is the same element Livewire re-renders on every
+            // background revalidation - without this, Livewire's morph
+            // (js/morph.js) walks into this raw-DOM-appended overlay as an
+            // unexpected extra child, and reconciling/removing it away from
+            // the rest of its diff is what produced the "loading spinner
+            // flashes, UI looks like it briefly falls apart" glitch: the
+            // overlay itself (and whatever real content it was still
+            // covering underneath) got caught up in that diff instead of
+            // being left alone until removeOverlay() takes it out directly.
+            // wire:ignore (see Livewire's directive('ignore', ...) in
+            // js/directives/wire-ignore.js) is picked up by Alpine's
+            // mutation observer for elements added after the fact, well
+            // before the next morph (a network round trip away) can run.
+            overlay.setAttribute('wire:ignore', '');
             overlay.style.top = `${Math.max(anchorRect.top - wrapperRect.top, 0)}px`;
             overlay.style.left = `${Math.max(anchorRect.left - wrapperRect.left, 0)}px`;
             overlay.style.width = `${Math.max(anchorRect.width, 1)}px`;
