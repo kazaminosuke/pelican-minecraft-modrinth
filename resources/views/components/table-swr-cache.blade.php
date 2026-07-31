@@ -657,13 +657,31 @@
                 isFreeze: true,
             });
 
-            // A freeze is only meant to bridge a short revalidation. Holding a
-            // stale table indefinitely would read as an unresponsive page, so
-            // hand back to Filament's real loading state if the update is slow.
+            // A freeze is only meant to bridge a short revalidation. Holding
+            // content the user has already navigated away from would start to
+            // read as an unresponsive page, so once it has been up this long,
+            // hand over to the stored snapshot of the view actually being
+            // opened - and failing that, to Filament's own loading state. By
+            // this point a content change reads as progress rather than as the
+            // flicker that swapping immediately produced.
             controller.freezeTimer = window.setTimeout(() => {
-                if (controller.isFreezeOverlay) {
-                    removeOverlay(wrapper, controller, 'freeze-timeout');
+                if (!controller.isFreezeOverlay) {
+                    return;
                 }
+
+                const wire = findWire(wrapper);
+                const key = wire ? buildKey(wrapper, wire) : null;
+                const entry = key ? loadEntry(key) : null;
+                const currentContent = wrapper.querySelector('.fi-ta-content-ctn');
+
+                if (entry && currentContent) {
+                    debugLog('freeze timed out: handing over to cached snapshot');
+                    showOverlay(wrapper, controller, key, entry, currentContent);
+
+                    return;
+                }
+
+                removeOverlay(wrapper, controller, 'freeze-timeout');
             }, FREEZE_MAX_MS);
 
             debugLog('freeze overlay mounted before morph');
@@ -711,6 +729,20 @@
                 const isTableLoaded = Boolean(getWireValue(wire, 'isTableLoaded', !isLoading));
 
                 if (isLoading || !isTableLoaded) {
+                    // A live freeze is already showing the table exactly as the
+                    // user last saw it. Trading that for the stored snapshot
+                    // here buys nothing - both are stale, and the real content
+                    // is about to replace whichever one is up - while costing a
+                    // second visible jump, because the two differ in rows,
+                    // height and scroll position. So hold the freeze and let
+                    // the fresh content be the only thing that replaces it.
+                    // Its own timer covers the case where that takes too long.
+                    if (controller.isFreezeOverlay && controller.overlay?.isConnected) {
+                        debugLog('processWrapper: table not ready, holding freeze overlay');
+
+                        return;
+                    }
+
                     const entry = loadEntry(key);
 
                     debugLog('processWrapper: table not ready', {
@@ -724,11 +756,7 @@
 
                     if (entry && content) {
                         showOverlay(wrapper, controller, key, entry, content);
-                    } else if (!controller.isFreezeOverlay) {
-                        // A freeze is deliberately kept here: with no snapshot
-                        // for this key, it is the only thing standing between
-                        // the user and the bare loading placeholder, and its
-                        // own timer already bounds how long it may stay.
+                    } else {
                         removeOverlay(wrapper, controller, 'no-cache-entry-or-content');
                     }
 
