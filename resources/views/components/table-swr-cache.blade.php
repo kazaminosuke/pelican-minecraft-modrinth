@@ -222,6 +222,14 @@
             return true;
         };
 
+        // A presence check cheap enough to run inside the morph hook: the index
+        // carries the expiry, so this avoids parsing a whole stored snapshot
+        // just to find out whether one exists.
+        const hasFreshEntry = (key) => readIndex().some((entry) => entry
+            && entry.key === key
+            && Number(entry.expiresAt) > Date.now()
+            && storage.get(key) !== null);
+
         const loadEntry = (key) => {
             const now = Date.now();
             const entry = parseJson(storage.get(key));
@@ -446,6 +454,14 @@
                 cloneItems.style.marginInlineStart = offset;
             }
 
+            debugLog('clonePagination', {
+                foundSourceItems: Boolean(sourceItems),
+                foundCloneItems: Boolean(cloneItems),
+                // Empty means the real element had no inline offset to carry
+                // over at this point, which itself is worth seeing.
+                offsetCarriedOver: offset || '(none)',
+            });
+
             return clone;
         };
 
@@ -548,7 +564,7 @@
                 anchorRect,
                 contentHeight,
                 paginationHeight,
-                paginationOffsetTop,
+                paginationBox,
                 scrollTop,
                 scrollLeft,
                 isFreeze,
@@ -578,14 +594,19 @@
             if (paginationNode) {
                 // A freeze knows exactly where the real pagination sits, so pin
                 // the copy on top of it instead of letting it land wherever it
-                // happens to stack. Any drift between the two is visible as the
-                // buttons jumping the moment the overlay goes up or comes down.
-                if (typeof paginationOffsetTop === 'number') {
+                // happens to stack. Both axes have to come from the measured
+                // box: the pagination is a sibling of the content container,
+                // not a child, so it has its own left edge and width, and
+                // stretching the copy across the content's box instead (which
+                // is what left/right: 0 did) puts the buttons at a different x
+                // than the real ones sitting underneath.
+                if (paginationBox) {
                     paginationNode.style.position = 'absolute';
-                    paginationNode.style.top = `${paginationOffsetTop}px`;
-                    paginationNode.style.left = '0';
-                    paginationNode.style.right = '0';
-                    overlay.style.height = `${paginationOffsetTop + Number(paginationHeight || 0)}px`;
+                    paginationNode.style.top = `${paginationBox.top}px`;
+                    paginationNode.style.left = `${paginationBox.left}px`;
+                    paginationNode.style.width = `${paginationBox.width}px`;
+                    overlay.style.height = `${paginationBox.top + paginationBox.height}px`;
+                    overlay.style.width = `${Math.max(anchorRect.width, paginationBox.left + paginationBox.width, 1)}px`;
                 }
 
                 overlay.append(paginationNode);
@@ -665,6 +686,22 @@
                 return;
             }
 
+            // Only a background revalidation - a load that already has
+            // something cached to fall back on - is allowed to be hidden. A
+            // first load has nothing to show yet, so covering it would just
+            // suppress Filament's own deferLoading spinner and leave no sign
+            // that anything is happening. Livewire merges the new snapshot
+            // before invoking this hook, so $wire already reports the view
+            // being opened rather than the one being left.
+            const wire = findWire(wrapper);
+            const targetKey = wire ? buildKey(wrapper, wire) : null;
+
+            if (!targetKey || !hasFreshEntry(targetKey)) {
+                debugLog('freeze skipped: nothing cached for the incoming view');
+
+                return;
+            }
+
             // Drops a stale reference (and its timer) if an earlier overlay
             // left the DOM without going through removeOverlay, so the mount
             // below can never strand a timer that would later tear down the
@@ -679,14 +716,20 @@
 
             const pagination = getPagination(wrapper);
             const paginationRect = pagination ? pagination.getBoundingClientRect() : null;
+            const paginationBox = paginationRect ? {
+                top: Math.round(paginationRect.top - anchorRect.top),
+                left: Math.round(paginationRect.left - anchorRect.left),
+                width: Math.round(paginationRect.width),
+                height: Math.max(Math.round(paginationRect.height), 0),
+            } : null;
+
+            debugLog('freeze mounting', { targetKey: targetKey.slice(-16), paginationBox });
 
             mountOverlay(wrapper, controller, {
                 key: null,
                 contentNode: sanitizeElement(content),
                 paginationNode: pagination ? clonePagination(pagination) : null,
-                paginationOffsetTop: paginationRect
-                    ? Math.round(paginationRect.top - anchorRect.top)
-                    : undefined,
+                paginationBox,
                 anchorRect,
                 contentHeight: Math.max(Math.round(anchorRect.height), 1),
                 paginationHeight: pagination
@@ -796,7 +839,7 @@
                 // Settle the real pagination before it is uncovered, so the
                 // overlay never hands over to a table that still has to shift
                 // its buttons back into place.
-                window.mmrRestorePaginationOffset?.();
+                window.mmrRestorePaginationOffset?.('before-uncover');
 
                 // A completed morph always wins over the stale preview.
                 removeOverlay(wrapper, controller, 'table-loaded');
@@ -903,7 +946,11 @@
                 // task, rather than waiting for the resize pass that runs a
                 // frame or two later - that gap is when the buttons were seen
                 // sitting too far left.
-                window.mmrRestorePaginationOffset?.();
+                if (typeof window.mmrRestorePaginationOffset === 'function') {
+                    window.mmrRestorePaginationOffset('morphed');
+                } else {
+                    debugLog('morphed: mmrRestorePaginationOffset NOT available');
+                }
             });
         };
 

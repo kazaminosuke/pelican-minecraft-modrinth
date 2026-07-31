@@ -317,15 +317,35 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                 // the shared previous-button width measured below.
                 const isInsideOverlay = (element) => element.closest('.mmr-table-swr-overlay') !== null;
 
+                // Shares the opt-in flag with the SWR component's own logging
+                // (localStorage 'mmrSwrDebug' = '1'), since this script runs in
+                // its own scope and cannot reach that one's debugLog.
+                const debugLog = (event, detail) => {
+                    try {
+                        if (window.localStorage.getItem('mmrSwrDebug') !== '1') {
+                            return;
+                        }
+                    } catch (_error) {
+                        return;
+                    }
+
+                    console.log(`[mmr-swr +${Math.round(performance.now())}ms] ${event}`, detail ?? '');
+                };
+
                 // Filament renders no offset of its own here, so this margin only
                 // ever exists as an inline style, which means Livewire's morph
                 // strips it every time the server re-renders the pagination -
                 // that is what makes the buttons jump left mid-revalidation.
                 // Exposed separately so the morph can put it straight back
                 // without paying for a full resize pass.
-                const restorePaginationOffset = () => {
-                    document.querySelectorAll('.mmr-table-scroll-ctn .fi-pagination-items').forEach((items) => {
+                const restorePaginationOffset = (caller = 'resize') => {
+                    const all = document.querySelectorAll('.mmr-table-scroll-ctn .fi-pagination-items');
+                    const outcomes = [];
+
+                    all.forEach((items) => {
                         if (isInsideOverlay(items)) {
+                            outcomes.push('skipped:in-overlay');
+
                             return;
                         }
 
@@ -334,28 +354,41 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
                         if (previous) {
                             window.mmrPaginationPreviousWidth = previous.getBoundingClientRect().width;
+                            outcomes.push(`has-prev:measured ${Math.round(window.mmrPaginationPreviousWidth)}px`);
 
                             return;
                         }
 
                         if (items.dataset.mmrPaginationPreviousSpace === 'true') {
+                            outcomes.push(`already-offset:${items.style.marginInlineStart || '(no inline style!)'}`);
+
                             return;
                         }
 
                         const next = paginationItems.find((item) => item.matches('.fi-pagination-item[rel="next"]'));
 
                         if (!next) {
+                            outcomes.push('bailed:no-next-button');
+
                             return;
                         }
 
                         const width = window.mmrPaginationPreviousWidth ?? next.getBoundingClientRect().width;
 
                         if (width === 0) {
+                            outcomes.push('bailed:zero-width');
+
                             return;
                         }
 
                         items.style.marginInlineStart = `${width}px`;
                         items.dataset.mmrPaginationPreviousSpace = 'true';
+                        outcomes.push(`applied ${Math.round(width)}px`);
+                    });
+
+                    debugLog(`restorePaginationOffset (from: ${caller})`, {
+                        matched: all.length,
+                        outcomes,
                     });
                 };
 
