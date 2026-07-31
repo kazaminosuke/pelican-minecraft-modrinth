@@ -436,7 +436,17 @@
         };
 
 
-        const getPagination = (wrapper) => wrapper.querySelector('.fi-pagination');
+        // The overlay lives inside the wrapper and holds a copy of the table and
+        // its pagination, so a plain wrapper.querySelector() can hand back the
+        // copy instead of the real element - which decides whether the table
+        // reads as "still loading". Every lookup that drives a decision has to
+        // go through here.
+        const findReal = (wrapper, selector) => Array.from(wrapper.querySelectorAll(selector))
+            .find((element) => element.closest('.mmr-table-swr-overlay') === null) ?? null;
+
+        const getContent = (wrapper) => findReal(wrapper, '.fi-ta-content-ctn');
+
+        const getPagination = (wrapper) => findReal(wrapper, '.fi-pagination');
 
         // sanitizeElement() strips every style attribute, which for the
         // pagination throws away the one thing holding the buttons in place:
@@ -466,7 +476,9 @@
         };
 
         const capture = (wrapper, key) => {
-            const content = wrapper.querySelector('.fi-ta-content-ctn');
+            // Must be the real table: snapshotting the overlay's copy would
+            // write a stale tab's rows into this key's cache entry.
+            const content = getContent(wrapper);
 
             if (!content || content.querySelector('.fi-ta-table-loading-ctn')) {
                 return;
@@ -680,7 +692,7 @@
                 return;
             }
 
-            const content = wrapper.querySelector('.fi-ta-content-ctn');
+            const content = getContent(wrapper);
 
             if (!content || content.querySelector('.fi-ta-table-loading-ctn')) {
                 return;
@@ -756,6 +768,48 @@
             debugLog('freeze overlay mounted before morph');
         };
 
+        // Takes the overlay down as soon as the real table has actually
+        // rendered, judged purely from the DOM.
+        //
+        // Removal used to depend on processWrapper agreeing that the table was
+        // ready, which meant trusting $wire.isTableLoaded and waiting for a
+        // scan that is debounced behind two animation frames. Direct browser
+        // observation caught the cost of that: the fresh CurseForge table and
+        // pagination were rendered and in place while the frozen copy of the
+        // previous tab sat on top of them for over a second, showing that tab's
+        // page numbers over the new ones. Whatever stalls that agreement,
+        // rendered rows are reason enough to stop covering them, so this runs
+        // in the same task as the morph that produced them.
+        const releaseOverlayIfReady = (wrapper) => {
+            const controller = controllers.get(wrapper);
+
+            if (!controller?.overlay?.isConnected) {
+                return false;
+            }
+
+            const content = getContent(wrapper);
+
+            if (!content || content.querySelector('.fi-ta-table-loading-ctn')) {
+                return false;
+            }
+
+            const hasRenderedResult = content.querySelector('.fi-ta-table') !== null
+                || findReal(wrapper, '.fi-ta-empty-state') !== null;
+
+            if (!hasRenderedResult) {
+                return false;
+            }
+
+            // Removal first: it is the part that must not be skipped if
+            // anything below it throws. Both run in one task, so the ordering
+            // is invisible either way.
+            removeOverlay(wrapper, controller, 'real-content-rendered');
+            debugLog('overlay released: real table is rendered');
+            window.mmrRestorePaginationOffset?.('after-release');
+
+            return true;
+        };
+
         const processWrapper = (wrapper) => {
             if (!(wrapper instanceof HTMLElement) || !wrapper.matches(WRAPPER_SELECTOR)) {
                 return;
@@ -779,6 +833,10 @@
                 observeWrapperForDebug(wrapper);
             }
 
+            // Ahead of every other check, so a stale $wire.isTableLoaded can
+            // never keep a copy sitting on top of a table that has rendered.
+            releaseOverlayIfReady(wrapper);
+
             if (controller.processing) {
                 return;
             }
@@ -793,7 +851,7 @@
                 }
 
                 const key = buildKey(wrapper, wire);
-                const content = wrapper.querySelector('.fi-ta-content-ctn');
+                const content = getContent(wrapper);
                 const isLoading = Boolean(content?.querySelector('.fi-ta-table-loading-ctn'));
                 const isTableLoaded = Boolean(getWireValue(wire, 'isTableLoaded', !isLoading));
 
@@ -836,17 +894,15 @@
                     overlayConnected: Boolean(controller.overlay?.isConnected),
                 });
 
-                // Settle the real pagination before it is uncovered, so the
-                // overlay never hands over to a table that still has to shift
-                // its buttons back into place.
-                window.mmrRestorePaginationOffset?.('before-uncover');
-
-                // A completed morph always wins over the stale preview.
+                // A completed morph always wins over the stale preview. Removal
+                // stays ahead of everything optional, so nothing below can
+                // leave a copy stranded on screen by throwing.
                 removeOverlay(wrapper, controller, 'table-loaded');
+                window.mmrRestorePaginationOffset?.('after-uncover');
 
                 if (content) {
                     capture(wrapper, key);
-                } else if (wrapper.querySelector('.fi-ta-empty-state')) {
+                } else if (findReal(wrapper, '.fi-ta-empty-state')) {
                     // A current empty result must not be obscured by a stale table.
                     storage.remove(key);
                     writeIndex(readIndex().filter((entry) => entry?.key !== key));
@@ -951,6 +1007,11 @@
                 } else {
                     debugLog('morphed: mmrRestorePaginationOffset NOT available');
                 }
+
+                // The morph that renders the fresh table is the earliest point
+                // its copy can come down, and doing it here keeps the two from
+                // ever being on screen together.
+                document.querySelectorAll(WRAPPER_SELECTOR).forEach(releaseOverlayIfReady);
             });
         };
 
@@ -1034,6 +1095,12 @@
                 if (!mutations.some(mutationTouchesWrapper)) {
                     return;
                 }
+
+                // Uncovering is checked right away rather than through scan(),
+                // whose two-frame debounce is time the fresh table would spend
+                // sitting underneath a stale copy of itself. This catches any
+                // render that arrives outside a morph hook.
+                document.querySelectorAll(WRAPPER_SELECTOR).forEach(releaseOverlayIfReady);
 
                 scan();
             });
