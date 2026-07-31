@@ -1222,29 +1222,16 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
             ->columns([
                 ImageColumn::make('icon_url')
                     ->label('')
-                    // ImageColumn only emits an inline height by default
-                    // (2.5rem); width stays null unless circular/square, so a
-                    // non-square icon renders at its natural aspect width and
-                    // drags the whole column out with it, leaving square icons
-                    // left-aligned in the widened cell. Pinning both axes makes
-                    // the cell width independent of any individual image.
-                    ->imageWidth('2.5rem')
-                    ->imageHeight('2.5rem')
-                    // With both axes fixed, Filament's own stylesheet
-                    // (.fi-ta-image img { object-cover object-center }) would
-                    // now start cropping non-square icons - it was a no-op
-                    // while the box matched the natural aspect ratio. Inline
-                    // beats that class rule without !important, and Laravel's
-                    // ComponentAttributeBag::merge() appends rather than
-                    // replaces the style attribute, so the height/width
-                    // ImageColumn adds afterwards survives alongside it.
-                    // object-position stays centered from object-center, so
-                    // contain centers the image on both axes inside the box.
-                    ->extraImgAttributes([
-                        'loading' => 'lazy',
-                        'decoding' => 'async',
-                        'style' => 'object-fit: contain;',
-                    ]),
+                    // Deliberately no imageWidth()/imageHeight(): leaving width
+                    // unset keeps ImageColumn's default of a 2.5rem height with
+                    // a natural-aspect width, so tall/wide icons stay legible at
+                    // their own size rather than being squeezed into a square.
+                    // The column then sizes itself to the widest of them, and
+                    // .fi-ta-image (w-full) fills that width in every row - so
+                    // centering it here is what keeps a square icon from sitting
+                    // against the left edge of the space a neighbour widened.
+                    ->alignCenter()
+                    ->extraImgAttributes(['loading' => 'lazy', 'decoding' => 'async']),
                 TextColumn::make('title')
                     ->label(trans('pelican-minecraft-modrinth::strings.table.columns.title'))
                     ->searchable()
