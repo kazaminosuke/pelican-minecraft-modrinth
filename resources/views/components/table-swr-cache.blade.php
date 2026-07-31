@@ -42,6 +42,35 @@
         let documentObserver = null;
         let scanQueued = false;
 
+        // Temporary diagnostics for the "spinner flashes / UI collapses on a
+        // cached revisit" report, which two rounds of code-reading have failed
+        // to pin down. Opt-in so it stays silent for everyone else:
+        //   localStorage.setItem('mmrSwrDebug', '1')  then reload.
+        // Remove this block once the cause is confirmed.
+        const DEBUG = (() => {
+            try {
+                return window.localStorage.getItem('mmrSwrDebug') === '1';
+            } catch (_error) {
+                return false;
+            }
+        })();
+
+        const debugLog = (event, detail) => {
+            if (!DEBUG) {
+                return;
+            }
+
+            console.log(`[mmr-swr +${Math.round(performance.now())}ms] ${event}`, detail === undefined ? '' : detail);
+        };
+
+        const describeNode = (node) => {
+            if (!(node instanceof Element)) {
+                return node?.nodeName ?? String(node);
+            }
+
+            return `${node.tagName.toLowerCase()}.${Array.from(node.classList).join('.') || '(no-class)'}`;
+        };
+
         const storage = {
             get(key) {
                 try {
@@ -461,7 +490,16 @@
             }, true);
         };
 
-        const removeOverlay = (wrapper, controller) => {
+        const removeOverlay = (wrapper, controller, reason = 'unspecified') => {
+            if (DEBUG && controller.overlay) {
+                // The key differential: if the debug MutationObserver reports
+                // the overlay leaving the DOM without one of these lines just
+                // before it, something other than our own code removed it.
+                debugLog(`removeOverlay (reason: ${reason})`, {
+                    wasConnected: controller.overlay.isConnected,
+                });
+            }
+
             controller.overlay?.remove();
             controller.overlay = null;
             controller.overlayKey = null;
@@ -477,7 +515,7 @@
                 return;
             }
 
-            removeOverlay(wrapper, controller);
+            removeOverlay(wrapper, controller, 'showOverlay-replacing');
 
             const wrapperRect = wrapper.getBoundingClientRect();
             const anchorRect = loadingContent.getBoundingClientRect();
@@ -552,6 +590,7 @@
                 };
                 controllers.set(wrapper, controller);
                 bindScrollTracking(wrapper, controller);
+                observeWrapperForDebug(wrapper);
             }
 
             if (controller.processing) {
@@ -575,17 +614,30 @@
                 if (isLoading || !isTableLoaded) {
                     const entry = loadEntry(key);
 
+                    debugLog('processWrapper: table not ready', {
+                        isLoading,
+                        isTableLoaded,
+                        hasCacheEntry: Boolean(entry),
+                        hasContentCtn: Boolean(content),
+                        overlayConnected: Boolean(controller.overlay?.isConnected),
+                        keyMatchesOverlay: controller.overlayKey === key,
+                    });
+
                     if (entry && content) {
                         showOverlay(wrapper, controller, key, entry, content);
                     } else {
-                        removeOverlay(wrapper, controller);
+                        removeOverlay(wrapper, controller, 'no-cache-entry-or-content');
                     }
 
                     return;
                 }
 
+                debugLog('processWrapper: table ready', {
+                    overlayConnected: Boolean(controller.overlay?.isConnected),
+                });
+
                 // A completed morph always wins over the stale preview.
-                removeOverlay(wrapper, controller);
+                removeOverlay(wrapper, controller, 'table-loaded');
 
                 if (content) {
                     capture(wrapper, key);
@@ -631,24 +683,80 @@
         // both morph hooks hand back a skip() that makes Alpine leave the
         // element alone entirely. removeOverlay() still takes the overlay
         // down through plain DOM APIs, which these hooks do not affect.
-        const guardOverlayFromMorph = () => {
-            if (window.__mmrTableSwrMorphGuardV1 || typeof window.Livewire?.hook !== 'function') {
+        const guardOverlayFromMorph = (trigger) => {
+            if (window.__mmrTableSwrMorphGuardV1) {
+                debugLog(`morph guard: already registered (trigger: ${trigger})`);
+
+                return;
+            }
+
+            if (typeof window.Livewire?.hook !== 'function') {
+                debugLog(`morph guard: NOT registered - Livewire.hook unavailable (trigger: ${trigger})`, {
+                    hasLivewire: Boolean(window.Livewire),
+                });
+
                 return;
             }
 
             window.__mmrTableSwrMorphGuardV1 = true;
+            debugLog(`morph guard: registered (trigger: ${trigger})`);
 
             window.Livewire.hook('morph.removing', ({ el, skip }) => {
                 if (isOverlayNode(el)) {
+                    debugLog('morph.removing: skipping our overlay', describeNode(el));
                     skip();
                 }
             });
 
             window.Livewire.hook('morph.updating', ({ el, skip }) => {
                 if (isOverlayNode(el)) {
+                    debugLog('morph.updating: skipping our overlay', describeNode(el));
                     skip();
                 }
             });
+
+            if (!DEBUG) {
+                return;
+            }
+
+            // Whole-morph markers, so the console shows exactly which DOM
+            // churn lands inside a morph and which happens outside one.
+            window.Livewire.hook('morph', ({ el }) => debugLog('morph: START', describeNode(el)));
+            window.Livewire.hook('morphed', ({ el }) => debugLog('morph: END', describeNode(el)));
+        };
+
+        // Debug-only: record every element added to or removed from a wrapper,
+        // so the moment of the "collapse" can be read off the console even if
+        // the overlay itself turns out to be innocent.
+        const observeWrapperForDebug = (wrapper) => {
+            if (!DEBUG || wrapper.__mmrSwrDebugObserved) {
+                return;
+            }
+
+            wrapper.__mmrSwrDebugObserved = true;
+
+            new MutationObserver((mutations) => {
+                mutations.forEach((mutation) => {
+                    Array.from(mutation.removedNodes)
+                        .filter((node) => node instanceof Element)
+                        .forEach((node) => debugLog('DOM removed', {
+                            node: describeNode(node),
+                            from: describeNode(mutation.target),
+                            isOurOverlay: node.classList.contains('mmr-table-swr-overlay'),
+                        }));
+
+                    Array.from(mutation.addedNodes)
+                        .filter((node) => node instanceof Element)
+                        .forEach((node) => debugLog('DOM added', {
+                            node: describeNode(node),
+                            to: describeNode(mutation.target),
+                            hasSpinner: node.querySelector?.('.fi-ta-table-loading-ctn') !== null
+                                || node.classList.contains('fi-ta-table-loading-ctn'),
+                        }));
+                });
+            }).observe(wrapper, { childList: true, subtree: true });
+
+            debugLog('debug observer attached to wrapper');
         };
 
         const mutationTouchesWrapper = (mutation) => {
@@ -681,9 +789,12 @@
         const init = () => {
             prune();
             // Registered before the first scan can put an overlay up, and
-            // again on livewire:init in case this script parsed first.
-            guardOverlayFromMorph();
-            document.addEventListener('livewire:init', guardOverlayFromMorph);
+            // again on livewire:init in case this script parsed first (an
+            // inline script at BODY_END runs before a deferred livewire.js).
+            debugLog('init', { livewireAvailable: typeof window.Livewire?.hook === 'function' });
+            guardOverlayFromMorph('init');
+            document.addEventListener('livewire:init', () => guardOverlayFromMorph('livewire:init'));
+            document.addEventListener('livewire:navigated', () => guardOverlayFromMorph('livewire:navigated'));
             scan();
 
             if (documentObserver) {
