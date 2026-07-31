@@ -309,8 +309,26 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
     {
         $this->js(<<<'JS'
             (() => {
-                const resizeTables = () => {
+                // The SWR freeze overlay parks a sanitised copy of the table and
+                // its pagination inside the same wrapper these selectors match,
+                // so every query here has to step over it. Left alone, this would
+                // mutate the copy, cap its height, and - because the copy is
+                // rendered at whatever page the snapshot was taken on - poison
+                // the shared previous-button width measured below.
+                const isInsideOverlay = (element) => element.closest('.mmr-table-swr-overlay') !== null;
+
+                // Filament renders no offset of its own here, so this margin only
+                // ever exists as an inline style, which means Livewire's morph
+                // strips it every time the server re-renders the pagination -
+                // that is what makes the buttons jump left mid-revalidation.
+                // Exposed separately so the morph can put it straight back
+                // without paying for a full resize pass.
+                const restorePaginationOffset = () => {
                     document.querySelectorAll('.mmr-table-scroll-ctn .fi-pagination-items').forEach((items) => {
+                        if (isInsideOverlay(items)) {
+                            return;
+                        }
+
                         const paginationItems = Array.from(items.children);
                         const previous = paginationItems.find((item) => item.matches('.fi-pagination-item[rel="prev"]'));
 
@@ -339,8 +357,16 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                         items.style.marginInlineStart = `${width}px`;
                         items.dataset.mmrPaginationPreviousSpace = 'true';
                     });
+                };
+
+                const resizeTables = () => {
+                    restorePaginationOffset();
 
                     document.querySelectorAll('.mmr-table-scroll-ctn .fi-ta-content-ctn').forEach((ctn) => {
+                        if (isInsideOverlay(ctn)) {
+                            return;
+                        }
+
                         // Clear any cap from a previous (larger) result set before
                         // measuring, so this always sees the table's true natural
                         // size. Without this, a search narrowing the results down
@@ -374,6 +400,10 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                         ctn.style.maxHeight = Math.max(available, 240) + 'px';
                     });
                 };
+
+                // Always refreshed, so a wire:navigate visit that reuses an
+                // earlier page's globals still gets a working reference.
+                window.mmrRestorePaginationOffset = restorePaginationOffset;
 
                 if (!window.mmrResizeTables) {
                     window.mmrResizeTables = resizeTables;

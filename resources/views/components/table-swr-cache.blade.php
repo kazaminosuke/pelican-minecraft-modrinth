@@ -430,6 +430,25 @@
 
         const getPagination = (wrapper) => wrapper.querySelector('.fi-pagination');
 
+        // sanitizeElement() strips every style attribute, which for the
+        // pagination throws away the one thing holding the buttons in place:
+        // the inline margin that reserves space for an absent "previous"
+        // button (see queueTableHeightRecalculation()). Without it the copy
+        // renders its buttons shifted to the left of where the real ones are,
+        // so putting the overlay up looked like the pagination jumping.
+        const clonePagination = (pagination) => {
+            const clone = sanitizeElement(pagination);
+            const sourceItems = pagination.querySelector('.fi-pagination-items');
+            const cloneItems = clone.querySelector('.fi-pagination-items');
+            const offset = sourceItems?.style.marginInlineStart;
+
+            if (cloneItems && offset) {
+                cloneItems.style.marginInlineStart = offset;
+            }
+
+            return clone;
+        };
+
         const capture = (wrapper, key) => {
             const content = wrapper.querySelector('.fi-ta-content-ctn');
 
@@ -529,6 +548,7 @@
                 anchorRect,
                 contentHeight,
                 paginationHeight,
+                paginationOffsetTop,
                 scrollTop,
                 scrollLeft,
                 isFreeze,
@@ -556,6 +576,18 @@
             overlay.append(contentNode);
 
             if (paginationNode) {
+                // A freeze knows exactly where the real pagination sits, so pin
+                // the copy on top of it instead of letting it land wherever it
+                // happens to stack. Any drift between the two is visible as the
+                // buttons jumping the moment the overlay goes up or comes down.
+                if (typeof paginationOffsetTop === 'number') {
+                    paginationNode.style.position = 'absolute';
+                    paginationNode.style.top = `${paginationOffsetTop}px`;
+                    paginationNode.style.left = '0';
+                    paginationNode.style.right = '0';
+                    overlay.style.height = `${paginationOffsetTop + Number(paginationHeight || 0)}px`;
+                }
+
                 overlay.append(paginationNode);
             }
 
@@ -646,11 +678,15 @@
             }
 
             const pagination = getPagination(wrapper);
+            const paginationRect = pagination ? pagination.getBoundingClientRect() : null;
 
             mountOverlay(wrapper, controller, {
                 key: null,
                 contentNode: sanitizeElement(content),
-                paginationNode: pagination ? sanitizeElement(pagination) : null,
+                paginationNode: pagination ? clonePagination(pagination) : null,
+                paginationOffsetTop: paginationRect
+                    ? Math.round(paginationRect.top - anchorRect.top)
+                    : undefined,
                 anchorRect,
                 contentHeight: Math.max(Math.round(anchorRect.height), 1),
                 paginationHeight: pagination
@@ -757,6 +793,11 @@
                     overlayConnected: Boolean(controller.overlay?.isConnected),
                 });
 
+                // Settle the real pagination before it is uncovered, so the
+                // overlay never hands over to a table that still has to shift
+                // its buttons back into place.
+                window.mmrRestorePaginationOffset?.();
+
                 // A completed morph always wins over the stale preview.
                 removeOverlay(wrapper, controller, 'table-loaded');
 
@@ -854,7 +895,16 @@
                 document.querySelectorAll(WRAPPER_SELECTOR).forEach(showFreezeOverlay);
             });
 
-            window.Livewire.hook('morphed', ({ el }) => debugLog('morph: END', describeNode(el)));
+            window.Livewire.hook('morphed', ({ el }) => {
+                debugLog('morph: END', describeNode(el));
+
+                // Morph has just stripped the pagination's inline offset, since
+                // the server never renders one. Put it back here, in the same
+                // task, rather than waiting for the resize pass that runs a
+                // frame or two later - that gap is when the buttons were seen
+                // sitting too far left.
+                window.mmrRestorePaginationOffset?.();
+            });
         };
 
         // Debug-only: record every element added to or removed from a wrapper,
