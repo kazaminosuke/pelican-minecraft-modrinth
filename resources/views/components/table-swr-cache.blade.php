@@ -36,6 +36,8 @@
         const STORAGE_PREFIX = `mmr-table-swr:v${SCHEMA_VERSION}:`;
         const INDEX_KEY = `${STORAGE_PREFIX}index`;
         const TTL_MS = 10 * 60 * 1000;
+        // How long a pre-morph freeze may hide the real loading state for.
+        const FREEZE_MAX_MS = 400;
         const MAX_ENTRIES = 20;
         const WRAPPER_SELECTOR = '.mmr-table-scroll-ctn[data-mmr-swr-scope]';
         const controllers = new WeakMap();
@@ -500,9 +502,12 @@
                 });
             }
 
+            window.clearTimeout(controller.freezeTimer);
+            controller.freezeTimer = null;
             controller.overlay?.remove();
             controller.overlay = null;
             controller.overlayKey = null;
+            controller.isFreezeOverlay = false;
 
             if (controller.reservedMinHeight !== null) {
                 wrapper.style.minHeight = controller.originalMinHeight;
@@ -510,21 +515,22 @@
             }
         };
 
-        const showOverlay = (wrapper, controller, key, entry, loadingContent) => {
-            if (controller.overlayKey === key && controller.overlay?.isConnected) {
-                return;
-            }
-
-            removeOverlay(wrapper, controller, 'showOverlay-replacing');
-
+        // Mounts an overlay from nodes the caller has already prepared, so the
+        // only work left here is positioning and a single append.
+        const mountOverlay = (wrapper, controller, options) => {
+            const {
+                key,
+                contentNode,
+                paginationNode,
+                anchorRect,
+                contentHeight,
+                paginationHeight,
+                scrollTop,
+                scrollLeft,
+                isFreeze,
+            } = options;
             const wrapperRect = wrapper.getBoundingClientRect();
-            const anchorRect = loadingContent.getBoundingClientRect();
             const overlay = document.createElement('div');
-            const cachedContent = parseCachedElement(entry.contentHtml);
-
-            if (!cachedContent) {
-                return;
-            }
 
             overlay.className = 'mmr-table-swr-overlay';
             overlay.setAttribute('aria-hidden', 'true');
@@ -540,24 +546,20 @@
             overlay.style.left = `${Math.max(anchorRect.left - wrapperRect.left, 0)}px`;
             overlay.style.width = `${Math.max(anchorRect.width, 1)}px`;
 
-            cachedContent.style.height = `${entry.contentHeight}px`;
-            cachedContent.style.maxHeight = `${entry.contentHeight}px`;
-            cachedContent.style.minHeight = '0';
-            overlay.append(cachedContent);
+            contentNode.style.height = `${contentHeight}px`;
+            contentNode.style.maxHeight = `${contentHeight}px`;
+            contentNode.style.minHeight = '0';
+            overlay.append(contentNode);
 
-            if (typeof entry.paginationHtml === 'string') {
-                const cachedPagination = parseCachedElement(entry.paginationHtml);
-
-                if (cachedPagination) {
-                    overlay.append(cachedPagination);
-                }
+            if (paginationNode) {
+                overlay.append(paginationNode);
             }
 
             controller.originalMinHeight = wrapper.style.minHeight;
             const neededHeight = Math.ceil(
                 Math.max(anchorRect.top - wrapperRect.top, 0)
-                + Number(entry.contentHeight || 0)
-                + Number(entry.paginationHeight || 0),
+                + Number(contentHeight || 0)
+                + Number(paginationHeight || 0),
             );
 
             if (neededHeight > wrapperRect.height) {
@@ -566,10 +568,105 @@
             }
 
             wrapper.append(overlay);
-            cachedContent.scrollTop = Number(entry.scrollTop || 0);
-            cachedContent.scrollLeft = Number(entry.scrollLeft || 0);
+            contentNode.scrollTop = Number(scrollTop || 0);
+            contentNode.scrollLeft = Number(scrollLeft || 0);
             controller.overlay = overlay;
             controller.overlayKey = key;
+            controller.isFreezeOverlay = Boolean(isFreeze);
+        };
+
+        const showOverlay = (wrapper, controller, key, entry, loadingContent) => {
+            if (controller.overlayKey === key && controller.overlay?.isConnected) {
+                return;
+            }
+
+            removeOverlay(wrapper, controller, 'showOverlay-replacing');
+
+            const anchorRect = loadingContent.getBoundingClientRect();
+            const cachedContent = parseCachedElement(entry.contentHtml);
+
+            if (!cachedContent) {
+                return;
+            }
+
+            mountOverlay(wrapper, controller, {
+                key,
+                contentNode: cachedContent,
+                paginationNode: typeof entry.paginationHtml === 'string'
+                    ? parseCachedElement(entry.paginationHtml)
+                    : null,
+                anchorRect,
+                contentHeight: entry.contentHeight,
+                paginationHeight: entry.paginationHeight,
+                scrollTop: entry.scrollTop,
+                scrollLeft: entry.scrollLeft,
+                isFreeze: false,
+            });
+        };
+
+        // Covers the table with a copy of whatever is on screen at this very
+        // moment. Called from Livewire's "morph" hook, which fires before
+        // Alpine.morph touches the DOM, so the cover is already in place when
+        // the rendered table is swapped for the loading placeholder - the
+        // ~85ms window in which that raw placeholder used to be visible.
+        //
+        // The source is the live, already-parsed table rather than the stored
+        // snapshot on purpose: rebuilding from storage costs a DOMParser pass
+        // over the whole snapshot plus a re-sanitise, which is what made the
+        // cached path too slow to win that race. Cloning skips the parse, and
+        // whatever it does cost now runs while the real table is still on
+        // screen, so no amount of it can expose anything.
+        const showFreezeOverlay = (wrapper) => {
+            const controller = controllers.get(wrapper);
+
+            if (!controller || controller.overlay?.isConnected) {
+                return;
+            }
+
+            const content = wrapper.querySelector('.fi-ta-content-ctn');
+
+            if (!content || content.querySelector('.fi-ta-table-loading-ctn')) {
+                return;
+            }
+
+            // Drops a stale reference (and its timer) if an earlier overlay
+            // left the DOM without going through removeOverlay, so the mount
+            // below can never strand a timer that would later tear down the
+            // overlay replacing it.
+            removeOverlay(wrapper, controller, 'freeze-clearing-stale');
+
+            const anchorRect = content.getBoundingClientRect();
+
+            if (anchorRect.height < 1) {
+                return;
+            }
+
+            const pagination = getPagination(wrapper);
+
+            mountOverlay(wrapper, controller, {
+                key: null,
+                contentNode: sanitizeElement(content),
+                paginationNode: pagination ? sanitizeElement(pagination) : null,
+                anchorRect,
+                contentHeight: Math.max(Math.round(anchorRect.height), 1),
+                paginationHeight: pagination
+                    ? Math.max(Math.round(pagination.getBoundingClientRect().height), 0)
+                    : 0,
+                scrollTop: content.scrollTop,
+                scrollLeft: content.scrollLeft,
+                isFreeze: true,
+            });
+
+            // A freeze is only meant to bridge a short revalidation. Holding a
+            // stale table indefinitely would read as an unresponsive page, so
+            // hand back to Filament's real loading state if the update is slow.
+            controller.freezeTimer = window.setTimeout(() => {
+                if (controller.isFreezeOverlay) {
+                    removeOverlay(wrapper, controller, 'freeze-timeout');
+                }
+            }, FREEZE_MAX_MS);
+
+            debugLog('freeze overlay mounted before morph');
         };
 
         const processWrapper = (wrapper) => {
@@ -587,6 +684,8 @@
                     reservedMinHeight: null,
                     processing: false,
                     scrollTimer: null,
+                    isFreezeOverlay: false,
+                    freezeTimer: null,
                 };
                 controllers.set(wrapper, controller);
                 bindScrollTracking(wrapper, controller);
@@ -625,7 +724,11 @@
 
                     if (entry && content) {
                         showOverlay(wrapper, controller, key, entry, content);
-                    } else {
+                    } else if (!controller.isFreezeOverlay) {
+                        // A freeze is deliberately kept here: with no snapshot
+                        // for this key, it is the only thing standing between
+                        // the user and the bare loading placeholder, and its
+                        // own timer already bounds how long it may stay.
                         removeOverlay(wrapper, controller, 'no-cache-entry-or-content');
                     }
 
@@ -715,13 +818,24 @@
                 }
             });
 
-            if (!DEBUG) {
-                return;
-            }
+            // Fires synchronously before Alpine.morph mutates anything, which
+            // is the only point early enough to get a cover up ahead of the
+            // table being swapped for its loading placeholder.
+            window.Livewire.hook('morph', ({ el, toEl }) => {
+                debugLog('morph: START', describeNode(el));
 
-            // Whole-morph markers, so the console shows exactly which DOM
-            // churn lands inside a morph and which happens outside one.
-            window.Livewire.hook('morph', ({ el }) => debugLog('morph: START', describeNode(el)));
+                // Only the morphs that actually swap the table out for a
+                // loading placeholder need covering. The incoming tree says so
+                // directly, which matters because the Installed tab polls every
+                // two seconds - freezing on those morphs too would replace the
+                // live table with an inert copy on a loop.
+                if (!toEl?.querySelector?.('.fi-ta-table-loading-ctn')) {
+                    return;
+                }
+
+                document.querySelectorAll(WRAPPER_SELECTOR).forEach(showFreezeOverlay);
+            });
+
             window.Livewire.hook('morphed', ({ el }) => debugLog('morph: END', describeNode(el)));
         };
 
