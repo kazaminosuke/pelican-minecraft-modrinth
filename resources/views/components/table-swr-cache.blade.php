@@ -36,8 +36,12 @@
         const STORAGE_PREFIX = `mmr-table-swr:v${SCHEMA_VERSION}:`;
         const INDEX_KEY = `${STORAGE_PREFIX}index`;
         const TTL_MS = 10 * 60 * 1000;
-        // How long a pre-morph freeze may hide the real loading state for.
-        const FREEZE_MAX_MS = 400;
+        // Failsafe only - a freeze normally ends the moment the fresh content
+        // lands. This exists so a request that never completes cannot leave an
+        // inert copy of the table on screen indefinitely, and is deliberately
+        // far longer than any real load: a timer short enough to fire during
+        // normal loading is exactly what caused a second visible jump.
+        const FREEZE_FAILSAFE_MS = 15000;
         const MAX_ENTRIES = 20;
         const WRAPPER_SELECTOR = '.mmr-table-scroll-ctn[data-mmr-swr-scope]';
         const controllers = new WeakMap();
@@ -657,32 +661,18 @@
                 isFreeze: true,
             });
 
-            // A freeze is only meant to bridge a short revalidation. Holding
-            // content the user has already navigated away from would start to
-            // read as an unresponsive page, so once it has been up this long,
-            // hand over to the stored snapshot of the view actually being
-            // opened - and failing that, to Filament's own loading state. By
-            // this point a content change reads as progress rather than as the
-            // flicker that swapping immediately produced.
+            // The freeze is held until the fresh content replaces it, so that
+            // stays the only visible change. Handing over to the stored
+            // snapshot partway through was measured doing the opposite: it
+            // fired 91ms before the real table was ready and turned one change
+            // into two. Nothing is gained by ending a freeze early either -
+            // what it shows is the table the user was just looking at, so it
+            // can never read as blank or broken while it waits.
             controller.freezeTimer = window.setTimeout(() => {
-                if (!controller.isFreezeOverlay) {
-                    return;
+                if (controller.isFreezeOverlay) {
+                    removeOverlay(wrapper, controller, 'freeze-failsafe');
                 }
-
-                const wire = findWire(wrapper);
-                const key = wire ? buildKey(wrapper, wire) : null;
-                const entry = key ? loadEntry(key) : null;
-                const currentContent = wrapper.querySelector('.fi-ta-content-ctn');
-
-                if (entry && currentContent) {
-                    debugLog('freeze timed out: handing over to cached snapshot');
-                    showOverlay(wrapper, controller, key, entry, currentContent);
-
-                    return;
-                }
-
-                removeOverlay(wrapper, controller, 'freeze-timeout');
-            }, FREEZE_MAX_MS);
+            }, FREEZE_FAILSAFE_MS);
 
             debugLog('freeze overlay mounted before morph');
         };
