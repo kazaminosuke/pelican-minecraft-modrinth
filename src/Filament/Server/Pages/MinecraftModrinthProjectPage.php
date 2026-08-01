@@ -309,17 +309,8 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
     {
         $this->js(<<<'JS'
             (() => {
-                // The SWR freeze overlay parks a sanitised copy of the table and
-                // its pagination inside the same wrapper these selectors match,
-                // so every query here has to step over it. Left alone, this would
-                // mutate the copy, cap its height, and - because the copy is
-                // rendered at whatever page the snapshot was taken on - poison
-                // the shared previous-button width measured below.
-                const isInsideOverlay = (element) => element.closest('.mmr-table-swr-overlay') !== null;
-
-                // Shares the opt-in flag with the SWR component's own logging
-                // (localStorage 'mmrSwrDebug' = '1'), since this script runs in
-                // its own scope and cannot reach that one's debugLog.
+                // Optional table-layout diagnostics for a browser investigation
+                // (localStorage 'mmrSwrDebug' = '1').
                 const debugLog = (event, detail) => {
                     try {
                         if (window.localStorage.getItem('mmrSwrDebug') !== '1') {
@@ -343,12 +334,6 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     const outcomes = [];
 
                     all.forEach((items) => {
-                        if (isInsideOverlay(items)) {
-                            outcomes.push('skipped:in-overlay');
-
-                            return;
-                        }
-
                         const paginationItems = Array.from(items.children);
                         const previous = paginationItems.find((item) => item.matches('.fi-pagination-item[rel="prev"]'));
 
@@ -396,10 +381,6 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     restorePaginationOffset();
 
                     document.querySelectorAll('.mmr-table-scroll-ctn .fi-ta-content-ctn').forEach((ctn) => {
-                        if (isInsideOverlay(ctn)) {
-                            return;
-                        }
-
                         // Clear any cap from a previous (larger) result set before
                         // measuring, so this always sees the table's true natural
                         // size. Without this, a search narrowing the results down
@@ -1294,12 +1275,17 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     // centering it here is what keeps a square icon from sitting
                     // against the left edge of the space a neighbour widened.
                     ->alignCenter()
+                    // The client-side stale preview updates only values in the
+                    // real Filament cell. Keep this selector independent of
+                    // Filament's generated HTML below the cell.
+                    ->extraCellAttributes(['data-mmr-swr-cell' => 'icon'])
                     ->extraImgAttributes(['loading' => 'lazy', 'decoding' => 'async']),
                 TextColumn::make('title')
                     ->label(trans('pelican-minecraft-modrinth::strings.table.columns.title'))
                     ->searchable()
                     ->wrap()
                     ->lineClamp(1)
+                    ->extraCellAttributes(['data-mmr-swr-cell' => 'title'])
                     ->description(function (array $record): ?string {
                         if ($record['untracked'] ?? false) {
                             return trans('pelican-minecraft-modrinth::strings.badges.not_on_modrinth');
@@ -1315,6 +1301,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                 TextColumn::make('source')
                     ->label(trans('pelican-minecraft-modrinth::strings.table.columns.source'))
                     ->badge()
+                    ->extraCellAttributes(['data-mmr-swr-cell' => 'source'])
                     ->formatStateUsing(fn (?string $state) => $this->getSourceLabel($state))
                     ->color(fn (?string $state) => match ($state) {
                         'modrinth' => 'success',
@@ -1328,17 +1315,20 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                 TextColumn::make('author')
                     ->label(trans('pelican-minecraft-modrinth::strings.table.columns.author'))
                     ->url(fn (array $record, $state) => (($record['source'] ?? null) === ProjectSourceKey::Modrinth->value && $state) ? "https://modrinth.com/user/$state" : null, true)
+                    ->extraCellAttributes(['data-mmr-swr-cell' => 'author'])
                     ->toggleable(),
                 TextColumn::make('downloads')
                     ->label(trans('pelican-minecraft-modrinth::strings.table.columns.downloads'))
                     ->icon('tabler-download')
                     ->numeric()
+                    ->extraCellAttributes(['data-mmr-swr-cell' => 'downloads'])
                     ->toggleable(),
                 TextColumn::make('date_modified')
                     ->label(trans('pelican-minecraft-modrinth::strings.table.columns.date_modified'))
                     ->icon('tabler-calendar')
                     ->formatStateUsing(fn ($state) => $state ? Carbon::parse($state, 'UTC')->diffForHumans() : '')
                     ->tooltip(fn ($state) => $state ? Carbon::parse($state, 'UTC')->timezone(user()->timezone ?? 'UTC')->format($table->getDefaultDateTimeDisplayFormat()) : '')
+                    ->extraCellAttributes(['data-mmr-swr-cell' => 'date_modified'])
                     ->toggleable(),
             ])
             ->recordUrl(function (array $record) {
