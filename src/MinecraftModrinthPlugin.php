@@ -126,8 +126,14 @@ class MinecraftModrinthPlugin implements HasPluginSettings, Plugin
                     // lines from the first paint means a long overview can wrap
                     // without changing the paginator's block size or moving the
                     // row viewport above it.
-                    .'min-block-size:2.5rem;white-space:normal;overflow-wrap:anywhere;'
+                    .'min-block-size:2.5rem;white-space:normal;'
+                    // Do not allow arbitrary character breaks. The overview
+                    // formatter below supplies Japanese phrase boundaries where
+                    // they are useful, while the browser's ordinary strict
+                    // Japanese line-breaking rules handle every other locale.
+                    .'overflow-wrap:normal;word-break:normal;line-break:strict;'
                 .'}'
+                .'.mmr-table-scroll-ctn .mmr-pagination-overview-chunk{white-space:nowrap;}'
                 // The overview is hidden in Filament's compact paginator. Only
                 // switch it to a grid at the same wide breakpoints where
                 // Filament shows it, so a single line can sit vertically centred
@@ -144,6 +150,18 @@ class MinecraftModrinthPlugin implements HasPluginSettings, Plugin
                     .'}'
                 .'}'
                 .'.mmr-table-scroll-ctn .fi-pagination-items{grid-column:2;justify-self:center;}'
+                // Filament conditionally omits the first/previous and
+                // next/last <li>s. The table-layout script clones a real item
+                // only for the missing edge, then hides that clone. It therefore
+                // occupies the exact native button width without a hard-coded
+                // measurement or a generated padding box.
+                .'.mmr-table-scroll-ctn .mmr-pagination-placeholder{visibility:hidden;pointer-events:none;}'
+                // A hidden edge item is still first/last-of-type, so restore the
+                // visible neighbour's normal outer border and rounded corner.
+                .'.mmr-table-scroll-ctn .fi-pagination-item.mmr-pagination-leading-item{border-inline-start-width:0;}'
+                .'.mmr-table-scroll-ctn .fi-pagination-item.mmr-pagination-leading-item>.fi-pagination-item-btn{border-start-start-radius:.5rem;border-end-start-radius:.5rem;}'
+                .'.mmr-table-scroll-ctn .fi-pagination-item.mmr-pagination-trailing-item{border-inline-end-width:0;}'
+                .'.mmr-table-scroll-ctn .fi-pagination-item.mmr-pagination-trailing-item>.fi-pagination-item-btn{border-start-end-radius:.5rem;border-end-end-radius:.5rem;}'
                 .'.mmr-catalog-sort-toolbar{width:12rem;min-width:10rem;}'
                 .'.mmr-catalog-sort-select{display:block;width:100%;min-height:2.25rem;border-radius:.5rem;border:1px solid rgb(209 213 219);background:#fff;padding:.5rem .75rem;color:rgb(17 24 39);font-size:.875rem;line-height:1.25rem;}'
                 .'.dark .mmr-catalog-sort-select{border-color:rgb(75 85 99);background:rgb(31 41 55);color:#fff;}'

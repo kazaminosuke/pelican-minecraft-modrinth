@@ -138,8 +138,116 @@
             });
         };
 
+        const OVERVIEW_CHUNK_CLASS = 'mmr-pagination-overview-chunk';
+        const JAPANESE_OVERVIEW_PATTERN = /^(.+?件中)(.+?件目から)(.+?件目を表示)$/u;
+
+        const formatPaginationOverview = (overview) => {
+            const text = overview.textContent.trim();
+
+            if (
+                overview.dataset.mmrPaginationOverview === text
+                && overview.querySelector(`:scope > .${OVERVIEW_CHUNK_CLASS}`)
+            ) {
+                return;
+            }
+
+            const matches = text.match(JAPANESE_OVERVIEW_PATTERN);
+
+            if (!matches) {
+                delete overview.dataset.mmrPaginationOverview;
+
+                return;
+            }
+
+            const fragment = document.createDocumentFragment();
+
+            matches.slice(1).forEach((chunk, index) => {
+                const span = document.createElement('span');
+                span.className = OVERVIEW_CHUNK_CLASS;
+                span.textContent = chunk;
+                fragment.append(span);
+
+                if (index < matches.length - 2) {
+                    fragment.append(document.createElement('wbr'));
+                }
+            });
+
+            overview.replaceChildren(fragment);
+            overview.dataset.mmrPaginationOverview = text;
+        };
+
+        const stripLivewireAttributes = (element) => {
+            [element, ...element.querySelectorAll('*')].forEach((node) => {
+                node.getAttributeNames()
+                    .filter((name) => name.startsWith('wire:'))
+                    .forEach((name) => node.removeAttribute(name));
+            });
+        };
+
+        const createPaginationPlaceholder = (sample, edge) => {
+            const placeholder = sample.cloneNode(true);
+
+            stripLivewireAttributes(placeholder);
+            placeholder.removeAttribute('rel');
+            placeholder.classList.remove('fi-active');
+            placeholder.classList.add('mmr-pagination-placeholder');
+            placeholder.dataset.mmrPaginationPlaceholder = edge;
+            placeholder.setAttribute('aria-hidden', 'true');
+            placeholder.setAttribute('inert', '');
+
+            placeholder.querySelectorAll('button').forEach((button) => {
+                button.disabled = true;
+                button.tabIndex = -1;
+                button.removeAttribute('aria-current');
+            });
+
+            return placeholder;
+        };
+
+        const syncPaginationPlaceholders = () => {
+            document.querySelectorAll(`${WRAPPER_SELECTOR} .fi-pagination-overview`).forEach(formatPaginationOverview);
+
+            document.querySelectorAll(`${WRAPPER_SELECTOR} .fi-pagination-items`).forEach((items) => {
+                Array.from(items.children).forEach((item) => {
+                    item.classList.remove('mmr-pagination-leading-item', 'mmr-pagination-trailing-item');
+
+                    if (item.dataset.mmrPaginationPlaceholder) {
+                        item.remove();
+                    }
+                });
+
+                const realItems = Array.from(items.children)
+                    .filter((item) => item.matches('.fi-pagination-item'));
+                const hasPrevious = realItems.some((item) => item.getAttribute('rel') === 'prev');
+                const hasNext = realItems.some((item) => item.getAttribute('rel') === 'next');
+                const hasNavigation = realItems.some((item) => ['first', 'prev', 'next', 'last'].includes(item.getAttribute('rel')));
+
+                if (!hasNavigation || realItems.length === 0) {
+                    return;
+                }
+
+                const firstItem = realItems[0];
+                const lastItem = realItems.at(-1);
+
+                if (!hasPrevious) {
+                    const sample = realItems.find((item) => item.getAttribute('rel') === 'next') ?? firstItem;
+
+                    firstItem.before(createPaginationPlaceholder(sample, 'previous'));
+                    firstItem.classList.add('mmr-pagination-leading-item');
+                }
+
+                if (!hasNext) {
+                    const sample = realItems.find((item) => item.getAttribute('rel') === 'prev') ?? lastItem;
+
+                    lastItem.after(createPaginationPlaceholder(sample, 'next'));
+                    lastItem.classList.add('mmr-pagination-trailing-item');
+                }
+            });
+        };
+
         const refresh = (caller = 'unknown') => {
             measure(caller);
+            syncPaginationPlaceholders();
         };
 
         let bodyObserver = null;
