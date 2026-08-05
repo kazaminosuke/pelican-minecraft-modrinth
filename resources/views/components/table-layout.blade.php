@@ -5,24 +5,21 @@
         // Everything about the table's vertical layout is expressed in CSS
         // (see MinecraftModrinthPlugin's injected stylesheet): .fi-ta-main is
         // a fixed-height flex column, the row viewport takes the slack, and
-        // the paginator is the last auto-sized item in that column. The only
-        // value CSS cannot derive on its own is where the table starts, so
-        // that is all this script contributes.
+        // the paginator is the last auto-sized item in that column. The three
+        // numbers CSS cannot derive on its own are all this script supplies.
         //
-        // The measurement is deliberately taken in DOCUMENT coordinates and
-        // of an element whose own height it does not affect. Both properties
-        // matter: the previous implementation derived the row viewport from
-        // document.scrollHeight and window.scrollY, which made the result a
-        // function of how far the page happened to be scrolled at the moment
-        // a re-render fired, and made each pass change the input to the next
-        // one. Running this one repeatedly cannot converge on a different
-        // answer, so the number of triggers stops being a correctness
-        // concern.
+        // Every one of them is measured so that (a) it does not depend on how
+        // far the page is scrolled and (b) applying the result cannot change
+        // what the next measurement sees. Both properties matter: the version
+        // this replaced derived the row viewport from document.scrollHeight
+        // and window.scrollY, so the answer moved with the scroll position and
+        // each pass fed the next. Because these readings are idempotent, how
+        // many things trigger a re-measure stops being a correctness concern.
         const WRAPPER_SELECTOR = '.mmr-table-scroll-ctn';
         const DEBUG_STORAGE_KEY = 'mmrSwrDebug';
 
         if (window.__mmrTableLayout) {
-            window.__mmrTableLayout.refresh('re-execute');
+            window.__mmrTableLayout.measure('re-execute');
 
             return;
         }
@@ -45,6 +42,32 @@
             console.info(`[mmr-layout +${Math.round(window.performance?.now?.() ?? 0)}ms] ${event}`, detail);
         };
 
+        // The page's trailing chrome below the table - Filament's page
+        // container carries a bottom padding, and a panel may add more.
+        // Guessing at it is what left the document 64px taller than the
+        // viewport, so it is measured too.
+        //
+        // The catch is that .fi-body is min-h-dvh, so while the page fits, the
+        // body's box is held open to the viewport and reading its bottom would
+        // report the slack rather than the real trailing space - and a reading
+        // that is too large shrinks the table, which keeps the page fitting,
+        // which keeps the reading too large. Forcing the table tall for the
+        // duration of the read takes that clamp out of the picture. It happens
+        // within one task, so nothing is painted in between, and the document
+        // ends up the size it started at, so the scroll position is untouched.
+        const measureTrailingSpace = (target, viewport) => {
+            const previousHeight = target.style.height;
+            target.style.height = `${Math.max(viewport * 2, 2000)}px`;
+
+            const space = Math.round(
+                document.body.getBoundingClientRect().bottom - target.getBoundingClientRect().bottom,
+            );
+
+            target.style.height = previousHeight;
+
+            return Math.max(space, 0);
+        };
+
         const measure = (caller = 'unknown') => {
             const wrapper = document.querySelector(WRAPPER_SELECTOR);
 
@@ -56,7 +79,6 @@
             // the wrapper instead would fold in whatever schema markup
             // Filament nests in between, which differs per Filament release.
             const target = wrapper.querySelector('.fi-ta-main') ?? wrapper;
-            const rect = target.getBoundingClientRect();
 
             if (target.getClientRects().length === 0) {
                 debugLog(`measure skipped (from: ${caller})`, { reason: 'not-rendered' });
@@ -64,108 +86,72 @@
                 return;
             }
 
+            // clientHeight, not innerHeight: it excludes a horizontal
+            // scrollbar, and it is the same box the CSS viewport units resolve
+            // against, so the arithmetic below stays exact.
+            const viewport = root.clientHeight;
+            const rect = target.getBoundingClientRect();
+
             // rect.top falls by exactly as much as scrollY rises, so this sum
             // is the same number whether the page sits at the top or at the
             // bottom. That is what makes repeated measurement idempotent.
             const top = Math.round(rect.top + window.scrollY);
+            const bottom = measureTrailingSpace(target, viewport);
 
-            if (!Number.isFinite(top) || top < 0) {
-                debugLog(`measure skipped (from: ${caller})`, { reason: 'implausible-offset', top });
+            if (!Number.isFinite(top) || top < 0 || !Number.isFinite(viewport) || viewport <= 0) {
+                debugLog(`measure skipped (from: ${caller})`, { reason: 'implausible-geometry', top, viewport });
 
                 return;
             }
 
-            const previous = Number(root.dataset.mmrTableTop ?? NaN);
+            const previous = {
+                top: Number(root.dataset.mmrTableTop ?? NaN),
+                bottom: Number(root.dataset.mmrTableBottom ?? NaN),
+                viewport: Number(root.dataset.mmrViewportHeight ?? NaN),
+            };
 
             // A scrollbar appearing, a font swapping in or a sub-pixel
-            // rounding difference would otherwise rewrite the variable on
+            // rounding difference would otherwise rewrite the variables on
             // every observer callback, and each rewrite resizes the table,
             // which calls the observer again.
-            if (Number.isFinite(previous) && Math.abs(previous - top) < 1) {
+            const unchanged = (was, now) => Number.isFinite(was) && Math.abs(was - now) < 1;
+
+            if (unchanged(previous.top, top) && unchanged(previous.bottom, bottom) && unchanged(previous.viewport, viewport)) {
                 return;
             }
 
             root.dataset.mmrTableTop = String(top);
+            root.dataset.mmrTableBottom = String(bottom);
+            root.dataset.mmrViewportHeight = String(viewport);
             root.style.setProperty('--mmr-table-top', `${top}px`);
+            root.style.setProperty('--mmr-table-bottom', `${bottom}px`);
+            root.style.setProperty('--mmr-viewport-height', `${viewport}px`);
 
             debugLog(`measured (from: ${caller})`, {
                 top,
-                previous: Number.isFinite(previous) ? previous : null,
-                mainHeight: Math.round(rect.height),
+                bottom,
+                viewport,
+                previous,
+                // Zero once the layout has settled; anything else means the
+                // page is still able to scroll.
+                documentOverflow: Math.max(root.scrollHeight - viewport, 0),
             });
-        };
-
-        // Filament renders no offset of its own here, so this margin only
-        // ever exists as an inline style, which means Livewire's morph strips
-        // it every time the server re-renders the pagination - that is what
-        // makes the page buttons jump sideways mid-revalidation. Unrelated to
-        // the height reservation above, but it shares the same triggers.
-        const restorePaginationOffset = (caller = 'unknown') => {
-            const all = document.querySelectorAll(`${WRAPPER_SELECTOR} .fi-pagination-items`);
-            const outcomes = [];
-
-            all.forEach((items) => {
-                const paginationItems = Array.from(items.children);
-                const previous = paginationItems.find((item) => item.matches('.fi-pagination-item[rel="prev"]'));
-
-                if (previous) {
-                    window.mmrPaginationPreviousWidth = previous.getBoundingClientRect().width;
-                    outcomes.push(`has-prev:measured ${Math.round(window.mmrPaginationPreviousWidth)}px`);
-
-                    return;
-                }
-
-                if (items.dataset.mmrPaginationPreviousSpace === 'true') {
-                    outcomes.push(`already-offset:${items.style.marginInlineStart || '(no inline style!)'}`);
-
-                    return;
-                }
-
-                const next = paginationItems.find((item) => item.matches('.fi-pagination-item[rel="next"]'));
-
-                if (!next) {
-                    outcomes.push('bailed:no-next-button');
-
-                    return;
-                }
-
-                const width = window.mmrPaginationPreviousWidth ?? next.getBoundingClientRect().width;
-
-                if (width === 0) {
-                    outcomes.push('bailed:zero-width');
-
-                    return;
-                }
-
-                items.style.marginInlineStart = `${width}px`;
-                items.dataset.mmrPaginationPreviousSpace = 'true';
-                outcomes.push(`applied ${Math.round(width)}px`);
-            });
-
-            if (all.length > 0) {
-                debugLog(`restorePaginationOffset (from: ${caller})`, { matched: all.length, outcomes });
-            }
-        };
-
-        const refresh = (caller = 'unknown') => {
-            measure(caller);
-            restorePaginationOffset(caller);
         };
 
         let bodyObserver = null;
         let morphHookRegistered = false;
 
-        // A morph can strip the pagination offset and can replace the markup
-        // above the table in the same update, so both halves run again.
-        // Livewire may or may not have booted by the time this end-of-body
-        // script runs, hence both the direct attempt and the event.
+        // A morph can replace the markup above the table - the installed
+        // status badge appearing is the common case - which moves where the
+        // table starts. Livewire may or may not have booted by the time this
+        // end-of-body script runs, hence both the direct attempt and the event.
         const registerMorphHook = () => {
             if (morphHookRegistered || typeof window.Livewire?.hook !== 'function') {
                 return;
             }
 
             morphHookRegistered = true;
-            window.Livewire.hook('morphed', () => refresh('morphed'));
+            window.Livewire.hook('morphed', () => measure('morphed'));
         };
 
         const observeBody = () => {
@@ -174,29 +160,28 @@
             }
 
             // Anything above the table changing height - the sidebar
-            // collapsing, the installed-status badge appearing, the header
-            // wrapping onto a second line - moves where the table starts.
-            // Applying the result changes the body's height too, so this
-            // observer does re-enter once; measure()'s no-change guard is
-            // what stops it there.
+            // collapsing, the header wrapping onto a second line - moves where
+            // the table starts. Applying the result changes the body's height
+            // too, so this observer does re-enter once; the no-change guard
+            // above is what stops it there.
             bodyObserver = new ResizeObserver(() => measure('resize-observer'));
             bodyObserver.observe(document.body);
         };
 
         const init = () => {
             registerMorphHook();
-            refresh('init');
+            measure('init');
             observeBody();
         };
 
-        window.__mmrTableLayout = { measure, restorePaginationOffset, refresh };
+        window.__mmrTableLayout = { measure };
 
-        window.addEventListener('resize', () => refresh('window-resize'));
+        window.addEventListener('resize', () => measure('window-resize'));
         document.addEventListener('livewire:init', registerMorphHook);
 
         document.addEventListener('livewire:navigated', () => {
             registerMorphHook();
-            refresh('navigated');
+            measure('navigated');
         });
 
         if (document.readyState === 'loading') {

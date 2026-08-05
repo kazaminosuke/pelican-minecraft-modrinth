@@ -82,13 +82,24 @@ class MinecraftModrinthPlugin implements HasPluginSettings, Plugin
                 // height a function of how far the page happened to be scrolled
                 // at the time, and each pass altered the input to the next -
                 // the reason the paginator's position drifted by hundreds of
-                // pixels and varied between tabs. The one value CSS cannot
-                // derive, where the table starts, comes from --mmr-table-top
-                // (see the table-layout partial); the fallback keeps the first
-                // paint sane before that variable exists.
+                // pixels and varied between tabs.
+                //
+                // What CSS cannot derive comes from the table-layout partial:
+                // where the table starts, how much page chrome sits below it,
+                // and the viewport height. All three are measured rather than
+                // assumed - a fixed 1.5rem guess for the trailing chrome left
+                // the document 64px taller than the viewport, which brought the
+                // page's own scrollbar back. Subtracting the measured value
+                // instead makes the document exactly one viewport tall, so the
+                // row area is the only thing that scrolls. The fallbacks only
+                // have to keep the first paint sane.
                 .'.mmr-table-scroll-ctn .fi-ta-main{'
                     .'display:flex;flex-direction:column;'
-                    .'height:calc(100dvh - var(--mmr-table-top, 24rem) - 1.5rem);'
+                    .'height:calc('
+                        .'var(--mmr-viewport-height, 100dvh)'
+                        .' - var(--mmr-table-top, 24rem)'
+                        .' - var(--mmr-table-bottom, 2rem)'
+                    .');'
                     .'min-height:15rem;'
                 .'}'
                 // Header, toolbar, filter indicators and the paginator keep
@@ -97,6 +108,19 @@ class MinecraftModrinthPlugin implements HasPluginSettings, Plugin
                 .'.mmr-table-scroll-ctn .fi-ta-content-ctn,'
                 .'.mmr-table-scroll-ctn .fi-ta-empty-state{flex:1 1 auto;min-height:0;}'
                 .'.mmr-table-scroll-ctn .fi-ta-content-ctn{overflow-y:auto;}'
+                // Filament lays the paginator out as a 1fr/auto/1fr grid with
+                // the record-count text in the first track. A `1fr` track may
+                // shrink to its content's min-content width, and for Japanese
+                // that is about one character, so a wide page-number list on
+                // the right squeezes the count text until it wraps onto a
+                // second line and the whole paginator grows taller. Keeping it
+                // on one line pins the row's height; the ellipsis is what stops
+                // it running into the page numbers when there is genuinely no
+                // room (Filament hides it entirely below its own @4xl
+                // container breakpoint anyway).
+                .'.mmr-table-scroll-ctn .fi-pagination-overview{'
+                    .'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;'
+                .'}'
                 .'.mmr-catalog-sort-toolbar{width:12rem;min-width:10rem;}'
                 .'.mmr-catalog-sort-select{display:block;width:100%;min-height:2.25rem;border-radius:.5rem;border:1px solid rgb(209 213 219);background:#fff;padding:.5rem .75rem;color:rgb(17 24 39);font-size:.875rem;line-height:1.25rem;}'
                 .'.dark .mmr-catalog-sort-select{border-color:rgb(75 85 99);background:rgb(31 41 55);color:#fff;}'

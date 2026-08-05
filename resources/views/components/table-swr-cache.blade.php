@@ -1145,11 +1145,9 @@
             controller.heldTable = content.closest('.fi-ta');
             setHeldState(controller, true);
 
-            // The row viewport's own height is fixed in CSS, so projected
-            // values cannot resize it however differently they wrap. Only the
-            // paginator's inline offset needs putting back, since this ran
-            // through a morph that strips it.
-            requestAnimationFrame(() => window.__mmrTableLayout?.restorePaginationOffset('swr-hold'));
+            // Nothing to re-measure: the row viewport's height is fixed in
+            // CSS, so projected values cannot resize it however differently
+            // they wrap, and the paginator keeps its place inside that box.
 
             if (debugContext) {
                 debugContext.held = true;
