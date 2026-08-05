@@ -1355,6 +1355,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     ->extraAttributes([
                         'class' => 'mx-0.5',
                         'data-mmr-swr-row-action' => 'versions',
+                        'data-mmr-swr-row-action-color' => 'info',
                     ])
                     ->icon('tabler-list')
                     ->color('info')
@@ -1479,6 +1480,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     ->extraAttributes([
                         'class' => 'mx-0.5',
                         'data-mmr-swr-row-action' => 'install_latest',
+                        'data-mmr-swr-row-action-color' => 'success',
                     ])
                     ->icon('tabler-download')
                     ->color('success')
@@ -1553,6 +1555,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     ->extraAttributes([
                         'class' => 'mx-0.5',
                         'data-mmr-swr-row-action' => 'update',
+                        'data-mmr-swr-row-action-color' => 'warning',
                     ])
                     ->icon('tabler-refresh')
                     ->color('warning')
@@ -1659,6 +1662,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     ->extraAttributes([
                         'class' => 'mx-0.5',
                         'data-mmr-swr-row-action' => 'installed',
+                        'data-mmr-swr-row-action-color' => 'success',
                     ])
                     ->icon('tabler-check')
                     ->color('success')
@@ -1690,6 +1694,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     ->extraAttributes([
                         'class' => 'mx-0.5',
                         'data-mmr-swr-row-action' => 'uninstall',
+                        'data-mmr-swr-row-action-color' => 'danger',
                     ])
                     ->icon('tabler-trash')
                     ->color('danger')

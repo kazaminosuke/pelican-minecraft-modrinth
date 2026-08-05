@@ -2,16 +2,16 @@
     (() => {
         'use strict';
 
-        if (window.__mmrTableSwrCacheV4) {
-            window.__mmrTableSwrCacheV4.scan();
+        if (window.__mmrTableSwrCacheV5) {
+            window.__mmrTableSwrCacheV5.scan();
 
             return;
         }
 
-        // V1 stored sanitized copies of whole Filament table fragments. V4
+        // V1 stored sanitized copies of whole Filament table fragments. V5
         // deliberately stores only display values and keeps Filament's actual
         // table/pagination DOM in place while a cached view revalidates.
-        const SCHEMA_VERSION = 4;
+        const SCHEMA_VERSION = 5;
         const STORAGE_PREFIX = `mmr-table-swr:v${SCHEMA_VERSION}:`;
         const INDEX_KEY = `${STORAGE_PREFIX}index`;
         const DEBUG_STORAGE_KEY = 'mmrSwrDebug';
@@ -23,8 +23,27 @@
         const WRAPPER_SELECTOR = '.mmr-table-scroll-ctn[data-mmr-swr-scope]';
         const CELL_SELECTOR = 'td[data-mmr-swr-cell]';
         const ROW_ACTION_SELECTOR = '[data-mmr-swr-row-action]';
+        const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
+        const ROW_ACTION_DEFINITIONS = Object.freeze({
+            versions: {
+                paths: ['M9 6l11 0', 'M9 12l11 0', 'M9 18l11 0', 'M5 6l0 .01', 'M5 12l0 .01', 'M5 18l0 .01'],
+            },
+            install_latest: {
+                paths: ['M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2 -2v-2', 'M7 11l5 5l5 -5', 'M12 4l0 12'],
+            },
+            update: {
+                paths: ['M20 11a8.1 8.1 0 0 0 -15.5 -2m-.5 -4v4h4', 'M4 13a8.1 8.1 0 0 0 15.5 2m.5 4v-4h-4'],
+            },
+            installed: {
+                disabled: true,
+                paths: ['M5 12l5 5l10 -10'],
+            },
+            uninstall: {
+                paths: ['M4 7l16 0', 'M10 11l0 6', 'M14 11l0 6', 'M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2 -2l1 -12', 'M9 7v-3a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v3'],
+            },
+        });
+        const ROW_ACTION_COLORS = new Set(['info', 'success', 'warning', 'danger']);
         const controllers = new WeakMap();
-        const staleActionStates = new WeakMap();
         let documentObserver = null;
         let scanQueued = false;
         let debugSequence = 0;
@@ -366,93 +385,97 @@
         const getPagination = (wrapper) => wrapper.querySelector('.fi-pagination');
         const getRows = (content) => Array.from(content?.querySelectorAll('tbody > tr.fi-ta-row') ?? []);
         const getRowActionElements = (row) => Array.from(row.querySelectorAll(ROW_ACTION_SELECTOR));
-        const getRowActionTypes = (row) => getRowActionElements(row)
-            .map((action) => action.dataset.mmrSwrRowAction)
-            .filter((type) => typeof type === 'string' && type.length > 0);
-        const actionTypesMatch = (current, cached) => Array.isArray(cached)
+        const getRowActionContainer = (row) => row.querySelector('.fi-ta-actions');
+
+        const isRowActionDescriptor = (descriptor) => (
+            descriptor
+            && typeof descriptor.type === 'string'
+            && typeof descriptor.color === 'string'
+            && Object.hasOwn(ROW_ACTION_DEFINITIONS, descriptor.type)
+            && ROW_ACTION_COLORS.has(descriptor.color)
+        );
+
+        const getRowActionDescriptors = (row) => {
+            const descriptors = getRowActionElements(row).map((action) => ({
+                type: action.dataset.mmrSwrRowAction,
+                color: action.dataset.mmrSwrRowActionColor,
+            }));
+
+            return descriptors.every(isRowActionDescriptor) ? descriptors : null;
+        };
+
+        const actionDescriptorsMatch = (current, cached) => Array.isArray(current)
+            && Array.isArray(cached)
             && current.length === cached.length
-            && current.every((type, index) => type === cached[index]);
+            && current.every((action, index) => action.type === cached[index]?.type && action.color === cached[index]?.color);
 
-        const setRowActionStale = (action, stale) => {
-            if (stale) {
-                if (!staleActionStates.has(action)) {
-                    staleActionStates.set(action, {
-                        visibility: action.style.getPropertyValue('visibility'),
-                        visibilityPriority: action.style.getPropertyPriority('visibility'),
-                        ariaHidden: action.getAttribute('aria-hidden'),
-                        staleMarker: action.getAttribute('data-mmr-swr-stale-action'),
-                    });
-                }
+        const createRowActionIcon = (paths) => {
+            const icon = document.createElementNS(SVG_NAMESPACE, 'svg');
+            icon.setAttribute('class', 'fi-icon');
+            icon.setAttribute('viewBox', '0 0 24 24');
+            icon.setAttribute('fill', 'none');
+            icon.setAttribute('stroke', 'currentColor');
+            icon.setAttribute('stroke-width', '2');
+            icon.setAttribute('stroke-linecap', 'round');
+            icon.setAttribute('stroke-linejoin', 'round');
+            icon.setAttribute('aria-hidden', 'true');
 
-                // visibility preserves each button's flex item width and gap,
-                // unlike display:none, while preventing stale action icons from
-                // flashing during a cached table transition.
-                action.style.setProperty('visibility', 'hidden', 'important');
-                action.setAttribute('aria-hidden', 'true');
-                action.dataset.mmrSwrStaleAction = 'true';
-
-                return;
-            }
-
-            const prior = staleActionStates.get(action);
-
-            if (!prior) {
-                return;
-            }
-
-            if (prior.visibility) {
-                action.style.setProperty('visibility', prior.visibility, prior.visibilityPriority);
-            } else {
-                action.style.removeProperty('visibility');
-            }
-
-            if (prior.ariaHidden === null) {
-                action.removeAttribute('aria-hidden');
-            } else {
-                action.setAttribute('aria-hidden', prior.ariaHidden);
-            }
-
-            if (prior.staleMarker === null) {
-                delete action.dataset.mmrSwrStaleAction;
-            } else {
-                action.dataset.mmrSwrStaleAction = prior.staleMarker;
-            }
-
-            staleActionStates.delete(action);
-        };
-
-        const hideRowActions = (content) => {
-            const hidden = new Set();
-
-            getRows(content).forEach((row) => {
-                getRowActionElements(row).forEach((action) => {
-                    setRowActionStale(action, true);
-                    hidden.add(action);
-                });
+            paths.forEach((pathData) => {
+                const path = document.createElementNS(SVG_NAMESPACE, 'path');
+                path.setAttribute('d', pathData);
+                icon.append(path);
             });
 
-            return hidden;
+            return icon;
         };
 
-        const revealCompatibleRowActions = (content, projection, hiddenActions) => {
-            getRows(content).forEach((row, rowIndex) => {
-                const actions = getRowActionElements(row);
-                const cachedActions = projection.rows[rowIndex]?.actions;
+        const createProjectedRowAction = (descriptor) => {
+            const definition = ROW_ACTION_DEFINITIONS[descriptor.type];
+            const action = document.createElement('span');
+            action.className = [
+                'fi-icon-btn',
+                'fi-color',
+                `fi-color-${descriptor.color}`,
+                'mx-0.5',
+                ...(definition.disabled ? ['fi-disabled'] : []),
+            ].join(' ');
+            action.dataset.mmrSwrActionProjection = descriptor.type;
+            action.setAttribute('aria-hidden', 'true');
+            action.append(createRowActionIcon(definition.paths));
 
-                if (!actionTypesMatch(actions.map((action) => action.dataset.mmrSwrRowAction), cachedActions)) {
-                    return;
+            return action;
+        };
+
+        const projectRowActions = (content, projection) => {
+            const rows = getRows(content);
+
+            for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+                const row = rows[rowIndex];
+                const cachedActions = projection.rows[rowIndex].actions;
+                const container = getRowActionContainer(row);
+
+                if (cachedActions.length === 0) {
+                    if (container && !actionDescriptorsMatch(getRowActionDescriptors(row), cachedActions)) {
+                        container.replaceChildren();
+                    }
+
+                    continue;
                 }
 
-                actions.forEach((action) => {
-                    setRowActionStale(action, false);
-                    hiddenActions.delete(action);
-                });
-            });
-        };
+                if (!container) {
+                    return false;
+                }
 
-        const releaseHeldRowActions = (controller) => {
-            controller.heldActions.forEach((action) => setRowActionStale(action, false));
-            controller.heldActions.clear();
+                if (actionDescriptorsMatch(getRowActionDescriptors(row), cachedActions)) {
+                    continue;
+                }
+
+                const projectedActions = document.createDocumentFragment();
+                cachedActions.forEach((descriptor) => projectedActions.append(createProjectedRowAction(descriptor)));
+                container.replaceChildren(projectedActions);
+            }
+
+            return true;
         };
 
         const getController = (wrapper) => {
@@ -465,7 +488,6 @@
                     heldContent: null,
                     heldPagination: null,
                     heldTable: null,
-                    heldActions: new Set(),
                     clearAfterMorph: false,
                     scrollTimer: null,
                     lastRenderedView: null,
@@ -594,16 +616,17 @@
 
             const projectedRows = rows.map((row) => {
                 const cells = Array.from(row.querySelectorAll(CELL_SELECTOR)).map(captureCell);
+                const actions = getRowActionDescriptors(row);
 
-                if (cells.length === 0 || cells.some((cell) => cell === null)) {
+                if (cells.length === 0 || cells.some((cell) => cell === null) || actions === null) {
                     return null;
                 }
 
                 return {
                     cells,
-                    // Cache only the stable kinds of visible row actions. HTML
-                    // is intentionally never retained or restored from storage.
-                    actions: getRowActionTypes(row),
+                    // Cache only stable action type/color descriptors. HTML is
+                    // intentionally never retained or restored from storage.
+                    actions,
                 };
             });
 
@@ -729,15 +752,22 @@
                     );
                 }
 
-                if (!Array.isArray(rowProjection.actions) || rowProjection.actions.some((action) => typeof action !== 'string')) {
+                if (!Array.isArray(rowProjection.actions) || !rowProjection.actions.every(isRowActionDescriptor)) {
                     return projectionFailure(
-                        'row-actions-missing',
+                        'row-actions-invalid',
                         withDiagnostics
                             ? {
                                 row: rowIndex + 1,
                                 cachedActions: rowProjection?.actions ?? null,
                             }
                             : {},
+                    );
+                }
+
+                if (rowProjection.actions.length > 0 && !getRowActionContainer(row)) {
+                    return projectionFailure(
+                        'row-actions-container-missing',
+                        withDiagnostics ? { row: rowIndex + 1 } : {},
                     );
                 }
 
@@ -932,9 +962,6 @@
                 }
             }
 
-            if (!active) {
-                releaseHeldRowActions(controller);
-            }
         };
 
         const stopHolding = (controller, clearImmediately = true) => {
@@ -1037,18 +1064,19 @@
                 return reject('cache-entry-invalid');
             }
 
-            // Hide stale actions before projecting values. Matching action kinds
-            // are restored below; every other row retains its original width as
-            // an intentionally blank action area until Filament renders fresh
-            // record state.
-            controller.heldActions = hideRowActions(content);
             const applied = applyProjection(content, entry.projection, debugActive);
 
             if (!applied.ok) {
                 return reject(applied.reason, applied.detail);
             }
 
-            revealCompatibleRowActions(content, entry.projection, controller.heldActions);
+            // Unlike the prior blank fallback, render target action descriptors
+            // directly into the existing action region. The cache holds only
+            // type/color values; the fresh Filament response still replaces this
+            // non-interactive projection with the authoritative action DOM.
+            if (!projectRowActions(content, entry.projection)) {
+                return reject('row-actions-projection-failed');
+            }
 
             content.scrollTop = Number(entry.scrollTop || 0);
             content.scrollLeft = Number(entry.scrollLeft || 0);
@@ -1212,11 +1240,11 @@
         };
 
         const registerMorphHooks = () => {
-            if (window.__mmrTableSwrMorphHooksV4 || typeof window.Livewire?.hook !== 'function') {
+            if (window.__mmrTableSwrMorphHooksV5 || typeof window.Livewire?.hook !== 'function') {
                 return;
             }
 
-            window.__mmrTableSwrMorphHooksV4 = true;
+            window.__mmrTableSwrMorphHooksV5 = true;
 
             // Livewire merges the incoming snapshot before this hook, so
             // buildKey() reads the view being opened, not the one being left.
@@ -1273,7 +1301,7 @@
             });
         };
 
-        window.__mmrTableSwrCacheV4 = { scan, init };
+        window.__mmrTableSwrCacheV5 = { scan, init };
         init();
         document.addEventListener('livewire:navigated', scan);
     })();
