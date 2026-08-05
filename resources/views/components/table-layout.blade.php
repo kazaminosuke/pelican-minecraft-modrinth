@@ -138,18 +138,16 @@
             });
         };
 
-        // Filament renders the first/previous buttons only off page one and the
-        // next/last buttons only off the final page, so the page-number list is
-        // a different width on those pages. Being justify-self:end in the
-        // paginator's grid, a narrower list puts its remaining buttons
-        // somewhere else, and it also leaves the count text's track a different
-        // width, which moves the per-page select. Reserving the absent buttons'
-        // space keeps the list one fixed box across every page.
+        // The stylesheet pins the page-number list to the paginator's last
+        // column, so nothing to its left can move it. That leaves one case: on
+        // the final page Filament omits the next button, and the remaining
+        // buttons would slide right into the space it left. This supplies the
+        // width to hold that space open, as a margin outside the list's frame.
         //
-        // The width comes from a button that is present rather than from a
-        // constant, so it survives a change to Filament's icon size or padding.
-        // The reservation cannot affect that reading - it is a separate box -
-        // so re-running this is a no-op, same as the measurements above.
+        // It is measured from a button that is present rather than taken as a
+        // constant, so it survives a change to Filament's icon size or padding,
+        // and the margin is a separate box from the button being measured, so
+        // re-running this is a no-op like the measurements above.
         let paginationItemWidth = null;
 
         const measurePagination = (caller = 'unknown') => {
@@ -157,8 +155,8 @@
 
             if (!items) {
                 // Mid-load Filament drops the whole paginator. Leaving the last
-                // reservation in place is what stops it flashing a different
-                // width when the paginator comes back.
+                // value in place is what stops it flashing a different width
+                // when the paginator comes back.
                 return;
             }
 
@@ -173,27 +171,22 @@
                 return;
             }
 
-            // first/last exist only when extreme links are enabled, and at most
-            // one end of the list is ever omitted, so either being present is
-            // enough to tell the mode.
+            // The last button exists only when extreme links are enabled, and
+            // that mode is detectable from either end button being present -
+            // at most one end of the list is ever omitted at a time.
             const extremeLinks = has('first') || has('last');
-            const lead = (has('prev') ? 0 : 1) + ((extremeLinks && !has('first')) ? 1 : 0);
             const tail = (has('next') ? 0 : 1) + ((extremeLinks && !has('last')) ? 1 : 0);
-            const leadPx = (lead * paginationItemWidth).toFixed(2);
             const tailPx = (tail * paginationItemWidth).toFixed(2);
 
-            if (root.dataset.mmrPaginationLead === leadPx && root.dataset.mmrPaginationTail === tailPx) {
+            if (root.dataset.mmrPaginationTail === tailPx) {
                 return;
             }
 
-            root.dataset.mmrPaginationLead = leadPx;
             root.dataset.mmrPaginationTail = tailPx;
-            root.style.setProperty('--mmr-pagination-lead', `${leadPx}px`);
             root.style.setProperty('--mmr-pagination-tail', `${tailPx}px`);
 
-            debugLog(`pagination reserved (from: ${caller})`, {
+            debugLog(`pagination tail reserved (from: ${caller})`, {
                 extremeLinks,
-                lead,
                 tail,
                 itemWidth: Math.round(paginationItemWidth),
             });
