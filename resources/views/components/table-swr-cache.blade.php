@@ -14,6 +14,7 @@
         const SCHEMA_VERSION = 2;
         const STORAGE_PREFIX = `mmr-table-swr:v${SCHEMA_VERSION}:`;
         const INDEX_KEY = `${STORAGE_PREFIX}index`;
+        const DEBUG_STORAGE_KEY = 'mmrSwrDebug';
         const TTL_MS = 10 * 60 * 1000;
         const MAX_ENTRIES = 20;
         const WRAPPER_SELECTOR = '.mmr-table-scroll-ctn[data-mmr-swr-scope]';
@@ -21,6 +22,7 @@
         const controllers = new WeakMap();
         let documentObserver = null;
         let scanQueued = false;
+        let debugSequence = 0;
 
         const storage = {
             get(key) {
@@ -101,6 +103,26 @@
 
             return `${(fnv >>> 0).toString(16).padStart(8, '0')}${(djb >>> 0).toString(16).padStart(8, '0')}-${value.length}`;
         };
+
+        // Temporary, opt-in browser diagnostics. This deliberately logs only
+        // state hashes and DOM structure, never search/filter text or cell data.
+        const debugEnabled = () => {
+            try {
+                return window.localStorage.getItem(DEBUG_STORAGE_KEY) === '1';
+            } catch (_error) {
+                return false;
+            }
+        };
+
+        const debugLog = (event, detail = {}) => {
+            if (!debugEnabled()) {
+                return;
+            }
+
+            console.info(`[mmr-swr +${Math.round(window.performance?.now?.() ?? 0)}ms] ${event}`, detail);
+        };
+
+        const valueDigest = (value) => digest(stableStringify(value) ?? '');
 
         const readIndex = () => {
             const index = parseJson(storage.get(INDEX_KEY), []);
@@ -183,10 +205,28 @@
             }
         };
 
-        const hasFreshEntry = (key) => readIndex().some((entry) => entry
-            && entry.key === key
-            && Number(entry.expiresAt) > Date.now()
-            && storage.get(key) !== null);
+        const inspectCache = (key) => {
+            const now = Date.now();
+            const indexEntry = readIndex().find((entry) => entry?.key === key);
+
+            if (!indexEntry) {
+                return { available: false, reason: 'cache-miss' };
+            }
+
+            if (Number(indexEntry.expiresAt) <= now) {
+                return {
+                    available: false,
+                    reason: 'expired',
+                    expiresAgoMs: now - Number(indexEntry.expiresAt),
+                };
+            }
+
+            if (storage.get(key) === null) {
+                return { available: false, reason: 'cache-storage-missing' };
+            }
+
+            return { available: true };
+        };
 
         const loadEntry = (key) => {
             const now = Date.now();
@@ -245,6 +285,58 @@
             }
         };
 
+        const describeViewState = (wire) => ({
+            activeTab: String(getWireValue(wire, 'activeTab', '') ?? ''),
+            paginators: normalize(getWireValue(wire, 'paginators', {})) ?? {},
+            catalogSort: String(getWireValue(wire, 'catalogSort', 'downloads') ?? 'downloads'),
+            perPage: getWireValue(wire, 'tableRecordsPerPage', null),
+            tableSearchDigest: valueDigest(getWireValue(wire, 'tableSearch', '')),
+            tableFiltersDigest: valueDigest(getWireValue(wire, 'tableFilters', {})),
+            tableColumnsDigest: valueDigest(getWireValue(wire, 'tableColumns', {})),
+            tableColumnSearchesDigest: valueDigest(getWireValue(wire, 'tableColumnSearches', {})),
+        });
+
+        const equalStateValue = (left, right) => stableStringify(left) === stableStringify(right);
+
+        const describeTransition = (previous, target) => {
+            if (!previous || !target) {
+                return {
+                    type: 'unknown',
+                    changed: ['unknown'],
+                    from: previous ?? null,
+                    to: target ?? null,
+                };
+            }
+
+            const changed = Object.keys(target).filter((key) => !equalStateValue(previous[key], target[key]));
+            const type = changed.includes('activeTab')
+                ? 'active-tab'
+                : changed.includes('paginators')
+                    ? 'pagination'
+                    : changed.includes('tableSearchDigest')
+                        ? 'search'
+                        : changed.includes('tableFiltersDigest')
+                            ? 'filters'
+                            : changed.includes('catalogSort')
+                                ? 'sort'
+                                : changed.includes('tableColumnsDigest')
+                                    ? 'columns'
+                                    : 'other';
+
+            return {
+                type,
+                changed,
+                from: {
+                    activeTab: previous.activeTab,
+                    paginators: previous.paginators,
+                },
+                to: {
+                    activeTab: target.activeTab,
+                    paginators: target.paginators,
+                },
+            };
+        };
+
         const buildKey = (wrapper, wire) => {
             const state = stableStringify({
                 schema: SCHEMA_VERSION,
@@ -263,6 +355,8 @@
             return `${STORAGE_PREFIX}${digest(state)}`;
         };
 
+        const cacheKeyDigest = (key) => key?.slice(STORAGE_PREFIX.length) ?? null;
+
         const getContent = (wrapper) => wrapper.querySelector('.fi-ta-content-ctn');
         const getPagination = (wrapper) => wrapper.querySelector('.fi-pagination');
         const getRows = (content) => Array.from(content?.querySelectorAll('tbody > tr.fi-ta-row') ?? []);
@@ -279,6 +373,8 @@
                     heldTable: null,
                     clearAfterMorph: false,
                     scrollTimer: null,
+                    lastRenderedView: null,
+                    pendingLoad: null,
                 };
                 controllers.set(wrapper, controller);
                 bindScrollTracking(wrapper, controller);
@@ -474,7 +570,9 @@
             return true;
         };
 
-        const canApplyProjection = (content, projection) => {
+        const projectionFailure = (reason, detail = {}) => ({ ok: false, reason, detail });
+
+        const canApplyProjection = (content, projection, withDiagnostics = false) => {
             const rows = getRows(content);
 
             if (
@@ -483,7 +581,16 @@
                 || rows.length !== projection.rowCount
                 || rows.length !== projection.rows.length
             ) {
-                return false;
+                return projectionFailure(
+                    'row-count-mismatch',
+                    withDiagnostics
+                        ? {
+                            currentRowCount: rows.length,
+                            cachedRowCount: projection?.rowCount ?? null,
+                            cachedRowsLength: Array.isArray(projection?.rows) ? projection.rows.length : null,
+                        }
+                        : {},
+                );
             }
 
             const columns = Array.from(rows[0]?.querySelectorAll(CELL_SELECTOR) ?? [])
@@ -491,35 +598,125 @@
                 .join('|');
 
             if (columns !== projection.columns) {
-                return false;
+                return projectionFailure(
+                    'column-order-mismatch',
+                    withDiagnostics
+                        ? {
+                            currentColumns: columns,
+                            cachedColumns: projection.columns,
+                        }
+                        : {},
+                );
             }
 
-            return rows.every((row, rowIndex) => {
+            for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+                const row = rows[rowIndex];
                 const rowProjection = projection.rows[rowIndex];
                 const cells = Array.from(row.querySelectorAll(CELL_SELECTOR));
 
-                return rowProjection
-                    && cells.length === rowProjection.cells.length
-                    && cells.every((cell, cellIndex) => {
-                        const cellProjection = rowProjection.cells[cellIndex];
+                if (!rowProjection || !Array.isArray(rowProjection.cells) || cells.length !== rowProjection.cells.length) {
+                    return projectionFailure(
+                        'cell-count-mismatch',
+                        withDiagnostics
+                            ? {
+                                row: rowIndex + 1,
+                                currentCellCount: cells.length,
+                                cachedCellCount: Array.isArray(rowProjection?.cells) ? rowProjection.cells.length : null,
+                            }
+                            : {},
+                    );
+                }
 
-                        return cellProjection
-                            && cell.dataset.mmrSwrCell === cellProjection.name
-                            && shapeSignature(cell) === cellProjection.signature
-                            && textNodes(cell).length === cellProjection.text.length
-                            && cell.querySelectorAll('img').length === cellProjection.images.length
-                            && cell.querySelectorAll('.fi-badge').length === cellProjection.badges.length;
-                    });
-            });
-        };
+                for (let cellIndex = 0; cellIndex < cells.length; cellIndex++) {
+                    const cell = cells[cellIndex];
+                    const cellProjection = rowProjection.cells[cellIndex];
 
-        const applyProjection = (content, projection) => {
-            if (!canApplyProjection(content, projection)) {
-                return false;
+                    if (!cellProjection) {
+                        return projectionFailure(
+                            'cell-projection-missing',
+                            withDiagnostics
+                                ? {
+                                    row: rowIndex + 1,
+                                    cellIndex: cellIndex + 1,
+                                    currentCell: cell.dataset.mmrSwrCell ?? null,
+                                }
+                                : {},
+                        );
+                    }
+
+                    const currentName = cell.dataset.mmrSwrCell ?? null;
+                    const currentSignature = shapeSignature(cell);
+                    const currentTextNodeCount = textNodes(cell).length;
+                    const currentImageCount = cell.querySelectorAll('img').length;
+                    const currentBadgeCount = cell.querySelectorAll('.fi-badge').length;
+                    const cachedName = cellProjection.name ?? null;
+                    const cachedSignature = cellProjection.signature ?? null;
+                    const cachedTextNodeCount = Array.isArray(cellProjection.text) ? cellProjection.text.length : null;
+                    const cachedImageCount = Array.isArray(cellProjection.images) ? cellProjection.images.length : null;
+                    const cachedBadgeCount = Array.isArray(cellProjection.badges) ? cellProjection.badges.length : null;
+
+                    if (
+                        currentName !== cachedName
+                        || currentSignature !== cachedSignature
+                        || currentTextNodeCount !== cachedTextNodeCount
+                        || currentImageCount !== cachedImageCount
+                        || currentBadgeCount !== cachedBadgeCount
+                    ) {
+                        return projectionFailure(
+                            'cell-shape-mismatch',
+                            withDiagnostics
+                                ? {
+                                    row: rowIndex + 1,
+                                    cellIndex: cellIndex + 1,
+                                    cell: currentName,
+                                    current: {
+                                        name: currentName,
+                                        signature: currentSignature,
+                                        textNodeCount: currentTextNodeCount,
+                                        imageCount: currentImageCount,
+                                        badgeCount: currentBadgeCount,
+                                    },
+                                    cached: {
+                                        name: cachedName,
+                                        signature: cachedSignature,
+                                        textNodeCount: cachedTextNodeCount,
+                                        imageCount: cachedImageCount,
+                                        badgeCount: cachedBadgeCount,
+                                    },
+                                }
+                                : {},
+                        );
+                    }
+                }
             }
 
-            return getRows(content).every((row, rowIndex) => Array.from(row.querySelectorAll(CELL_SELECTOR))
-                .every((cell, cellIndex) => applyCell(cell, projection.rows[rowIndex].cells[cellIndex])));
+            return { ok: true };
+        };
+
+        const applyProjection = (content, projection, withDiagnostics = false) => {
+            const compatibility = canApplyProjection(content, projection, withDiagnostics);
+
+            if (!compatibility.ok) {
+                return compatibility;
+            }
+
+            const rows = getRows(content);
+
+            for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+                const cells = Array.from(rows[rowIndex].querySelectorAll(CELL_SELECTOR));
+
+                for (let cellIndex = 0; cellIndex < cells.length; cellIndex++) {
+                    if (!applyCell(cells[cellIndex], projection.rows[rowIndex].cells[cellIndex])) {
+                        return projectionFailure('cell-apply-mismatch', {
+                            row: rowIndex + 1,
+                            cellIndex: cellIndex + 1,
+                            cell: cells[cellIndex].dataset.mmrSwrCell ?? null,
+                        });
+                    }
+                }
+            }
+
+            return { ok: true };
         };
 
         const capture = (wrapper, key) => {
@@ -642,27 +839,90 @@
             const content = getContent(wrapper);
             const wire = findWire(wrapper);
             const key = wire ? buildKey(wrapper, wire) : null;
+            const debugActive = debugEnabled();
+            const targetView = debugActive && wire ? describeViewState(wire) : null;
+            const debugContext = debugActive
+                ? {
+                    id: ++debugSequence,
+                    startedAt: window.performance?.now?.() ?? 0,
+                    targetView,
+                    transition: describeTransition(controller.lastRenderedView, targetView),
+                    cacheKey: cacheKeyDigest(key),
+                }
+                : null;
 
-            if (!content || !wire || !key || content.querySelector('.fi-ta-table-loading-ctn')) {
+            if (debugContext) {
+                controller.pendingLoad = debugContext;
+                debugLog('deferred-load-started', {
+                    request: debugContext.id,
+                    transition: debugContext.transition,
+                    target: debugContext.targetView,
+                    cacheKey: debugContext.cacheKey,
+                });
+            }
+
+            const reject = (reason, detail = {}) => {
                 stopHolding(controller);
+                debugLog('cached-projection-rejected', {
+                    request: debugContext?.id ?? null,
+                    reason,
+                    detail,
+                    transition: debugContext?.transition ?? null,
+                    target: debugContext?.targetView ?? targetView,
+                    cacheKey: debugContext?.cacheKey ?? cacheKeyDigest(key),
+                });
 
                 return false;
+            };
+
+            if (!content) {
+                return reject('content-missing');
+            }
+
+            if (!wire) {
+                return reject('wire-missing');
+            }
+
+            if (!key) {
+                return reject('cache-key-missing');
+            }
+
+            if (content.querySelector('.fi-ta-table-loading-ctn')) {
+                return reject('current-content-loading');
             }
 
             if (controller.holding && controller.holdKey === key) {
+                if (debugContext) {
+                    debugContext.held = true;
+                }
+
+                debugLog('cached-projection-already-held', {
+                    request: debugContext?.id ?? null,
+                    transition: debugContext?.transition ?? null,
+                    cacheKey: cacheKeyDigest(key),
+                });
+
                 return true;
             }
 
             stopHolding(controller);
 
-            if (!hasFreshEntry(key)) {
-                return false;
+            const cache = inspectCache(key);
+
+            if (!cache.available) {
+                return reject(cache.reason, cache);
             }
 
             const entry = loadEntry(key);
 
-            if (!entry || !applyProjection(content, entry.projection)) {
-                return false;
+            if (!entry) {
+                return reject('cache-entry-invalid');
+            }
+
+            const applied = applyProjection(content, entry.projection, debugActive);
+
+            if (!applied.ok) {
+                return reject(applied.reason, applied.detail);
             }
 
             content.scrollTop = Number(entry.scrollTop || 0);
@@ -678,6 +938,18 @@
             // just present. Reuse the existing viewport calculation rather than
             // introducing another layout approximation here.
             requestAnimationFrame(() => window.mmrResizeTables?.());
+
+            if (debugContext) {
+                debugContext.held = true;
+            }
+
+            debugLog('cached-projection-held', {
+                request: debugContext?.id ?? null,
+                transition: debugContext?.transition ?? null,
+                target: debugContext?.targetView ?? targetView,
+                cacheKey: cacheKeyDigest(key),
+                rowCount: entry.projection.rowCount,
+            });
 
             return true;
         };
@@ -775,6 +1047,23 @@
             }
 
             const key = buildKey(wrapper, wire);
+            const pendingLoad = controller.pendingLoad;
+
+            if (pendingLoad) {
+                debugLog('deferred-load-finished', {
+                    request: pendingLoad.id,
+                    durationMs: Math.round((window.performance?.now?.() ?? 0) - pendingLoad.startedAt),
+                    heldCachedProjection: pendingLoad.held === true,
+                    transition: pendingLoad.transition,
+                    activeTab: getWireValue(wire, 'activeTab', null),
+                    paginators: normalize(getWireValue(wire, 'paginators', {})) ?? {},
+                    rowCount: getRows(content).length,
+                    empty: content.querySelector('.fi-ta-empty-state') !== null,
+                });
+                controller.pendingLoad = null;
+            }
+
+            controller.lastRenderedView = debugEnabled() ? describeViewState(wire) : null;
 
             if (getRows(content).length > 0) {
                 capture(wrapper, key);
