@@ -2,16 +2,16 @@
     (() => {
         'use strict';
 
-        if (window.__mmrTableSwrCacheV6) {
-            window.__mmrTableSwrCacheV6.scan();
+        if (window.__mmrTableSwrCacheV7) {
+            window.__mmrTableSwrCacheV7.scan();
 
             return;
         }
 
-        // V1 stored sanitized copies of whole Filament table fragments. V6
+        // V1 stored sanitized copies of whole Filament table fragments. V7
         // deliberately stores only display values and keeps Filament's actual
         // table/pagination DOM in place while a cached view revalidates.
-        const SCHEMA_VERSION = 6;
+        const SCHEMA_VERSION = 7;
         const STORAGE_PREFIX = `mmr-table-swr:v${SCHEMA_VERSION}:`;
         const INDEX_KEY = `${STORAGE_PREFIX}index`;
         const DEBUG_STORAGE_KEY = 'mmrSwrDebug';
@@ -43,6 +43,7 @@
             },
         });
         const ROW_ACTION_COLORS = new Set(['info', 'success', 'warning', 'danger']);
+        const ROW_ACTION_SIZE_CLASSES = new Set(['fi-size-xs', 'fi-size-sm', 'fi-size-md', 'fi-size-lg', 'fi-size-xl']);
         const ROW_ACTION_TEXT_COLOR_SHADES = new Set(['0', '50', '100', '200', '300', '400', '500', '600', '700', '800', '900', '950']);
         const controllers = new WeakMap();
         let documentObserver = null;
@@ -389,7 +390,7 @@
         const getRowActionContainer = (row) => row.querySelector('.fi-ta-actions');
 
         const isRowActionClass = (className) => {
-            if (['fi-icon-btn', 'fi-color', 'fi-disabled', 'mx-0.5'].includes(className)) {
+            if (['fi-icon-btn', 'fi-ac-icon-btn-action', 'fi-color', 'fi-disabled', 'mx-0.5'].includes(className) || ROW_ACTION_SIZE_CLASSES.has(className)) {
                 return true;
             }
 
@@ -406,6 +407,17 @@
             .filter(isRowActionClass)
             .sort();
 
+        const isRowActionIconClass = (className) => className === 'fi-icon' || ROW_ACTION_SIZE_CLASSES.has(className);
+
+        const rowActionIconClasses = (action) => {
+            const icon = Array.from(action.querySelectorAll('.fi-icon'))
+                .find((candidate) => !candidate.classList.contains('fi-loading-indicator'));
+
+            return icon
+                ? Array.from(icon.classList).filter(isRowActionIconClass).sort()
+                : [];
+        };
+
         const isRowActionDescriptor = (descriptor) => {
             if (
                 !descriptor
@@ -415,17 +427,24 @@
                 || !ROW_ACTION_COLORS.has(descriptor.color)
                 || !Array.isArray(descriptor.classes)
                 || !descriptor.classes.every((className) => typeof className === 'string' && isRowActionClass(className))
+                || !Array.isArray(descriptor.iconClasses)
+                || !descriptor.iconClasses.every((className) => typeof className === 'string' && isRowActionIconClass(className))
             ) {
                 return false;
             }
 
             const classes = new Set(descriptor.classes);
+            const iconClasses = new Set(descriptor.iconClasses);
             const isDisabled = ROW_ACTION_DEFINITIONS[descriptor.type].disabled === true;
 
             return classes.has('fi-icon-btn')
+                && classes.has('fi-ac-icon-btn-action')
                 && classes.has('fi-color')
                 && classes.has(`fi-color-${descriptor.color}`)
                 && classes.has('mx-0.5')
+                && descriptor.classes.filter((className) => ROW_ACTION_SIZE_CLASSES.has(className)).length === 1
+                && iconClasses.has('fi-icon')
+                && descriptor.iconClasses.filter((className) => ROW_ACTION_SIZE_CLASSES.has(className)).length === 1
                 && (isDisabled ? classes.has('fi-disabled') : !classes.has('fi-disabled'));
         };
 
@@ -434,6 +453,7 @@
                 type: action.dataset.mmrSwrRowAction,
                 color: action.dataset.mmrSwrRowActionColor,
                 classes: rowActionClasses(action),
+                iconClasses: rowActionIconClasses(action),
             }));
 
             return descriptors.every(isRowActionDescriptor) ? descriptors : null;
@@ -445,11 +465,13 @@
             && current.every((action, index) => action.type === cached[index]?.type
                 && action.color === cached[index]?.color
                 && action.classes.length === cached[index]?.classes?.length
-                && action.classes.every((className, classIndex) => className === cached[index].classes[classIndex]));
+                && action.classes.every((className, classIndex) => className === cached[index].classes[classIndex])
+                && action.iconClasses.length === cached[index]?.iconClasses?.length
+                && action.iconClasses.every((className, classIndex) => className === cached[index].iconClasses[classIndex]));
 
-        const createRowActionIcon = (paths) => {
+        const createRowActionIcon = (paths, classes) => {
             const icon = document.createElementNS(SVG_NAMESPACE, 'svg');
-            icon.setAttribute('class', 'fi-icon fi-size-md');
+            icon.classList.add(...classes);
             icon.setAttribute('viewBox', '0 0 24 24');
             icon.setAttribute('fill', 'none');
             icon.setAttribute('stroke', 'currentColor');
@@ -477,7 +499,7 @@
             action.dataset.mmrSwrActionProjection = descriptor.type;
             action.setAttribute('aria-hidden', 'true');
             action.tabIndex = -1;
-            action.append(createRowActionIcon(definition.paths));
+            action.append(createRowActionIcon(definition.paths, descriptor.iconClasses));
 
             return action;
         };
@@ -1276,11 +1298,11 @@
         };
 
         const registerMorphHooks = () => {
-            if (window.__mmrTableSwrMorphHooksV6 || typeof window.Livewire?.hook !== 'function') {
+            if (window.__mmrTableSwrMorphHooksV7 || typeof window.Livewire?.hook !== 'function') {
                 return;
             }
 
-            window.__mmrTableSwrMorphHooksV6 = true;
+            window.__mmrTableSwrMorphHooksV7 = true;
 
             // Livewire merges the incoming snapshot before this hook, so
             // buildKey() reads the view being opened, not the one being left.
@@ -1337,7 +1359,7 @@
             });
         };
 
-        window.__mmrTableSwrCacheV6 = { scan, init };
+        window.__mmrTableSwrCacheV7 = { scan, init };
         init();
         document.addEventListener('livewire:navigated', scan);
     })();
