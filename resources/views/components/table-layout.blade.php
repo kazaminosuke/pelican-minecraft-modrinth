@@ -138,63 +138,8 @@
             });
         };
 
-        // The stylesheet pins the page-number list to the paginator's last
-        // column, so nothing to its left can move it. That leaves one case: on
-        // the final page Filament omits the next button, and the remaining
-        // buttons would slide right into the space it left. This supplies the
-        // width to hold that space open, as a margin outside the list's frame.
-        //
-        // It is measured from a button that is present rather than taken as a
-        // constant, so it survives a change to Filament's icon size or padding,
-        // and the margin is a separate box from the button being measured, so
-        // re-running this is a no-op like the measurements above.
-        let paginationItemWidth = null;
-
-        const measurePagination = (caller = 'unknown') => {
-            const items = document.querySelector(`${WRAPPER_SELECTOR} .fi-pagination-items`);
-
-            if (!items) {
-                // Mid-load Filament drops the whole paginator. Leaving the last
-                // value in place is what stops it flashing a different width
-                // when the paginator comes back.
-                return;
-            }
-
-            const has = (rel) => items.querySelector(`[rel="${rel}"]`) !== null;
-            const sample = items.querySelector('[rel="next"], [rel="prev"], [rel="first"], [rel="last"]');
-
-            if (sample) {
-                paginationItemWidth = sample.getBoundingClientRect().width;
-            }
-
-            if (!paginationItemWidth) {
-                return;
-            }
-
-            // The last button exists only when extreme links are enabled, and
-            // that mode is detectable from either end button being present -
-            // at most one end of the list is ever omitted at a time.
-            const extremeLinks = has('first') || has('last');
-            const tail = (has('next') ? 0 : 1) + ((extremeLinks && !has('last')) ? 1 : 0);
-            const tailPx = (tail * paginationItemWidth).toFixed(2);
-
-            if (root.dataset.mmrPaginationTail === tailPx) {
-                return;
-            }
-
-            root.dataset.mmrPaginationTail = tailPx;
-            root.style.setProperty('--mmr-pagination-tail', `${tailPx}px`);
-
-            debugLog(`pagination tail reserved (from: ${caller})`, {
-                extremeLinks,
-                tail,
-                itemWidth: Math.round(paginationItemWidth),
-            });
-        };
-
         const refresh = (caller = 'unknown') => {
             measure(caller);
-            measurePagination(caller);
         };
 
         let bodyObserver = null;
@@ -233,7 +178,7 @@
             observeBody();
         };
 
-        window.__mmrTableLayout = { measure, measurePagination, refresh };
+        window.__mmrTableLayout = { measure, refresh };
 
         window.addEventListener('resize', () => refresh('window-resize'));
         document.addEventListener('livewire:init', registerMorphHook);

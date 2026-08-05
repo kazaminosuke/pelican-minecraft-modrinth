@@ -108,39 +108,27 @@ class MinecraftModrinthPlugin implements HasPluginSettings, Plugin
                 .'.mmr-table-scroll-ctn .fi-ta-content-ctn,'
                 .'.mmr-table-scroll-ctn .fi-ta-empty-state{flex:1 1 auto;min-height:0;}'
                 .'.mmr-table-scroll-ctn .fi-ta-content-ctn{overflow-y:auto;}'
-                // Filament lays the paginator out as a 1fr/auto/1fr grid, but
-                // only the per-page select and the outer next button name a
-                // column - the page-number list is auto-placed. This page calls
-                // ->paginated([20]), so Filament renders no select at all, and
-                // both outer buttons are display:none above its @4xl container
-                // breakpoint. The list therefore lands in the middle `auto`
-                // track with an equal `1fr` either side, which centres it on
-                // the count text: measured here, the buttons move as soon as
-                // that text changes width - between pages, and between a tab
-                // reading "10,000件" and one reading "19,085件". Naming the last
-                // column puts the list back where it visually belongs, hard
-                // against the end, where the count text cannot reach it.
-                .'.mmr-table-scroll-ctn .fi-pagination-items{'
-                    .'grid-column-start:3;'
-                    // Filament also omits the next button on the final page,
-                    // which would let the remaining buttons slide right into
-                    // its place. This margin stands in for it. It is a margin
-                    // rather than a pseudo-element because the ring and
-                    // background that draw the group's frame sit on this list,
-                    // so any space added inside it renders inside that frame -
-                    // which is what made the first page's "1" button look
-                    // stretched. A margin is outside the frame. The width comes
-                    // from the table-layout partial, which measures a button
-                    // that is present rather than assuming Filament's icon size.
-                    .'margin-inline-end:var(--mmr-pagination-tail,0px);'
+                // Filament's paginator is a 1fr/auto/1fr grid. On this page
+                // ->paginated([20]) renders no records-per-page selector, so
+                // relying on auto-placement makes the count and page list trade
+                // places as their contents change. Explicitly place the count in
+                // the left equal track and the list in the central auto track.
+                // Using minmax(0, 1fr), rather than a bare 1fr, prevents the
+                // count's min-content width from making the two side tracks
+                // unequal. The page list consequently stays centred regardless
+                // of the count's length or whether it wraps.
+                .'.mmr-table-scroll-ctn .fi-pagination{'
+                    .'grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);'
                 .'}'
-                // A `1fr` track is minmax(auto, 1fr), so it may shrink to its
-                // content's min-content width - and Japanese breaks between any
-                // two characters, which puts that at roughly one glyph, so the
-                // count text wrapped onto a second line and grew the row. On one
-                // line its min-content is the whole string, which is enough to
-                // hold the track open; nothing needs truncating.
-                .'.mmr-table-scroll-ctn .fi-pagination-overview{white-space:nowrap;}'
+                .'.mmr-table-scroll-ctn .fi-pagination-overview{'
+                    .'grid-column:1;min-inline-size:0;'
+                    // Filament's text-sm line-height is 1.25rem. Reserving two
+                    // lines from the first paint means a long overview can wrap
+                    // without changing the paginator's block size or moving the
+                    // row viewport above it.
+                    .'min-block-size:2.5rem;white-space:normal;overflow-wrap:anywhere;'
+                .'}'
+                .'.mmr-table-scroll-ctn .fi-pagination-items{grid-column:2;justify-self:center;}'
                 .'.mmr-catalog-sort-toolbar{width:12rem;min-width:10rem;}'
                 .'.mmr-catalog-sort-select{display:block;width:100%;min-height:2.25rem;border-radius:.5rem;border:1px solid rgb(209 213 219);background:#fff;padding:.5rem .75rem;color:rgb(17 24 39);font-size:.875rem;line-height:1.25rem;}'
                 .'.dark .mmr-catalog-sort-select{border-color:rgb(75 85 99);background:rgb(31 41 55);color:#fff;}'
