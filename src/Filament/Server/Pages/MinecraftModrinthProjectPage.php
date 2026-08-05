@@ -1352,7 +1352,10 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
             ->recordActions([
                 Action::make('versions')
                     ->iconButton()
-                    ->extraAttributes(['class' => 'mx-0.5'])
+                    ->extraAttributes([
+                        'class' => 'mx-0.5',
+                        'data-mmr-swr-row-action' => 'versions',
+                    ])
                     ->icon('tabler-list')
                     ->color('info')
                     ->tooltip(trans('pelican-minecraft-modrinth::strings.actions.versions'))
@@ -1473,7 +1476,10 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     }),
                 Action::make('install_latest')
                     ->iconButton()
-                    ->extraAttributes(['class' => 'mx-0.5'])
+                    ->extraAttributes([
+                        'class' => 'mx-0.5',
+                        'data-mmr-swr-row-action' => 'install_latest',
+                    ])
                     ->icon('tabler-download')
                     ->color('success')
                     ->tooltip(trans('pelican-minecraft-modrinth::strings.actions.install_latest'))
@@ -1544,7 +1550,10 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     }),
                 Action::make('update')
                     ->iconButton()
-                    ->extraAttributes(['class' => 'mx-0.5'])
+                    ->extraAttributes([
+                        'class' => 'mx-0.5',
+                        'data-mmr-swr-row-action' => 'update',
+                    ])
                     ->icon('tabler-refresh')
                     ->color('warning')
                     ->tooltip(trans('pelican-minecraft-modrinth::strings.actions.update'))
@@ -1647,7 +1656,10 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     }),
                 Action::make('installed')
                     ->iconButton()
-                    ->extraAttributes(['class' => 'mx-0.5'])
+                    ->extraAttributes([
+                        'class' => 'mx-0.5',
+                        'data-mmr-swr-row-action' => 'installed',
+                    ])
                     ->icon('tabler-check')
                     ->color('success')
                     ->tooltip(trans('pelican-minecraft-modrinth::strings.actions.installed'))
@@ -1675,7 +1687,10 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     }),
                 Action::make('uninstall')
                     ->iconButton()
-                    ->extraAttributes(['class' => 'mx-0.5'])
+                    ->extraAttributes([
+                        'class' => 'mx-0.5',
+                        'data-mmr-swr-row-action' => 'uninstall',
+                    ])
                     ->icon('tabler-trash')
                     ->color('danger')
                     ->tooltip(trans('pelican-minecraft-modrinth::strings.actions.uninstall'))
