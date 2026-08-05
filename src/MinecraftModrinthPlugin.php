@@ -133,6 +133,7 @@ class MinecraftModrinthPlugin implements HasPluginSettings, Plugin
                     // Japanese line-breaking rules handle every other locale.
                     .'overflow-wrap:normal;word-break:normal;line-break:strict;'
                 .'}'
+                .'.mmr-table-scroll-ctn .mmr-pagination-overview-content{min-inline-size:0;}'
                 .'.mmr-table-scroll-ctn .mmr-pagination-overview-chunk{white-space:nowrap;}'
                 // The overview is hidden in Filament's compact paginator. Only
                 // switch it to a grid at the same wide breakpoints where

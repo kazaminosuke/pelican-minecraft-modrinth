@@ -146,7 +146,7 @@
 
             if (
                 overview.dataset.mmrPaginationOverview === text
-                && overview.querySelector(`:scope > .${OVERVIEW_CHUNK_CLASS}`)
+                && overview.querySelector(':scope > .mmr-pagination-overview-content')
             ) {
                 return;
             }
@@ -159,20 +159,21 @@
                 return;
             }
 
-            const fragment = document.createDocumentFragment();
+            const content = document.createElement('span');
+            content.className = 'mmr-pagination-overview-content';
 
             matches.slice(1).forEach((chunk, index) => {
                 const span = document.createElement('span');
                 span.className = OVERVIEW_CHUNK_CLASS;
                 span.textContent = chunk;
-                fragment.append(span);
+                content.append(span);
 
                 if (index < matches.length - 2) {
-                    fragment.append(document.createElement('wbr'));
+                    content.append(document.createElement('wbr'));
                 }
             });
 
-            overview.replaceChildren(fragment);
+            overview.replaceChildren(content);
             overview.dataset.mmrPaginationOverview = text;
         };
 
@@ -195,11 +196,16 @@
             placeholder.setAttribute('aria-hidden', 'true');
             placeholder.setAttribute('inert', '');
 
-            placeholder.querySelectorAll('button').forEach((button) => {
-                button.disabled = true;
-                button.tabIndex = -1;
-                button.removeAttribute('aria-current');
-            });
+            // A placeholder must remain a complete native pagination item: the
+            // same li, button and icon as its source. Do not replace its child
+            // with a width-only box or alter its disabled styling; inert and
+            // visibility:hidden make the untouched clone non-interactive.
+            const button = placeholder.querySelector(':scope > button.fi-pagination-item-btn');
+            const icon = button?.querySelector('.fi-pagination-item-icon');
+
+            if (!placeholder.matches('li.fi-pagination-item') || !button || !icon) {
+                return null;
+            }
 
             return placeholder;
         };
@@ -231,16 +237,22 @@
 
                 if (!hasPrevious) {
                     const sample = realItems.find((item) => item.getAttribute('rel') === 'next') ?? firstItem;
+                    const placeholder = createPaginationPlaceholder(sample, 'previous');
 
-                    firstItem.before(createPaginationPlaceholder(sample, 'previous'));
-                    firstItem.classList.add('mmr-pagination-leading-item');
+                    if (placeholder) {
+                        firstItem.before(placeholder);
+                        firstItem.classList.add('mmr-pagination-leading-item');
+                    }
                 }
 
                 if (!hasNext) {
                     const sample = realItems.find((item) => item.getAttribute('rel') === 'prev') ?? lastItem;
+                    const placeholder = createPaginationPlaceholder(sample, 'next');
 
-                    lastItem.after(createPaginationPlaceholder(sample, 'next'));
-                    lastItem.classList.add('mmr-pagination-trailing-item');
+                    if (placeholder) {
+                        lastItem.after(placeholder);
+                        lastItem.classList.add('mmr-pagination-trailing-item');
+                    }
                 }
             });
         };
