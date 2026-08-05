@@ -128,6 +128,21 @@ class MinecraftModrinthPlugin implements HasPluginSettings, Plugin
                     // row viewport above it.
                     .'min-block-size:2.5rem;white-space:normal;overflow-wrap:anywhere;'
                 .'}'
+                // The overview is hidden in Filament's compact paginator. Only
+                // switch it to a grid at the same wide breakpoints where
+                // Filament shows it, so a single line can sit vertically centred
+                // within the reserved two-line box without changing compact
+                // pagination's native visibility rules.
+                .'@supports (container-type:inline-size){'
+                    .'@container (min-width:56rem){'
+                        .'.mmr-table-scroll-ctn .fi-pagination-overview{display:grid;align-content:center;}'
+                    .'}'
+                .'}'
+                .'@supports not (container-type:inline-size){'
+                    .'@media (min-width:48rem){'
+                        .'.mmr-table-scroll-ctn .fi-pagination-overview{display:grid;align-content:center;}'
+                    .'}'
+                .'}'
                 .'.mmr-table-scroll-ctn .fi-pagination-items{grid-column:2;justify-self:center;}'
                 .'.mmr-catalog-sort-toolbar{width:12rem;min-width:10rem;}'
                 .'.mmr-catalog-sort-select{display:block;width:100%;min-height:2.25rem;border-radius:.5rem;border:1px solid rgb(209 213 219);background:#fff;padding:.5rem .75rem;color:rgb(17 24 39);font-size:.875rem;line-height:1.25rem;}'
