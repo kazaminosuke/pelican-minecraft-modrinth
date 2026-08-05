@@ -182,6 +182,21 @@ class MinecraftModrinthPlugin implements HasPluginSettings, Plugin
 
     public function boot(Panel $panel): void {}
 
+    /**
+     * Return the current values for Filament's plugin settings slide-over.
+     *
+     * @return array<string, mixed>
+     */
+    public function getSettingsFormData(): array
+    {
+        return [
+            'latest_minecraft_version' => config('pelican-minecraft-modrinth.latest_minecraft_version', '26.1.2'),
+            'nav_sort' => env('MINECRAFT_MODRINTH_NAV_SORT', 11),
+            'curseforge_api_key' => config('pelican-minecraft-modrinth.curseforge_api_key'),
+            'github_token' => config('pelican-minecraft-modrinth.github_token'),
+        ];
+    }
+
     public function getSettingsForm(): array
     {
         return [
