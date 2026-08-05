@@ -2,19 +2,22 @@
     (() => {
         'use strict';
 
-        if (window.__mmrTableSwrCacheV2) {
-            window.__mmrTableSwrCacheV2.scan();
+        if (window.__mmrTableSwrCacheV3) {
+            window.__mmrTableSwrCacheV3.scan();
 
             return;
         }
 
-        // V1 stored sanitized copies of whole Filament table fragments. V2
+        // V1 stored sanitized copies of whole Filament table fragments. V3
         // deliberately stores only display values and keeps Filament's actual
         // table/pagination DOM in place while a cached view revalidates.
-        const SCHEMA_VERSION = 2;
+        const SCHEMA_VERSION = 3;
         const STORAGE_PREFIX = `mmr-table-swr:v${SCHEMA_VERSION}:`;
         const INDEX_KEY = `${STORAGE_PREFIX}index`;
         const DEBUG_STORAGE_KEY = 'mmrSwrDebug';
+        // This exact URI is the server-side ImageColumn fallback. It is safe to
+        // retain in sessionStorage; no arbitrary data URI is ever accepted.
+        const EMPTY_ICON_DATA_URI = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
         const TTL_MS = 10 * 60 * 1000;
         const MAX_ENTRIES = 20;
         const WRAPPER_SELECTOR = '.mmr-table-scroll-ctn[data-mmr-swr-scope]';
@@ -442,6 +445,10 @@
 
             if (!source) {
                 return { src: null, alt: image.getAttribute('alt') ?? '' };
+            }
+
+            if (source === EMPTY_ICON_DATA_URI) {
+                return { src: source, alt: image.getAttribute('alt') ?? '' };
             }
 
             try {
@@ -1087,11 +1094,11 @@
         };
 
         const registerMorphHooks = () => {
-            if (window.__mmrTableSwrMorphHooksV2 || typeof window.Livewire?.hook !== 'function') {
+            if (window.__mmrTableSwrMorphHooksV3 || typeof window.Livewire?.hook !== 'function') {
                 return;
             }
 
-            window.__mmrTableSwrMorphHooksV2 = true;
+            window.__mmrTableSwrMorphHooksV3 = true;
 
             // Livewire merges the incoming snapshot before this hook, so
             // buildKey() reads the view being opened, not the one being left.
@@ -1148,7 +1155,7 @@
             });
         };
 
-        window.__mmrTableSwrCacheV2 = { scan, init };
+        window.__mmrTableSwrCacheV3 = { scan, init };
         init();
         document.addEventListener('livewire:navigated', scan);
     })();

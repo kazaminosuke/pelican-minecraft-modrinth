@@ -59,6 +59,13 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
         InteractsWithTable::updatedTableSearch as protected baseUpdatedTableSearch;
     }
 
+    /**
+     * A fixed, transparent fallback keeps Filament's ImageColumn markup stable
+     * when a catalog source has no project icon. The SWR client permits only
+     * this exact data URI when it serializes image values.
+     */
+    private const SWR_EMPTY_ICON_DATA_URI = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+
     /** @var array<int, array{source: string, project_id: string, project_slug: string, project_title: string, version_id: string, version_number: string, filename: string, installed_at: string, author?: string}>|null */
     protected ?array $installedModsMetadata = null;
 
@@ -1266,6 +1273,10 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
             ->columns([
                 ImageColumn::make('icon_url')
                     ->label('')
+                    // ImageColumn omits its <img> when the state is blank. Use
+                    // a fixed transparent fallback so every catalog row has the
+                    // same cell structure for the in-place SWR projection.
+                    ->defaultImageUrl(self::SWR_EMPTY_ICON_DATA_URI)
                     // Deliberately no imageWidth()/imageHeight(): leaving width
                     // unset keeps ImageColumn's default of a 2.5rem height with
                     // a natural-aspect width, so tall/wide icons stay legible at
