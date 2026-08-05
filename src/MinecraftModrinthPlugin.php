@@ -62,27 +62,41 @@ class MinecraftModrinthPlugin implements HasPluginSettings, Plugin
             fn () => new HtmlString(
                 '<style>'
                 .'.mcloader-badge .fi-icon{width:1em!important;height:1em!important;}'
-                // Scopes an internal scrollbar to just the mod/plugin table's row
-                // area (.fi-ta-content-ctn - confirmed via Filament's own table
-                // blade view to sit below the toolbar/search bar and above the
-                // pagination controls, both of which stay outside this rule's
-                // reach) so the Minecraft Version/Loader/Installed summary and
-                // source tabs above it never move, on long lists (e.g. large
-                // modpacks) and when switching between source tabs. max-height is
-                // NOT set here: a CSS calc() estimate of the space above the
-                // table proved too fragile (it left the page itself scrollable in
-                // addition to the table) since that space depends on the topbar,
-                // sidebar mode, and this page's own header wrapping - it's set
-                // dynamically instead, in pixels (or left uncapped when the
-                // content already fits), by MinecraftModrinthProjectPage's
-                // queueTableHeightRecalculation(), which measures actual layout
-                // overflow after each render. min-height here is only a floor
-                // for the moment before that script has run for the first time
-                // (avoids a flash of a collapsed table pre-measurement) - that
-                // script overrides it with an inline min-height: 0 on every
-                // run after, so a genuinely short result set isn't padded out
-                // to this floor.
-                .'.mmr-table-scroll-ctn .fi-ta-content-ctn{min-height:15rem;overflow-y:auto;}'
+                // The mod/plugin table owns the rest of the screen, and the row
+                // area alone scrolls, so the Minecraft Version/Loader/Installed
+                // summary and the source tabs above it never move and the
+                // paginator below never moves either.
+                //
+                // Filament's own table markup (verified against its 4.x blade
+                // view) is .fi-ta > .fi-ta-ctn > .fi-ta-main, with the row
+                // viewport, the empty state and nav.fi-pagination as siblings
+                // inside .fi-ta-main. Turning that into a fixed-height flex
+                // column is what pins the paginator: the row viewport absorbs
+                // all the slack, so neither the row count, nor how much the
+                // descriptions wrap, nor the paginator briefly disappearing
+                // during a deferred load (Filament renders it only once
+                // $records is a paginator) can move anything.
+                //
+                // This replaces a JS pass that measured document.scrollHeight
+                // and window.scrollY after every render. That made the reserved
+                // height a function of how far the page happened to be scrolled
+                // at the time, and each pass altered the input to the next -
+                // the reason the paginator's position drifted by hundreds of
+                // pixels and varied between tabs. The one value CSS cannot
+                // derive, where the table starts, comes from --mmr-table-top
+                // (see the table-layout partial); the fallback keeps the first
+                // paint sane before that variable exists.
+                .'.mmr-table-scroll-ctn .fi-ta-main{'
+                    .'display:flex;flex-direction:column;'
+                    .'height:calc(100dvh - var(--mmr-table-top, 24rem) - 1.5rem);'
+                    .'min-height:15rem;'
+                .'}'
+                // Header, toolbar, filter indicators and the paginator keep
+                // their natural heights; only the row viewport flexes.
+                .'.mmr-table-scroll-ctn .fi-ta-main>*{flex:0 0 auto;}'
+                .'.mmr-table-scroll-ctn .fi-ta-content-ctn,'
+                .'.mmr-table-scroll-ctn .fi-ta-empty-state{flex:1 1 auto;min-height:0;}'
+                .'.mmr-table-scroll-ctn .fi-ta-content-ctn{overflow-y:auto;}'
                 .'.mmr-catalog-sort-toolbar{width:12rem;min-width:10rem;}'
                 .'.mmr-catalog-sort-select{display:block;width:100%;min-height:2.25rem;border-radius:.5rem;border:1px solid rgb(209 213 219);background:#fff;padding:.5rem .75rem;color:rgb(17 24 39);font-size:.875rem;line-height:1.25rem;}'
                 .'.dark .mmr-catalog-sort-select{border-color:rgb(75 85 99);background:rgb(31 41 55);color:#fff;}'
@@ -103,6 +117,13 @@ class MinecraftModrinthPlugin implements HasPluginSettings, Plugin
                 .'@media (prefers-reduced-motion: no-preference){.mmr-installed-operation-spinning .fi-icon{animation:mmr-spin 1s linear infinite;}}'
                 .'</style>'
             ),
+        );
+        // Supplies --mmr-table-top for the flex layout above, and puts the
+        // paginator's inline offset back after a morph strips it.
+        $panel->renderHook(
+            PanelsRenderHook::BODY_END,
+            fn () => view('pelican-minecraft-modrinth::components.table-layout'),
+            MinecraftModrinthProjectPage::class,
         );
         $panel->renderHook(
             PanelsRenderHook::BODY_END,

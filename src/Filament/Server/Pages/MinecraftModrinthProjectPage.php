@@ -212,7 +212,6 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
         $this->loadDefaultActiveTab();
         $this->refreshInstalledScanDataReady();
         $this->refreshInstalledOperationState();
-        $this->queueTableHeightRecalculation();
     }
 
     /**
@@ -274,7 +273,6 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
 
         $this->resetPage($this->getTablePaginationPageName());
         $this->resetTable();
-        $this->queueTableHeightRecalculation();
     }
 
     public function updatedActiveTab(?string $activeTab): void
@@ -300,198 +298,9 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
         // Catalog sorting is an independent Livewire property and stays intact.
         $this->tableFilters = [];
         $this->resetTable();
-        $this->queueTableHeightRecalculation();
         $this->queueHeaderScroll();
 
     }
-    /**
-     * Resize the table after Livewire has finished morphing its contents.
-     *
-     * The table wrapper remains the same DOM element when only the active tab
-     * changes, while Filament replaces the table contents below it. Alpine's
-     * x-init consequently does not run again, so this needs to be a Livewire
-     * post-update effect instead.
-     */
-    protected function queueTableHeightRecalculation(): void
-    {
-        $this->js(<<<'JS'
-            (() => {
-                // Optional table-layout diagnostics for a browser investigation
-                // (localStorage 'mmrSwrDebug' = '1').
-                const debugLog = (event, detail) => {
-                    try {
-                        if (window.localStorage.getItem('mmrSwrDebug') !== '1') {
-                            return;
-                        }
-                    } catch (_error) {
-                        return;
-                    }
-
-                    console.log(`[mmr-swr +${Math.round(performance.now())}ms] ${event}`, detail ?? '');
-                };
-
-                // Filament renders no offset of its own here, so this margin only
-                // ever exists as an inline style, which means Livewire's morph
-                // strips it every time the server re-renders the pagination -
-                // that is what makes the buttons jump left mid-revalidation.
-                // Exposed separately so the morph can put it straight back
-                // without paying for a full resize pass.
-                const restorePaginationOffset = (caller = 'resize') => {
-                    const all = document.querySelectorAll('.mmr-table-scroll-ctn .fi-pagination-items');
-                    const outcomes = [];
-
-                    all.forEach((items) => {
-                        const paginationItems = Array.from(items.children);
-                        const previous = paginationItems.find((item) => item.matches('.fi-pagination-item[rel="prev"]'));
-
-                        if (previous) {
-                            window.mmrPaginationPreviousWidth = previous.getBoundingClientRect().width;
-                            outcomes.push(`has-prev:measured ${Math.round(window.mmrPaginationPreviousWidth)}px`);
-
-                            return;
-                        }
-
-                        if (items.dataset.mmrPaginationPreviousSpace === 'true') {
-                            outcomes.push(`already-offset:${items.style.marginInlineStart || '(no inline style!)'}`);
-
-                            return;
-                        }
-
-                        const next = paginationItems.find((item) => item.matches('.fi-pagination-item[rel="next"]'));
-
-                        if (!next) {
-                            outcomes.push('bailed:no-next-button');
-
-                            return;
-                        }
-
-                        const width = window.mmrPaginationPreviousWidth ?? next.getBoundingClientRect().width;
-
-                        if (width === 0) {
-                            outcomes.push('bailed:zero-width');
-
-                            return;
-                        }
-
-                        items.style.marginInlineStart = `${width}px`;
-                        items.dataset.mmrPaginationPreviousSpace = 'true';
-                        outcomes.push(`applied ${Math.round(width)}px`);
-                    });
-
-                    debugLog(`restorePaginationOffset (from: ${caller})`, {
-                        matched: all.length,
-                        outcomes,
-                    });
-                };
-
-                const resizeTables = () => {
-                    restorePaginationOffset();
-
-                    document.querySelectorAll('.mmr-table-scroll-ctn .fi-ta-content-ctn').forEach((ctn) => {
-                        // Filament's pagination belongs to this table, but it is
-                        // not guaranteed to be a direct sibling of the content
-                        // container. In particular, the SWR layer keeps the
-                        // existing paginator in place while Livewire morphs the
-                        // deferred table state. Restrict the lookup to this table
-                        // without relying on that transient child structure.
-                        //
-                        // A paginated table must reserve its viewport area even if
-                        // this page's rows wrap less than another page's rows. A
-                        // max-height alone lets the content shrink to its natural
-                        // height, which moves the paginator vertically.
-                        const table = ctn.closest('.fi-ta');
-                        const pagination = table?.querySelector('.fi-pagination') ?? null;
-                        const hasPagination = pagination !== null;
-                        const shouldReservePaginationSpace = hasPagination;
-
-                        // Clear any cap from a previous (larger) result set before
-                        // measuring, so this always sees the table's true natural
-                        // size. Without this, a search narrowing the results down
-                        // would keep reusing the old, larger cap - overflow would
-                        // then also read back as 0 below and the function would
-                        // bail without ever shrinking it back down, leaving empty
-                        // space under the short table.
-                        ctn.style.height = '';
-                        ctn.style.maxHeight = 'none';
-
-                        // The injected stylesheet also sets min-height: 15rem as a
-                        // floor for the brief moment before this script has run
-                        // for the first time (so the table doesn't flash collapsed
-                        // to 0 height pre-measurement). That's a class-level rule,
-                        // so once real measurement is happening, it must be beaten
-                        // with a same-element inline style - otherwise a genuinely
-                        // short result set (e.g. one row, ~80px tall) still gets
-                        // padded out to 240px by that CSS floor underneath it.
-                        ctn.style.minHeight = '0';
-
-                        const naturalHeight = ctn.getBoundingClientRect().height;
-                        const documentBottom = Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);
-                        const viewportBottom = window.scrollY + window.innerHeight;
-                        const overflow = Math.max(documentBottom - viewportBottom, 0);
-
-                        // Keep short, non-paginated result sets natural. A paginated
-                        // table deliberately takes the same remaining viewport area
-                        // on every page, even when it happens to fit already.
-                        if (overflow === 0 && !shouldReservePaginationSpace) {
-                            debugLog('resizeTableHeight', {
-                                naturalHeight: Math.round(naturalHeight),
-                                overflow: 0,
-                                hasPagination,
-                                paginationIsDirectSibling: pagination?.parentElement === ctn.parentElement,
-                                shouldReservePaginationSpace,
-                                reservedHeight: null,
-                            });
-
-                            return;
-                        }
-
-                        // documentBottom - naturalHeight is the fixed page chrome
-                        // around the row viewport (headers, pagination and footer).
-                        // Deriving the reserved height from it removes the current
-                        // rows' natural height from the equation, so wrapping cannot
-                        // change the pagination's document position.
-                        const available = shouldReservePaginationSpace
-                            ? viewportBottom - (documentBottom - naturalHeight) - 24
-                            : naturalHeight - overflow - 24;
-                        const reservedHeight = Math.max(available, 240);
-
-                        ctn.style.maxHeight = reservedHeight + 'px';
-
-                        if (shouldReservePaginationSpace) {
-                            ctn.style.height = reservedHeight + 'px';
-                        }
-
-                        debugLog('resizeTableHeight', {
-                            naturalHeight: Math.round(naturalHeight),
-                            overflow: Math.round(overflow),
-                            hasPagination,
-                            paginationIsDirectSibling: pagination?.parentElement === ctn.parentElement,
-                            shouldReservePaginationSpace,
-                            reservedHeight: Math.round(reservedHeight),
-                        });
-                    });
-                };
-
-                // Replace the function on every post-update effect. This keeps
-                // the active closure in sync when Livewire reuses the page DOM,
-                // while one indirection listener handles browser resizes.
-                window.mmrRestorePaginationOffset = restorePaginationOffset;
-
-                if (!window.mmrResizeTablesResizeHandler) {
-                    window.mmrResizeTablesResizeHandler = () => window.mmrResizeTables?.();
-                    window.addEventListener('resize', window.mmrResizeTablesResizeHandler);
-                }
-
-                window.mmrResizeTables = resizeTables;
-
-                requestAnimationFrame(() => {
-                    window.mmrResizeTables();
-                    requestAnimationFrame(window.mmrResizeTables);
-                });
-            })()
-            JS);
-    }
-
 
     public function updatedPaginators($page, $pageName): void
     {
@@ -500,7 +309,6 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
         }
 
         $this->isTableLoaded = false;
-        $this->queueTableHeightRecalculation();
         $this->queueHeaderScroll();
     }
 
@@ -534,7 +342,6 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
         ]);
 
         $this->baseLoadTable();
-        $this->queueTableHeightRecalculation();
     }
 
     protected function resolveInstalledFilesCount(Server $server, DaemonFileRepository $fileRepository, ModrinthProjectType $type): ?int
@@ -592,13 +399,11 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
     public function applyTableColumnManager(?array $state = null, bool $wasReordered = false): void
     {
         $this->baseApplyTableColumnManager($state, $wasReordered);
-        $this->queueTableHeightRecalculation();
     }
 
     public function resetTableColumnManager(): void
     {
         $this->baseResetTableColumnManager();
-        $this->queueTableHeightRecalculation();
     }
 
     public function updatedTableSearch(): void
@@ -612,16 +417,14 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
         // here unlike the other two triggers: yanking the page's scroll
         // position while the user is actively typing in the search box
         // would be disruptive, whereas a row count change is the whole
-        // point of searching, so only the height needs recalculating.
+        // point of searching.
         $this->baseUpdatedTableSearch();
-        $this->queueTableHeightRecalculation();
     }
 
     public function updatedTableFilters(): void
     {
         $this->isTableLoaded = false;
         $this->baseUpdatedTableFilters();
-        $this->queueTableHeightRecalculation();
     }
 
     /**
@@ -2087,16 +1890,16 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                         'server_id' => (string) $server->getKey(),
                         'project_type' => $type?->value,
                     ], JSON_THROW_ON_ERROR),
-                    // A CSS calc() estimate of "space above the table" is inherently
-                    // fragile (topbar/sidebar height, and this page's own header
-                    // wrapping, all vary), and getting it wrong causes the page
-                    // itself to scroll in addition to the table - measure the
-                    // actual remaining viewport space instead, so the table always
-                    // fits exactly regardless of layout specifics. The Livewire
-                    // component queues the calculation after the initial render
-                    // and each active-tab update; Alpine x-init would only run on
-                    // first mount because Livewire retains this wrapper while
-                    // morphing the table contents beneath it.
+                    // This class is what the injected stylesheet's flex layout
+                    // and the table-layout partial both hang off, so the table
+                    // fills the remaining viewport and the paginator stays
+                    // put. Deliberately nothing is queued from PHP for it:
+                    // the space above the table depends on the topbar, the
+                    // sidebar mode and this page's own header wrapping, none
+                    // of which change when a table updates, and re-measuring
+                    // per update is what previously coupled the layout to
+                    // render timing. A ResizeObserver covers the cases that
+                    // do change it.
                 ]),
             ]);
     }
@@ -2132,7 +1935,6 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
         $this->forgetVersionCaches();
         $this->isTableLoaded = false;
         $this->resetTable();
-        $this->queueTableHeightRecalculation();
         $this->notifyInstalledOperationFinished($state);
 
         /** @var Server $server */

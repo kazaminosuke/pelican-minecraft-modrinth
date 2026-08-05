@@ -1145,10 +1145,11 @@
             controller.heldTable = content.closest('.fi-ta');
             setHeldState(controller, true);
 
-            // Cached values can have different wrapping than the table that was
-            // just present. Reuse the existing viewport calculation rather than
-            // introducing another layout approximation here.
-            requestAnimationFrame(() => window.mmrResizeTables?.());
+            // The row viewport's own height is fixed in CSS, so projected
+            // values cannot resize it however differently they wrap. Only the
+            // paginator's inline offset needs putting back, since this ran
+            // through a morph that strips it.
+            requestAnimationFrame(() => window.__mmrTableLayout?.restorePaginationOffset('swr-hold'));
 
             if (debugContext) {
                 debugContext.held = true;
