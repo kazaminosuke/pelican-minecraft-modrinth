@@ -139,7 +139,11 @@
         };
 
         const OVERVIEW_CHUNK_CLASS = 'mmr-pagination-overview-chunk';
-        const JAPANESE_OVERVIEW_PATTERN = /^(.+?件中)(.+?件目から)(.+?件目を表示)$/u;
+        // Keep the first two semantic phrases together and allow just one
+        // optional break before the final "... items shown" phrase. This caps
+        // the Japanese overview at two lines without inserting a forced break
+        // when the available width is sufficient.
+        const JAPANESE_OVERVIEW_PATTERN = /^(.+?件中.+?件目から)(.+?件目を表示)$/u;
 
         const formatPaginationOverview = (overview) => {
             const text = overview.textContent.trim();
@@ -191,21 +195,26 @@
             stripLivewireAttributes(placeholder);
             placeholder.removeAttribute('rel');
             placeholder.classList.remove('fi-active');
-            placeholder.classList.add('mmr-pagination-placeholder');
+            placeholder.classList.add('fi-disabled', 'mmr-pagination-placeholder');
             placeholder.dataset.mmrPaginationPlaceholder = edge;
-            placeholder.setAttribute('aria-hidden', 'true');
-            placeholder.setAttribute('inert', '');
 
-            // A placeholder must remain a complete native pagination item: the
-            // same li, button and icon as its source. Do not replace its child
-            // with a width-only box or alter its disabled styling; inert and
-            // visibility:hidden make the untouched clone non-interactive.
+            // A placeholder remains a complete native pagination item: the
+            // same li, button and icon as its source. Mirror Filament's
+            // disabled paginator output instead of hiding it, so both edge
+            // controls are always present and their disabled state is obvious.
             const button = placeholder.querySelector(':scope > button.fi-pagination-item-btn');
             const icon = button?.querySelector('.fi-pagination-item-icon');
 
             if (!placeholder.matches('li.fi-pagination-item') || !button || !icon) {
                 return null;
             }
+
+            button.disabled = true;
+            button.setAttribute('aria-hidden', 'true');
+            button.removeAttribute('aria-current');
+            // The nearest real item is necessarily the opposite direction
+            // when an edge is missing, so flip the native arrow only.
+            icon.classList.add('mmr-pagination-placeholder-icon');
 
             return placeholder;
         };
@@ -215,8 +224,6 @@
 
             document.querySelectorAll(`${WRAPPER_SELECTOR} .fi-pagination-items`).forEach((items) => {
                 Array.from(items.children).forEach((item) => {
-                    item.classList.remove('mmr-pagination-leading-item', 'mmr-pagination-trailing-item');
-
                     if (item.dataset.mmrPaginationPlaceholder) {
                         item.remove();
                     }
@@ -241,7 +248,6 @@
 
                     if (placeholder) {
                         firstItem.before(placeholder);
-                        firstItem.classList.add('mmr-pagination-leading-item');
                     }
                 }
 
@@ -251,7 +257,6 @@
 
                     if (placeholder) {
                         lastItem.after(placeholder);
-                        lastItem.classList.add('mmr-pagination-trailing-item');
                     }
                 }
             });

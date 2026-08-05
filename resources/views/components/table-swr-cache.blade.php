@@ -2,16 +2,16 @@
     (() => {
         'use strict';
 
-        if (window.__mmrTableSwrCacheV7) {
-            window.__mmrTableSwrCacheV7.scan();
+        if (window.__mmrTableSwrCacheV8) {
+            window.__mmrTableSwrCacheV8.scan();
 
             return;
         }
 
-        // V1 stored sanitized copies of whole Filament table fragments. V7
+        // V1 stored sanitized copies of whole Filament table fragments. V8
         // deliberately stores only display values and keeps Filament's actual
         // table/pagination DOM in place while a cached view revalidates.
-        const SCHEMA_VERSION = 7;
+        const SCHEMA_VERSION = 8;
         const STORAGE_PREFIX = `mmr-table-swr:v${SCHEMA_VERSION}:`;
         const INDEX_KEY = `${STORAGE_PREFIX}index`;
         const DEBUG_STORAGE_KEY = 'mmrSwrDebug';
@@ -385,6 +385,17 @@
 
         const getContent = (wrapper) => wrapper.querySelector('.fi-ta-content-ctn');
         const getPagination = (wrapper) => wrapper.querySelector('.fi-pagination');
+        const getPaginationItems = (pagination) => Array.from(
+            pagination?.querySelector('.fi-pagination-items')?.children ?? [],
+        ).filter((item) => item.matches('.fi-pagination-item'));
+        const paginationItemRole = (item) => item.getAttribute('rel')
+            ?? (item.dataset.mmrPaginationPlaceholder === 'previous'
+                ? 'prev'
+                : item.dataset.mmrPaginationPlaceholder === 'next'
+                    ? 'next'
+                    : null);
+        const paginationItemLabel = (item) => item.querySelector('.fi-pagination-item-label')?.textContent.trim()
+            ?? item.textContent.trim().replace(/\s+/g, ' ');
         const getRows = (content) => Array.from(content?.querySelectorAll('tbody > tr.fi-ta-row') ?? []);
         const getRowActionElements = (row) => Array.from(row.querySelectorAll(ROW_ACTION_SELECTOR));
         const getRowActionContainer = (row) => row.querySelector('.fi-ta-actions');
@@ -921,6 +932,80 @@
             return { ok: true };
         };
 
+        // The paginator itself remains Filament's real DOM while a cached table
+        // is held. Cache only the small amount of state that can safely be
+        // projected into that existing node: its overview text and which page
+        // item is current. The item identity check prevents us from relabeling
+        // a paginator whose page-window has genuinely changed.
+        const capturePaginationProjection = (pagination) => {
+            const overview = pagination?.querySelector('.fi-pagination-overview');
+            const items = getPaginationItems(pagination);
+
+            if (!overview || items.length === 0) {
+                return null;
+            }
+
+            return {
+                overview: overview.textContent.trim(),
+                items: items.map((item) => ({
+                    role: paginationItemRole(item),
+                    label: paginationItemLabel(item),
+                    active: item.classList.contains('fi-active'),
+                })),
+            };
+        };
+
+        const applyPaginationProjection = (pagination, projection) => {
+            if (!pagination || !projection || !Array.isArray(projection.items)) {
+                return { overviewApplied: false, stateApplied: false, reason: 'projection-missing' };
+            }
+
+            const overview = pagination.querySelector('.fi-pagination-overview');
+
+            if (overview && typeof projection.overview === 'string') {
+                // table-layout's normal refresh hook will reapply its safe
+                // Japanese wrapping markup after this morph. Setting raw text
+                // first makes the target count visible before fresh rows arrive.
+                overview.textContent = projection.overview;
+                delete overview.dataset.mmrPaginationOverview;
+            }
+
+            const items = getPaginationItems(pagination);
+
+            if (
+                items.length !== projection.items.length
+                || items.some((item, index) => {
+                    const target = projection.items[index];
+
+                    return paginationItemRole(item) !== target.role
+                        || paginationItemLabel(item) !== target.label;
+                })
+            ) {
+                return {
+                    overviewApplied: overview !== null,
+                    stateApplied: false,
+                    reason: 'item-structure-mismatch',
+                };
+            }
+
+            items.forEach((item, index) => {
+                const active = projection.items[index].active === true;
+                const button = item.querySelector(':scope > button.fi-pagination-item-btn');
+
+                item.classList.toggle('fi-active', active);
+
+                if (button) {
+                    if (active) {
+                        button.setAttribute('aria-current', 'page');
+                    } else {
+                        button.removeAttribute('aria-current');
+                    }
+                }
+            });
+
+            return { overviewApplied: overview !== null, stateApplied: true, reason: null };
+        };
+
         const capture = (wrapper, key) => {
             const content = getContent(wrapper);
 
@@ -939,6 +1024,7 @@
                 return;
             }
 
+            const pagination = capturePaginationProjection(getPagination(wrapper));
             const now = Date.now();
 
             saveEntry(key, {
@@ -948,6 +1034,7 @@
                 lastAccessedAt: now,
                 expiresAt: now + TTL_MS,
                 projection,
+                pagination,
                 scrollTop: content.scrollTop,
                 scrollLeft: content.scrollLeft,
             });
@@ -1136,12 +1223,15 @@
                 return reject('row-actions-projection-failed');
             }
 
+            const pagination = getPagination(wrapper);
+            const paginationProjection = applyPaginationProjection(pagination, entry.pagination);
+
             content.scrollTop = Number(entry.scrollTop || 0);
             content.scrollLeft = Number(entry.scrollLeft || 0);
             controller.holding = true;
             controller.holdKey = key;
             controller.heldContent = content;
-            controller.heldPagination = getPagination(wrapper);
+            controller.heldPagination = pagination;
             controller.heldTable = content.closest('.fi-ta');
             setHeldState(controller, true);
 
@@ -1159,6 +1249,9 @@
                 target: debugContext?.targetView ?? targetView,
                 cacheKey: cacheKeyDigest(key),
                 rowCount: entry.projection.rowCount,
+                paginationOverviewApplied: paginationProjection.overviewApplied,
+                paginationStateApplied: paginationProjection.stateApplied,
+                paginationProjectionReason: paginationProjection.reason,
             });
 
             return true;
@@ -1297,11 +1390,11 @@
         };
 
         const registerMorphHooks = () => {
-            if (window.__mmrTableSwrMorphHooksV7 || typeof window.Livewire?.hook !== 'function') {
+            if (window.__mmrTableSwrMorphHooksV8 || typeof window.Livewire?.hook !== 'function') {
                 return;
             }
 
-            window.__mmrTableSwrMorphHooksV7 = true;
+            window.__mmrTableSwrMorphHooksV8 = true;
 
             // Livewire merges the incoming snapshot before this hook, so
             // buildKey() reads the view being opened, not the one being left.
@@ -1358,7 +1451,7 @@
             });
         };
 
-        window.__mmrTableSwrCacheV7 = { scan, init };
+        window.__mmrTableSwrCacheV8 = { scan, init };
         init();
         document.addEventListener('livewire:navigated', scan);
     })();
