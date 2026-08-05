@@ -108,19 +108,33 @@ class MinecraftModrinthPlugin implements HasPluginSettings, Plugin
                 .'.mmr-table-scroll-ctn .fi-ta-content-ctn,'
                 .'.mmr-table-scroll-ctn .fi-ta-empty-state{flex:1 1 auto;min-height:0;}'
                 .'.mmr-table-scroll-ctn .fi-ta-content-ctn{overflow-y:auto;}'
-                // Filament lays the paginator out as a 1fr/auto/1fr grid with
-                // the record-count text in the first track. A `1fr` track may
-                // shrink to its content's min-content width, and for Japanese
-                // that is about one character, so a wide page-number list on
-                // the right squeezes the count text until it wraps onto a
-                // second line and the whole paginator grows taller. Keeping it
-                // on one line pins the row's height; the ellipsis is what stops
-                // it running into the page numbers when there is genuinely no
-                // room (Filament hides it entirely below its own @4xl
-                // container breakpoint anyway).
-                .'.mmr-table-scroll-ctn .fi-pagination-overview{'
-                    .'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;'
+                // Filament lays the paginator out as a 1fr/auto/1fr grid: the
+                // record-count text, the per-page select, then the page-number
+                // list. A `1fr` track is minmax(auto, 1fr), so it may shrink to
+                // its content's min-content width - and Japanese breaks between
+                // any two characters, which puts that at roughly one glyph.
+                // A wider page list therefore squeezes the count text until it
+                // wraps, and flooring the track at the text's own width is what
+                // stops that without having to truncate it.
+                .'.mmr-table-scroll-ctn .fi-pagination{'
+                    .'grid-template-columns:minmax(max-content,1fr) auto minmax(max-content,1fr);'
                 .'}'
+                .'.mmr-table-scroll-ctn .fi-pagination-overview{white-space:nowrap;}'
+                // Filament omits the previous button on page one and the next
+                // button on the final page, so those pages render a narrower
+                // list - which both moves the remaining buttons and leaves the
+                // count text a different amount of room. Measured against this
+                // page's own paginator markup, every page number sat 19px
+                // further along on page two than on page one, and the count
+                // text lost enough width to start truncating. Standing in for
+                // whichever end buttons are absent keeps the list one fixed
+                // box, so the row does not rearrange between pages. The widths
+                // come from the table-layout partial, which measures a button
+                // that is present rather than assuming Filament's icon size.
+                .'.mmr-table-scroll-ctn .fi-pagination-items::before,'
+                .'.mmr-table-scroll-ctn .fi-pagination-items::after{content:"";flex:0 0 auto;}'
+                .'.mmr-table-scroll-ctn .fi-pagination-items::before{inline-size:var(--mmr-pagination-lead,0px);}'
+                .'.mmr-table-scroll-ctn .fi-pagination-items::after{inline-size:var(--mmr-pagination-tail,0px);}'
                 .'.mmr-catalog-sort-toolbar{width:12rem;min-width:10rem;}'
                 .'.mmr-catalog-sort-select{display:block;width:100%;min-height:2.25rem;border-radius:.5rem;border:1px solid rgb(209 213 219);background:#fff;padding:.5rem .75rem;color:rgb(17 24 39);font-size:.875rem;line-height:1.25rem;}'
                 .'.dark .mmr-catalog-sort-select{border-color:rgb(75 85 99);background:rgb(31 41 55);color:#fff;}'

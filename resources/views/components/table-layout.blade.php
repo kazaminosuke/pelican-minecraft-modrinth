@@ -19,7 +19,7 @@
         const DEBUG_STORAGE_KEY = 'mmrSwrDebug';
 
         if (window.__mmrTableLayout) {
-            window.__mmrTableLayout.measure('re-execute');
+            window.__mmrTableLayout.refresh('re-execute');
 
             return;
         }
@@ -138,6 +138,72 @@
             });
         };
 
+        // Filament renders the first/previous buttons only off page one and the
+        // next/last buttons only off the final page, so the page-number list is
+        // a different width on those pages. Being justify-self:end in the
+        // paginator's grid, a narrower list puts its remaining buttons
+        // somewhere else, and it also leaves the count text's track a different
+        // width, which moves the per-page select. Reserving the absent buttons'
+        // space keeps the list one fixed box across every page.
+        //
+        // The width comes from a button that is present rather than from a
+        // constant, so it survives a change to Filament's icon size or padding.
+        // The reservation cannot affect that reading - it is a separate box -
+        // so re-running this is a no-op, same as the measurements above.
+        let paginationItemWidth = null;
+
+        const measurePagination = (caller = 'unknown') => {
+            const items = document.querySelector(`${WRAPPER_SELECTOR} .fi-pagination-items`);
+
+            if (!items) {
+                // Mid-load Filament drops the whole paginator. Leaving the last
+                // reservation in place is what stops it flashing a different
+                // width when the paginator comes back.
+                return;
+            }
+
+            const has = (rel) => items.querySelector(`[rel="${rel}"]`) !== null;
+            const sample = items.querySelector('[rel="next"], [rel="prev"], [rel="first"], [rel="last"]');
+
+            if (sample) {
+                paginationItemWidth = sample.getBoundingClientRect().width;
+            }
+
+            if (!paginationItemWidth) {
+                return;
+            }
+
+            // first/last exist only when extreme links are enabled, and at most
+            // one end of the list is ever omitted, so either being present is
+            // enough to tell the mode.
+            const extremeLinks = has('first') || has('last');
+            const lead = (has('prev') ? 0 : 1) + ((extremeLinks && !has('first')) ? 1 : 0);
+            const tail = (has('next') ? 0 : 1) + ((extremeLinks && !has('last')) ? 1 : 0);
+            const leadPx = (lead * paginationItemWidth).toFixed(2);
+            const tailPx = (tail * paginationItemWidth).toFixed(2);
+
+            if (root.dataset.mmrPaginationLead === leadPx && root.dataset.mmrPaginationTail === tailPx) {
+                return;
+            }
+
+            root.dataset.mmrPaginationLead = leadPx;
+            root.dataset.mmrPaginationTail = tailPx;
+            root.style.setProperty('--mmr-pagination-lead', `${leadPx}px`);
+            root.style.setProperty('--mmr-pagination-tail', `${tailPx}px`);
+
+            debugLog(`pagination reserved (from: ${caller})`, {
+                extremeLinks,
+                lead,
+                tail,
+                itemWidth: Math.round(paginationItemWidth),
+            });
+        };
+
+        const refresh = (caller = 'unknown') => {
+            measure(caller);
+            measurePagination(caller);
+        };
+
         let bodyObserver = null;
         let morphHookRegistered = false;
 
@@ -151,7 +217,7 @@
             }
 
             morphHookRegistered = true;
-            window.Livewire.hook('morphed', () => measure('morphed'));
+            window.Livewire.hook('morphed', () => refresh('morphed'));
         };
 
         const observeBody = () => {
@@ -164,24 +230,24 @@
             // the table starts. Applying the result changes the body's height
             // too, so this observer does re-enter once; the no-change guard
             // above is what stops it there.
-            bodyObserver = new ResizeObserver(() => measure('resize-observer'));
+            bodyObserver = new ResizeObserver(() => refresh('resize-observer'));
             bodyObserver.observe(document.body);
         };
 
         const init = () => {
             registerMorphHook();
-            measure('init');
+            refresh('init');
             observeBody();
         };
 
-        window.__mmrTableLayout = { measure };
+        window.__mmrTableLayout = { measure, measurePagination, refresh };
 
-        window.addEventListener('resize', () => measure('window-resize'));
+        window.addEventListener('resize', () => refresh('window-resize'));
         document.addEventListener('livewire:init', registerMorphHook);
 
         document.addEventListener('livewire:navigated', () => {
             registerMorphHook();
-            measure('navigated');
+            refresh('navigated');
         });
 
         if (document.readyState === 'loading') {
