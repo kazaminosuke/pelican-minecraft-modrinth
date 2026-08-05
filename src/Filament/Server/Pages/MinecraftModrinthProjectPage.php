@@ -388,6 +388,16 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     restorePaginationOffset();
 
                     document.querySelectorAll('.mmr-table-scroll-ctn .fi-ta-content-ctn').forEach((ctn) => {
+                        // The pagination is a sibling of this content container.
+                        // When it and table rows exist, reserve the calculated
+                        // viewport area even if this page's rows wrap less than
+                        // another page's rows. A max-height alone lets the content
+                        // shrink to its natural height, which moves that sibling
+                        // vertically.
+                        const hasPagination = Array.from(ctn.parentElement?.children ?? [])
+                            .some((element) => element.matches('.fi-pagination'));
+                        const shouldReservePaginationSpace = hasPagination && ctn.querySelector('.fi-ta-row') !== null;
+
                         // Clear any cap from a previous (larger) result set before
                         // measuring, so this always sees the table's true natural
                         // size. Without this, a search narrowing the results down
@@ -395,6 +405,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                         // then also read back as 0 below and the function would
                         // bail without ever shrinking it back down, leaving empty
                         // space under the short table.
+                        ctn.style.height = '';
                         ctn.style.maxHeight = 'none';
 
                         // The injected stylesheet also sets min-height: 15rem as a
@@ -407,29 +418,63 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                         // padded out to 240px by that CSS floor underneath it.
                         ctn.style.minHeight = '0';
 
+                        const naturalHeight = ctn.getBoundingClientRect().height;
                         const documentBottom = Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);
                         const viewportBottom = window.scrollY + window.innerHeight;
                         const overflow = Math.max(documentBottom - viewportBottom, 0);
 
-                        // Content already fits the viewport at its natural height
-                        // (few rows) - leave it uncapped rather than imposing a
-                        // fixed max-height, so there's no leftover empty space and
-                        // no internal scrollbar for a table that doesn't need one.
-                        if (overflow === 0) return;
+                        // Keep short, non-paginated result sets natural. A paginated
+                        // table deliberately takes the same remaining viewport area
+                        // on every page, even when it happens to fit already.
+                        if (overflow === 0 && !shouldReservePaginationSpace) {
+                            debugLog('resizeTableHeight', {
+                                naturalHeight: Math.round(naturalHeight),
+                                overflow: 0,
+                                hasPagination,
+                                shouldReservePaginationSpace,
+                                reservedHeight: null,
+                            });
 
-                        const available = ctn.getBoundingClientRect().height - overflow - 24;
-                        ctn.style.maxHeight = Math.max(available, 240) + 'px';
+                            return;
+                        }
+
+                        // documentBottom - naturalHeight is the fixed page chrome
+                        // around the row viewport (headers, pagination and footer).
+                        // Deriving the reserved height from it removes the current
+                        // rows' natural height from the equation, so wrapping cannot
+                        // change the pagination's document position.
+                        const available = shouldReservePaginationSpace
+                            ? viewportBottom - (documentBottom - naturalHeight) - 24
+                            : naturalHeight - overflow - 24;
+                        const reservedHeight = Math.max(available, 240);
+
+                        ctn.style.maxHeight = reservedHeight + 'px';
+
+                        if (shouldReservePaginationSpace) {
+                            ctn.style.height = reservedHeight + 'px';
+                        }
+
+                        debugLog('resizeTableHeight', {
+                            naturalHeight: Math.round(naturalHeight),
+                            overflow: Math.round(overflow),
+                            hasPagination,
+                            shouldReservePaginationSpace,
+                            reservedHeight: Math.round(reservedHeight),
+                        });
                     });
                 };
 
-                // Always refreshed, so a wire:navigate visit that reuses an
-                // earlier page's globals still gets a working reference.
+                // Replace the function on every post-update effect. This keeps
+                // the active closure in sync when Livewire reuses the page DOM,
+                // while one indirection listener handles browser resizes.
                 window.mmrRestorePaginationOffset = restorePaginationOffset;
 
-                if (!window.mmrResizeTables) {
-                    window.mmrResizeTables = resizeTables;
-                    window.addEventListener('resize', window.mmrResizeTables);
+                if (!window.mmrResizeTablesResizeHandler) {
+                    window.mmrResizeTablesResizeHandler = () => window.mmrResizeTables?.();
+                    window.addEventListener('resize', window.mmrResizeTablesResizeHandler);
                 }
+
+                window.mmrResizeTables = resizeTables;
 
                 requestAnimationFrame(() => {
                     window.mmrResizeTables();
