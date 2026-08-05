@@ -388,15 +388,21 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                     restorePaginationOffset();
 
                     document.querySelectorAll('.mmr-table-scroll-ctn .fi-ta-content-ctn').forEach((ctn) => {
-                        // The pagination is a sibling of this content container.
-                        // When it and table rows exist, reserve the calculated
-                        // viewport area even if this page's rows wrap less than
-                        // another page's rows. A max-height alone lets the content
-                        // shrink to its natural height, which moves that sibling
-                        // vertically.
-                        const hasPagination = Array.from(ctn.parentElement?.children ?? [])
-                            .some((element) => element.matches('.fi-pagination'));
-                        const shouldReservePaginationSpace = hasPagination && ctn.querySelector('.fi-ta-row') !== null;
+                        // Filament's pagination belongs to this table, but it is
+                        // not guaranteed to be a direct sibling of the content
+                        // container. In particular, the SWR layer keeps the
+                        // existing paginator in place while Livewire morphs the
+                        // deferred table state. Restrict the lookup to this table
+                        // without relying on that transient child structure.
+                        //
+                        // A paginated table must reserve its viewport area even if
+                        // this page's rows wrap less than another page's rows. A
+                        // max-height alone lets the content shrink to its natural
+                        // height, which moves the paginator vertically.
+                        const table = ctn.closest('.fi-ta');
+                        const pagination = table?.querySelector('.fi-pagination') ?? null;
+                        const hasPagination = pagination !== null;
+                        const shouldReservePaginationSpace = hasPagination;
 
                         // Clear any cap from a previous (larger) result set before
                         // measuring, so this always sees the table's true natural
@@ -431,6 +437,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                                 naturalHeight: Math.round(naturalHeight),
                                 overflow: 0,
                                 hasPagination,
+                                paginationIsDirectSibling: pagination?.parentElement === ctn.parentElement,
                                 shouldReservePaginationSpace,
                                 reservedHeight: null,
                             });
@@ -458,6 +465,7 @@ class MinecraftModrinthProjectPage extends Page implements HasTable
                             naturalHeight: Math.round(naturalHeight),
                             overflow: Math.round(overflow),
                             hasPagination,
+                            paginationIsDirectSibling: pagination?.parentElement === ctn.parentElement,
                             shouldReservePaginationSpace,
                             reservedHeight: Math.round(reservedHeight),
                         });
