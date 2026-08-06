@@ -4,9 +4,12 @@ namespace Kazaminosuke\ModManager\Services;
 
 use App\Models\Server;
 use App\Repositories\Daemon\DaemonFileRepository;
+use Exception;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 use Kazaminosuke\ModManager\Contracts\ProjectSourceInterface;
-use Kazaminosuke\ModManager\Enums\ProjectType;
 use Kazaminosuke\ModManager\Enums\ProjectSourceKey;
+use Kazaminosuke\ModManager\Enums\ProjectType;
 use Kazaminosuke\ModManager\Repositories\InstalledMetadataRepository;
 use Kazaminosuke\ModManager\Sources\CurseForgeSource;
 use Kazaminosuke\ModManager\Sources\HangarSource;
@@ -18,9 +21,6 @@ use Kazaminosuke\ModManager\Support\InstalledMetadataReadResult;
 use Kazaminosuke\ModManager\Support\InstalledMetadataReadStatus;
 use Kazaminosuke\ModManager\Support\InstalledScanResult;
 use Kazaminosuke\ModManager\Support\MinecraftVersionResolver;
-use Exception;
-use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Log;
 
 class InstalledProjectService
 {
@@ -40,9 +40,15 @@ class InstalledProjectService
 
     protected int $hashScanWingsGetCount = 0;
 
+    protected bool $debugTimingEnabled = false;
+
     /** @param array<string, mixed> $context */
     protected function logModManagerTiming(string $stage, float $startedAt, array $context = []): void
     {
+        if (!$this->debugTimingEnabled) {
+            return;
+        }
+
         $requestId = request()->attributes->get('mmr_timing_request_id');
         $requestStartedAt = request()->attributes->get('mmr_timing_started_at');
 
@@ -61,6 +67,13 @@ class InstalledProjectService
         ]));
     }
 
+    public function clearRuntimeCaches(): void
+    {
+        $this->serverPropertiesCache = [];
+        $this->hashScanWingsGetCount = 0;
+        $this->debugTimingEnabled = false;
+    }
+
     public function getMinecraftVersion(Server $server): ?string
     {
         return MinecraftVersionResolver::resolve($server);
@@ -76,7 +89,8 @@ class InstalledProjectService
     {
         set_time_limit(240);
 
-        $startedAt = microtime(true);
+        $this->debugTimingEnabled = (bool) config('pelican-minecraft-modrinth.debug_timing', false);
+        $startedAt = $this->debugTimingEnabled ? microtime(true) : 0.0;
         $resolvedType = $type ?? ProjectType::fromServer($server);
         $cacheKey = $this->getHashScanCacheKey($server, $resolvedType);
         $cachedResult = InstalledScanResult::fromCache(Cache::get($cacheKey));
@@ -114,16 +128,18 @@ class InstalledProjectService
             }
         }
 
-        $this->logModManagerTiming('installed_scan', $startedAt, [
-            'cache_key' => $cacheKey,
-            'cache_hit' => $result->cacheHit,
-            'scan_executed' => $scanExecuted,
-            'successful' => $result->successful,
-            'failure' => $result->failure,
-            'wings_get_count' => $this->hashScanWingsGetCount,
-            'disk_file_count' => $result->diskFileCount,
-            'unknown_files_count' => count($result->unknownFiles),
-        ]);
+        if ($this->debugTimingEnabled) {
+            $this->logModManagerTiming('installed_scan', $startedAt, [
+                'cache_key' => $cacheKey,
+                'cache_hit' => $result->cacheHit,
+                'scan_executed' => $scanExecuted,
+                'successful' => $result->successful,
+                'failure' => $result->failure,
+                'wings_get_count' => $this->hashScanWingsGetCount,
+                'disk_file_count' => $result->diskFileCount,
+                'unknown_files_count' => count($result->unknownFiles),
+            ]);
+        }
 
         return $result;
     }
@@ -356,8 +372,8 @@ class InstalledProjectService
             }
         }
 
-        $hashResolutionStartedAt = microtime(true);
-        $hashComputationStartedAt = microtime(true);
+        $hashResolutionStartedAt = $this->debugTimingEnabled ? microtime(true) : 0.0;
+        $hashComputationStartedAt = $hashResolutionStartedAt;
         $hashFailures = [];
 
         foreach ($filesToResolve as $filename => $diskFile) {
@@ -377,15 +393,17 @@ class InstalledProjectService
             }
         }
 
-        $this->logModManagerTiming('hash_computation', $hashComputationStartedAt, [
-            'source' => 'shared',
-            'algorithms' => ['murmur2', 'sha512', 'sha256'],
-            'files_count' => count($filesToResolve),
-            'hashed_files_count' => count($hashesByFilename) - $reusedHashCount,
-            'reused_hashes_count' => $reusedHashCount,
-            'wings_get_count' => $this->hashScanWingsGetCount,
-            'failed_files_count' => count($hashFailures),
-        ]);
+        if ($this->debugTimingEnabled) {
+            $this->logModManagerTiming('hash_computation', $hashComputationStartedAt, [
+                'source' => 'shared',
+                'algorithms' => ['murmur2', 'sha512', 'sha256'],
+                'files_count' => count($filesToResolve),
+                'hashed_files_count' => count($hashesByFilename) - $reusedHashCount,
+                'reused_hashes_count' => $reusedHashCount,
+                'wings_get_count' => $this->hashScanWingsGetCount,
+                'failed_files_count' => count($hashFailures),
+            ]);
+        }
 
         $remainingFilenames = array_keys($filesToResolve);
         $matchedEntries = [];
@@ -419,7 +437,7 @@ class InstalledProjectService
                 continue;
             }
 
-            $hashLookupStartedAt = microtime(true);
+            $hashLookupStartedAt = $this->debugTimingEnabled ? microtime(true) : 0.0;
             try {
                 $versionsByHash = $hashSource->findVersionsByHash($hashMap);
             } catch (Exception $exception) {
@@ -428,11 +446,13 @@ class InstalledProjectService
                 $versionsByHash = [];
             }
 
-            $this->logModManagerTiming('hash_lookup', $hashLookupStartedAt, [
-                'source' => $hashSource->getKey()->value,
-                'hashes_count' => count($hashMap),
-                'matches_count' => count($versionsByHash),
-            ]);
+            if ($this->debugTimingEnabled) {
+                $this->logModManagerTiming('hash_lookup', $hashLookupStartedAt, [
+                    'source' => $hashSource->getKey()->value,
+                    'hashes_count' => count($hashMap),
+                    'matches_count' => count($versionsByHash),
+                ]);
+            }
 
             if ($versionsByHash === []) {
                 continue;
@@ -461,7 +481,7 @@ class InstalledProjectService
                 continue;
             }
 
-            $projectLookupStartedAt = microtime(true);
+            $projectLookupStartedAt = $this->debugTimingEnabled ? microtime(true) : 0.0;
             try {
                 $projectsMap = $hashSource->getProjectsByIds(array_values(array_unique($projectIds)));
             } catch (Exception $exception) {
@@ -469,11 +489,13 @@ class InstalledProjectService
                 $projectsMap = [];
             }
 
-            $this->logModManagerTiming('hash_project_lookup', $projectLookupStartedAt, [
-                'source' => $hashSource->getKey()->value,
-                'project_ids_count' => count(array_unique($projectIds)),
-                'projects_count' => count($projectsMap),
-            ]);
+            if ($this->debugTimingEnabled) {
+                $this->logModManagerTiming('hash_project_lookup', $projectLookupStartedAt, [
+                    'source' => $hashSource->getKey()->value,
+                    'project_ids_count' => count(array_unique($projectIds)),
+                    'projects_count' => count($projectsMap),
+                ]);
+            }
 
             foreach ($matchedVersions as $filename => $versionData) {
                 if (!isset($versionData['project_id'], $versionData['id'], $versionData['version_number'])) {
@@ -525,7 +547,7 @@ class InstalledProjectService
             $scannedUnresolved[] = $entry;
         }
 
-        $metadataPersistenceStartedAt = microtime(true);
+        $metadataPersistenceStartedAt = $this->debugTimingEnabled ? microtime(true) : 0.0;
         $saved = $this->metadataRepository->mutate(
             $server,
             $fileRepository,
@@ -538,12 +560,14 @@ class InstalledProjectService
             ),
         );
 
-        $this->logModManagerTiming('hash_metadata_persistence', $metadataPersistenceStartedAt, [
-            'source' => 'all',
-            'matched_files_count' => count($matchedEntries),
-            'saved_files_count' => $saved ? count($matchedEntries) : 0,
-            'writes_count' => $saved ? 1 : 0,
-        ]);
+        if ($this->debugTimingEnabled) {
+            $this->logModManagerTiming('hash_metadata_persistence', $metadataPersistenceStartedAt, [
+                'source' => 'all',
+                'matched_files_count' => count($matchedEntries),
+                'saved_files_count' => $saved ? count($matchedEntries) : 0,
+                'writes_count' => $saved ? 1 : 0,
+            ]);
+        }
 
         $failure = !$saved
             ? 'metadata_write_failed'
@@ -551,13 +575,15 @@ class InstalledProjectService
                 ? 'hash_computation_partial_failure'
                 : ($lookupFailures !== [] ? 'hash_lookup_partial_failure' : null));
 
-        $this->logModManagerTiming('hash_resolution', $hashResolutionStartedAt, [
-            'unknown_files_count' => count($filesToResolve),
-            'matched_files_count' => count($matchedEntries),
-            'remaining_files_count' => count($remainingFilenames),
-            'wings_get_count' => $this->hashScanWingsGetCount,
-            'failure' => $failure,
-        ]);
+        if ($this->debugTimingEnabled) {
+            $this->logModManagerTiming('hash_resolution', $hashResolutionStartedAt, [
+                'unknown_files_count' => count($filesToResolve),
+                'matched_files_count' => count($matchedEntries),
+                'remaining_files_count' => count($remainingFilenames),
+                'wings_get_count' => $this->hashScanWingsGetCount,
+                'failure' => $failure,
+            ]);
+        }
 
         if ($failure !== null) {
             return InstalledScanResult::failed($failure, $remainingFilenames, count($diskFiles));
@@ -771,7 +797,10 @@ class InstalledProjectService
     /** Opens a Wings response without converting its body into a string. */
     protected function openDaemonFileStream(DaemonFileRepository $fileRepository, Server $server, string $path): object
     {
-        $this->hashScanWingsGetCount++;
+        if ($this->debugTimingEnabled) {
+            $this->hashScanWingsGetCount++;
+        }
+
         $response = $fileRepository->setServer($server)->getHttpClient()->withOptions(['stream' => true])->get("/api/servers/{$server->uuid}/files/contents", ['file' => $path]);
 
         return $response->toPsrResponse()->getBody();
@@ -795,7 +824,6 @@ class InstalledProjectService
 
         return (is_string($author) && $author !== '') ? $author : null;
     }
-
 
     /**
      * @throws Exception

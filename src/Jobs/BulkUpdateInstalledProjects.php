@@ -4,13 +4,13 @@ namespace Kazaminosuke\ModManager\Jobs;
 
 use App\Models\Server;
 use App\Repositories\Daemon\DaemonFileRepository;
-use Kazaminosuke\ModManager\Enums\ProjectType;
-use Kazaminosuke\ModManager\Services\InstalledOperationManager;
-use Kazaminosuke\ModManager\Services\InstalledProjectUpdateService;
 use Illuminate\Container\Container;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
+use Kazaminosuke\ModManager\Enums\ProjectType;
+use Kazaminosuke\ModManager\Services\InstalledOperationManager;
+use Kazaminosuke\ModManager\Services\InstalledProjectUpdateService;
 use Throwable;
 
 final class BulkUpdateInstalledProjects implements ShouldBeUnique, ShouldQueue

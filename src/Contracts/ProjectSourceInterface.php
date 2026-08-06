@@ -3,8 +3,8 @@
 namespace Kazaminosuke\ModManager\Contracts;
 
 use App\Models\Server;
-use Kazaminosuke\ModManager\Enums\ProjectType;
 use Kazaminosuke\ModManager\Enums\ProjectSourceKey;
+use Kazaminosuke\ModManager\Enums\ProjectType;
 
 /**
  * Contract implemented by every mod/plugin/datapack source (Modrinth, CurseForge, Hangar, ...).

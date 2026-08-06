@@ -4,11 +4,11 @@ namespace Kazaminosuke\ModManager\Services;
 
 use App\Models\Server;
 use App\Repositories\Daemon\DaemonFileRepository;
-use Kazaminosuke\ModManager\Enums\ProjectType;
-use Kazaminosuke\ModManager\Enums\ProjectSourceKey;
-use Kazaminosuke\ModManager\Support\LatestVersionLookupResult;
 use Exception;
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
+use Kazaminosuke\ModManager\Enums\ProjectSourceKey;
+use Kazaminosuke\ModManager\Enums\ProjectType;
+use Kazaminosuke\ModManager\Support\LatestVersionLookupResult;
 use Throwable;
 
 final class InstalledProjectUpdateService

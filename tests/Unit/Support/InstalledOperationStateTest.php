@@ -2,9 +2,9 @@
 
 namespace Kazaminosuke\ModManager\Tests\Unit\Support;
 
+use DateTimeImmutable;
 use Kazaminosuke\ModManager\Enums\ProjectType;
 use Kazaminosuke\ModManager\Support\InstalledOperationState;
-use DateTimeImmutable;
 use PHPUnit\Framework\TestCase;
 use stdClass;
 

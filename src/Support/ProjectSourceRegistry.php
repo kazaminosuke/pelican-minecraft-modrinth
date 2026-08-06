@@ -3,14 +3,14 @@
 namespace Kazaminosuke\ModManager\Support;
 
 use App\Models\Server;
+use Exception;
 use Kazaminosuke\ModManager\Contracts\ProjectSourceInterface;
-use Kazaminosuke\ModManager\Enums\ProjectType;
 use Kazaminosuke\ModManager\Enums\ProjectSourceKey;
+use Kazaminosuke\ModManager\Enums\ProjectType;
 use Kazaminosuke\ModManager\Sources\CurseForgeSource;
 use Kazaminosuke\ModManager\Sources\GitHubReleasesSource;
 use Kazaminosuke\ModManager\Sources\HangarSource;
 use Kazaminosuke\ModManager\Sources\ModrinthSource;
-use Exception;
 
 class ProjectSourceRegistry
 {

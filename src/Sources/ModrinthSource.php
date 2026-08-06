@@ -3,15 +3,15 @@
 namespace Kazaminosuke\ModManager\Sources;
 
 use App\Models\Server;
+use Exception;
+use Illuminate\Support\Facades\Http;
 use Kazaminosuke\ModManager\Contracts\BatchLatestVersionSourceInterface;
 use Kazaminosuke\ModManager\Contracts\ProjectSourceInterface;
-use Kazaminosuke\ModManager\Enums\ProjectType;
 use Kazaminosuke\ModManager\Enums\ProjectSourceKey;
+use Kazaminosuke\ModManager\Enums\ProjectType;
 use Kazaminosuke\ModManager\Support\LatestVersionLookupRequest;
 use Kazaminosuke\ModManager\Support\LatestVersionLookupResult;
 use Kazaminosuke\ModManager\Support\MinecraftVersionResolver;
-use Exception;
-use Illuminate\Support\Facades\Http;
 
 class ModrinthSource implements BatchLatestVersionSourceInterface, ProjectSourceInterface
 {
@@ -109,8 +109,9 @@ class ModrinthSource implements BatchLatestVersionSourceInterface, ProjectSource
             return $cached;
         }
 
-        $startedAt = microtime(true);
-        $responseBytes = 0;
+        $debugTiming = (bool) config('pelican-minecraft-modrinth.debug_timing', false);
+        $startedAt = $debugTiming ? microtime(true) : 0.0;
+        $responseBytes = null;
 
         try {
             $response = Http::asJson()
@@ -118,7 +119,10 @@ class ModrinthSource implements BatchLatestVersionSourceInterface, ProjectSource
                 ->connectTimeout(1)
                 ->throw()
                 ->get(self::BASE_URL.'/search', $data);
-            $responseBytes = strlen($response->body());
+            if ($debugTiming) {
+                $responseBytes = strlen($response->body());
+            }
+
             $payload = $response->json();
 
             if (!is_array($payload)) {
@@ -142,7 +146,7 @@ class ModrinthSource implements BatchLatestVersionSourceInterface, ProjectSource
 
             return ['hits' => [], 'total_hits' => 0];
         } finally {
-            if (config('app.debug')) {
+            if ($debugTiming) {
                 logger()->debug('Catalog search API timing', [
                     'source' => 'modrinth',
                     'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
@@ -311,7 +315,8 @@ class ModrinthSource implements BatchLatestVersionSourceInterface, ProjectSource
         Server $server,
         ProjectType $type,
     ): LatestVersionLookupResult {
-        $startedAt = microtime(true);
+        $debugTiming = (bool) config('pelican-minecraft-modrinth.debug_timing', false);
+        $startedAt = $debugTiming ? microtime(true) : 0.0;
         $validRequests = array_values(array_filter(
             $requests,
             fn ($request) => $request instanceof LatestVersionLookupRequest,
@@ -359,7 +364,7 @@ class ModrinthSource implements BatchLatestVersionSourceInterface, ProjectSource
         $returnedHashCount = 0;
 
         if ($pendingByHash !== []) {
-            $requestStartedAt = microtime(true);
+            $requestStartedAt = $debugTiming ? microtime(true) : 0.0;
 
             try {
                 $payload = Http::asJson()
@@ -404,30 +409,34 @@ class ModrinthSource implements BatchLatestVersionSourceInterface, ProjectSource
                     }
                 }
             } finally {
-                logger()->info('Mod manager timing', [
-                    'stage' => 'modrinth_versions_bulk_request',
-                    'request_id' => request()->attributes->get('mmr_timing_request_id'),
-                    'endpoint' => '/version_files/update',
-                    'started_after_ms' => $this->getModManagerTimingElapsedMs($requestStartedAt),
-                    'finished_after_ms' => $this->getModManagerTimingElapsedMs(),
-                    'duration_ms' => (int) round((microtime(true) - $requestStartedAt) * 1000),
-                    'requested_hash_count' => count($pendingByHash),
-                    'returned_hash_count' => $returnedHashCount,
-                ]);
+                if ($debugTiming) {
+                    logger()->info('Mod manager timing', [
+                        'stage' => 'modrinth_versions_bulk_request',
+                        'request_id' => request()->attributes->get('mmr_timing_request_id'),
+                        'endpoint' => '/version_files/update',
+                        'started_after_ms' => $this->getModManagerTimingElapsedMs($requestStartedAt),
+                        'finished_after_ms' => $this->getModManagerTimingElapsedMs(),
+                        'duration_ms' => (int) round((microtime(true) - $requestStartedAt) * 1000),
+                        'requested_hash_count' => count($pendingByHash),
+                        'returned_hash_count' => $returnedHashCount,
+                    ]);
+                }
             }
         }
 
-        logger()->info('Mod manager timing', [
-            'stage' => 'modrinth_latest_lookup_batch',
-            'request_id' => request()->attributes->get('mmr_timing_request_id'),
-            'started_after_ms' => $this->getModManagerTimingElapsedMs($startedAt),
-            'finished_after_ms' => $this->getModManagerTimingElapsedMs(),
-            'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
-            'requested_project_count' => count($validRequests),
-            'resolved_project_count' => count($versionsByKey),
-            'unresolved_project_count' => count($unresolvedKeys),
-            'failed_project_count' => count($failuresByKey),
-        ]);
+        if ($debugTiming) {
+            logger()->info('Mod manager timing', [
+                'stage' => 'modrinth_latest_lookup_batch',
+                'request_id' => request()->attributes->get('mmr_timing_request_id'),
+                'started_after_ms' => $this->getModManagerTimingElapsedMs($startedAt),
+                'finished_after_ms' => $this->getModManagerTimingElapsedMs(),
+                'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+                'requested_project_count' => count($validRequests),
+                'resolved_project_count' => count($versionsByKey),
+                'unresolved_project_count' => count($unresolvedKeys),
+                'failed_project_count' => count($failuresByKey),
+            ]);
+        }
 
         return new LatestVersionLookupResult(
             versionsByKey: $versionsByKey,
@@ -627,6 +636,10 @@ class ModrinthSource implements BatchLatestVersionSourceInterface, ProjectSource
 
     protected function getModManagerTimingElapsedMs(?float $timestamp = null): ?int
     {
+        if (!(bool) config('pelican-minecraft-modrinth.debug_timing', false)) {
+            return null;
+        }
+
         $startedAt = request()->attributes->get('mmr_timing_started_at');
 
         if (!is_float($startedAt)) {

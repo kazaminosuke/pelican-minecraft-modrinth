@@ -6,17 +6,6 @@ use App\Filament\Server\Resources\Files\Pages\ListFiles;
 use App\Models\Server;
 use App\Repositories\Daemon\DaemonFileRepository;
 use App\Traits\Filament\BlockAccessInConflict;
-use Kazaminosuke\ModManager\Contracts\ProjectSourceInterface;
-use Kazaminosuke\ModManager\Enums\MinecraftLoader;
-use Kazaminosuke\ModManager\Enums\ProjectType;
-use Kazaminosuke\ModManager\Enums\ProjectSourceKey;
-use Kazaminosuke\ModManager\Facades\ModManager;
-use Kazaminosuke\ModManager\Services\InstalledOperationManager;
-use Kazaminosuke\ModManager\Services\VersionLookupCoordinator;
-use Kazaminosuke\ModManager\Support\CacheVersion;
-use Kazaminosuke\ModManager\Support\InstalledOperationState;
-use Kazaminosuke\ModManager\Support\InstalledScanResult;
-use Kazaminosuke\ModManager\Support\ProjectSourceRegistry;
 use Exception;
 use Filament\Actions\Action;
 use Filament\Facades\Filament;
@@ -35,15 +24,26 @@ use Filament\Support\Enums\TextSize;
 use Filament\Support\Enums\Width;
 use Filament\Tables\Columns\ImageColumn;
 use Filament\Tables\Columns\TextColumn;
-use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
+use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Kazaminosuke\ModManager\Contracts\ProjectSourceInterface;
+use Kazaminosuke\ModManager\Enums\MinecraftLoader;
+use Kazaminosuke\ModManager\Enums\ProjectSourceKey;
+use Kazaminosuke\ModManager\Enums\ProjectType;
+use Kazaminosuke\ModManager\Facades\ModManager;
+use Kazaminosuke\ModManager\Services\InstalledOperationManager;
+use Kazaminosuke\ModManager\Services\VersionLookupCoordinator;
+use Kazaminosuke\ModManager\Support\CacheVersion;
+use Kazaminosuke\ModManager\Support\InstalledOperationState;
+use Kazaminosuke\ModManager\Support\InstalledScanResult;
+use Kazaminosuke\ModManager\Support\ProjectSourceRegistry;
 
 class ModManagerPage extends Page implements HasTable
 {
@@ -82,7 +82,7 @@ class ModManagerPage extends Page implements HasTable
     protected ?array $availableSources = null;
 
     /** @var array<string> */
-    public array $unknownFiles = [];
+    protected array $unknownFiles = [];
 
     /**
      * The catalog sort is deliberately separate from Filament's table filters:
@@ -90,7 +90,7 @@ class ModManagerPage extends Page implements HasTable
      */
     public string $catalogSort = 'downloads';
 
-    /** Null until the deferred table request loads the Wings file count; -1 means unavailable. */
+    /** Null until a successful installed-scan cache provides the Wings file count. */
     public ?int $installedFilesCount = null;
 
     /** @var array<string, mixed>|null Browser-safe status payload for the active background operation. */
@@ -117,6 +117,8 @@ class ModManagerPage extends Page implements HasTable
     public bool $installedScanDataReady = false;
 
     /** Per-request timing state used only by temporary initial-load diagnostics. */
+    protected bool $modManagerTimingEnabled = false;
+
     protected float $modManagerTimingStartedAt = 0.0;
 
     protected string $modManagerTimingRequestId = '';
@@ -176,6 +178,12 @@ class ModManagerPage extends Page implements HasTable
 
     public function boot(): void
     {
+        $this->modManagerTimingEnabled = (bool) config('pelican-minecraft-modrinth.debug_timing', false);
+
+        if (!$this->modManagerTimingEnabled) {
+            return;
+        }
+
         $this->modManagerTimingStartedAt = microtime(true);
         $this->modManagerTimingRequestId = bin2hex(random_bytes(6));
         $this->modManagerTimingVersionLookups = 0;
@@ -187,6 +195,10 @@ class ModManagerPage extends Page implements HasTable
 
     public function dehydrate(): void
     {
+        if (!$this->isModManagerTimingEnabled()) {
+            return;
+        }
+
         Log::info('Mod manager timing', [
             'stage' => 'total_component_request',
             'request_id' => $this->modManagerTimingRequestId,
@@ -200,7 +212,16 @@ class ModManagerPage extends Page implements HasTable
 
     protected function getModManagerTimingElapsedMs(?float $timestamp = null): int
     {
+        if (!$this->isModManagerTimingEnabled()) {
+            return 0;
+        }
+
         return (int) round((($timestamp ?? microtime(true)) - $this->modManagerTimingStartedAt) * 1000);
+    }
+
+    protected function isModManagerTimingEnabled(): bool
+    {
+        return $this->modManagerTimingEnabled;
     }
 
     public function mount(): void
@@ -237,7 +258,9 @@ class ModManagerPage extends Page implements HasTable
         }
 
         $scanCacheKey = ModManager::getHashScanCacheKey($server, $type);
-        $this->installedScanDataReady = InstalledScanResult::fromCache(Cache::get($scanCacheKey)) !== null;
+        $scanResult = InstalledScanResult::fromCache(Cache::get($scanCacheKey));
+        $this->installedScanDataReady = $scanResult !== null;
+        $this->installedFilesCount = $scanResult?->diskFileCount;
     }
 
     /** @return array<string, string> */
@@ -318,73 +341,30 @@ class ModManagerPage extends Page implements HasTable
      */
     public function loadTable(): void
     {
-        $startedAt = microtime(true);
+        $startedAt = $this->isModManagerTimingEnabled() ? microtime(true) : 0.0;
 
-        if ($this->installedFilesCount === null) {
-            /** @var Server $server */
-            $server = Filament::getTenant();
-            $type = static::detectProjectType($server);
+        /** @var Server $server */
+        $server = Filament::getTenant();
+        $type = static::detectProjectType($server);
+        $scanResult = $type === null
+            ? null
+            : InstalledScanResult::fromCache(
+                Cache::get(ModManager::getHashScanCacheKey($server, $type)),
+            );
+        $this->installedFilesCount = $scanResult?->diskFileCount;
 
-            /** @var DaemonFileRepository $fileRepository */
-            $fileRepository = app(DaemonFileRepository::class);
-            $this->installedFilesCount = $type
-                ? ($this->resolveInstalledFilesCount($server, $fileRepository, $type) ?? -1)
-                : -1;
+        if ($this->isModManagerTimingEnabled()) {
+            Log::info('Mod manager timing', [
+                'stage' => 'load_table_prepare',
+                'request_id' => $this->modManagerTimingRequestId,
+                'active_tab' => $this->activeTab,
+                'started_after_ms' => $this->getModManagerTimingElapsedMs($startedAt),
+                'finished_after_ms' => $this->getModManagerTimingElapsedMs(),
+                'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+            ]);
         }
-
-        Log::info('Mod manager timing', [
-            'stage' => 'load_table_prepare',
-            'request_id' => $this->modManagerTimingRequestId,
-            'active_tab' => $this->activeTab,
-            'started_after_ms' => $this->getModManagerTimingElapsedMs($startedAt),
-            'finished_after_ms' => $this->getModManagerTimingElapsedMs(),
-            'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
-        ]);
 
         $this->baseLoadTable();
-    }
-
-    protected function resolveInstalledFilesCount(Server $server, DaemonFileRepository $fileRepository, ProjectType $type): ?int
-    {
-        $startedAt = microtime(true);
-
-        try {
-            $files = $fileRepository->setServer($server)->getDirectory(
-                ModManager::getProjectFolder($server, $fileRepository, $type),
-            );
-
-            if (isset($files['error'])) {
-                throw new Exception($files['error']);
-            }
-
-            $extension = $type->getFileExtension();
-            $count = collect($files)
-                ->filter(fn ($file) => isset($file['name']) && str($file['name'])->lower()->endsWith($extension))
-                ->count();
-
-            Log::info('Mod manager timing', [
-                'stage' => 'wings_installed_file_count',
-                'request_id' => $this->modManagerTimingRequestId,
-                'started_after_ms' => $this->getModManagerTimingElapsedMs($startedAt),
-                'finished_after_ms' => $this->getModManagerTimingElapsedMs(),
-                'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
-                'count' => $count,
-            ]);
-
-            return $count;
-        } catch (Exception $exception) {
-            report($exception);
-
-            Log::info('Mod manager timing', [
-                'stage' => 'wings_installed_file_count_failed',
-                'request_id' => $this->modManagerTimingRequestId,
-                'started_after_ms' => $this->getModManagerTimingElapsedMs($startedAt),
-                'finished_after_ms' => $this->getModManagerTimingElapsedMs(),
-                'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
-            ]);
-
-            return null;
-        }
     }
 
     /**
@@ -455,7 +435,6 @@ class ModManagerPage extends Page implements HasTable
             });
             JS);
     }
-
 
     /**
      * Sources enabled for this egg (via feature flags) that support the
@@ -553,7 +532,7 @@ class ModManagerPage extends Page implements HasTable
     protected function getInstalledModsMetadata(): array
     {
         if ($this->installedModsMetadata === null) {
-            $startedAt = microtime(true);
+            $startedAt = $this->isModManagerTimingEnabled() ? microtime(true) : 0.0;
 
             /** @var Server $server */
             $server = Filament::getTenant();
@@ -583,16 +562,18 @@ class ModManagerPage extends Page implements HasTable
                 }
             }
 
-            Log::info('Mod manager timing', [
-                'stage' => 'installed_metadata',
-                'request_id' => $this->modManagerTimingRequestId,
-                'cache_hit' => $cacheHit,
-                'metadata_status' => $metadataStatus,
-                'started_after_ms' => $this->getModManagerTimingElapsedMs($startedAt),
-                'finished_after_ms' => $this->getModManagerTimingElapsedMs(),
-                'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
-                'entries' => count($this->installedModsMetadata),
-            ]);
+            if ($this->isModManagerTimingEnabled()) {
+                Log::info('Mod manager timing', [
+                    'stage' => 'installed_metadata',
+                    'request_id' => $this->modManagerTimingRequestId,
+                    'cache_hit' => $cacheHit,
+                    'metadata_status' => $metadataStatus,
+                    'started_after_ms' => $this->getModManagerTimingElapsedMs($startedAt),
+                    'finished_after_ms' => $this->getModManagerTimingElapsedMs(),
+                    'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+                    'entries' => count($this->installedModsMetadata),
+                ]);
+            }
         }
 
         return $this->installedModsMetadata;
@@ -638,7 +619,7 @@ class ModManagerPage extends Page implements HasTable
         $cacheIndex = "$sourceKey:$projectId";
 
         if (!isset($this->versionsCache[$cacheIndex])) {
-            $startedAt = microtime(true);
+            $startedAt = $this->isModManagerTimingEnabled() ? microtime(true) : 0.0;
 
             /** @var Server $server */
             $server = Filament::getTenant();
@@ -647,20 +628,22 @@ class ModManagerPage extends Page implements HasTable
 
             $this->versionsCache[$cacheIndex] = ($source && $type) ? $source->getVersions($projectId, $server, $type) : [];
 
-            $durationMs = (int) round((microtime(true) - $startedAt) * 1000);
-            $this->modManagerTimingVersionLookups++;
-            $this->modManagerTimingVersionLookupDurationMs += $durationMs;
+            if ($this->isModManagerTimingEnabled()) {
+                $durationMs = (int) round((microtime(true) - $startedAt) * 1000);
+                $this->modManagerTimingVersionLookups++;
+                $this->modManagerTimingVersionLookupDurationMs += $durationMs;
 
-            Log::info('Mod manager timing', [
-                'stage' => 'record_version_lookup',
-                'request_id' => $this->modManagerTimingRequestId,
-                'source' => $sourceKey,
-                'project_id' => $projectId,
-                'started_after_ms' => $this->getModManagerTimingElapsedMs($startedAt),
-                'finished_after_ms' => $this->getModManagerTimingElapsedMs(),
-                'duration_ms' => $durationMs,
-                'versions_count' => count($this->versionsCache[$cacheIndex]),
-            ]);
+                Log::info('Mod manager timing', [
+                    'stage' => 'record_version_lookup',
+                    'request_id' => $this->modManagerTimingRequestId,
+                    'source' => $sourceKey,
+                    'project_id' => $projectId,
+                    'started_after_ms' => $this->getModManagerTimingElapsedMs($startedAt),
+                    'finished_after_ms' => $this->getModManagerTimingElapsedMs(),
+                    'duration_ms' => $durationMs,
+                    'versions_count' => count($this->versionsCache[$cacheIndex]),
+                ]);
+            }
         }
 
         return $this->versionsCache[$cacheIndex];
@@ -672,7 +655,7 @@ class ModManagerPage extends Page implements HasTable
         $cacheIndex = "$sourceKey:$projectId";
 
         if (!array_key_exists($cacheIndex, $this->latestVersionsCache)) {
-            $startedAt = microtime(true);
+            $startedAt = $this->isModManagerTimingEnabled() ? microtime(true) : 0.0;
             $installedMod = $this->getInstalledMod($projectId, $sourceKey);
 
             /** @var Server $server */
@@ -683,21 +666,23 @@ class ModManagerPage extends Page implements HasTable
                 : null;
 
             $this->latestVersionsCache[$cacheIndex] = $result?->version($cacheIndex);
-            $durationMs = (int) round((microtime(true) - $startedAt) * 1000);
-            $this->modManagerTimingVersionLookups++;
-            $this->modManagerTimingVersionLookupDurationMs += $durationMs;
+            if ($this->isModManagerTimingEnabled()) {
+                $durationMs = (int) round((microtime(true) - $startedAt) * 1000);
+                $this->modManagerTimingVersionLookups++;
+                $this->modManagerTimingVersionLookupDurationMs += $durationMs;
 
-            Log::info('Mod manager timing', [
-                'stage' => 'record_version_lookup',
-                'request_id' => $this->modManagerTimingRequestId,
-                'source' => $sourceKey,
-                'project_id' => $projectId,
-                'started_after_ms' => $this->getModManagerTimingElapsedMs($startedAt),
-                'finished_after_ms' => $this->getModManagerTimingElapsedMs(),
-                'duration_ms' => $durationMs,
-                'versions_count' => $this->latestVersionsCache[$cacheIndex] === null ? 0 : 1,
-                'coordinated' => true,
-            ]);
+                Log::info('Mod manager timing', [
+                    'stage' => 'record_version_lookup',
+                    'request_id' => $this->modManagerTimingRequestId,
+                    'source' => $sourceKey,
+                    'project_id' => $projectId,
+                    'started_after_ms' => $this->getModManagerTimingElapsedMs($startedAt),
+                    'finished_after_ms' => $this->getModManagerTimingElapsedMs(),
+                    'duration_ms' => $durationMs,
+                    'versions_count' => $this->latestVersionsCache[$cacheIndex] === null ? 0 : 1,
+                    'coordinated' => true,
+                ]);
+            }
         }
 
         return $this->latestVersionsCache[$cacheIndex];
@@ -731,29 +716,31 @@ class ModManagerPage extends Page implements HasTable
             return;
         }
 
-        $startedAt = microtime(true);
+        $startedAt = $this->isModManagerTimingEnabled() ? microtime(true) : 0.0;
         $result = app(VersionLookupCoordinator::class)->lookupInstalled(array_values($installedMods), $server, $type);
 
         foreach (array_keys($installedMods) as $cacheIndex) {
             $this->latestVersionsCache[$cacheIndex] = $result->version($cacheIndex);
         }
 
-        $durationMs = (int) round((microtime(true) - $startedAt) * 1000);
-        $this->modManagerTimingVersionLookups += count($installedMods);
-        $this->modManagerTimingVersionLookupDurationMs += $durationMs;
+        if ($this->isModManagerTimingEnabled()) {
+            $durationMs = (int) round((microtime(true) - $startedAt) * 1000);
+            $this->modManagerTimingVersionLookups += count($installedMods);
+            $this->modManagerTimingVersionLookupDurationMs += $durationMs;
 
-        Log::info('Mod manager timing', [
-            'stage' => 'record_version_lookup_batch',
-            'request_id' => $this->modManagerTimingRequestId,
-            'source' => 'coordinator',
-            'started_after_ms' => $this->getModManagerTimingElapsedMs($startedAt),
-            'finished_after_ms' => $this->getModManagerTimingElapsedMs(),
-            'duration_ms' => $durationMs,
-            'project_count' => count($installedMods),
-            'resolved_count' => count($result->versions()),
-            'unresolved_count' => count($result->unresolvedKeys()),
-            'failed_count' => count($result->failures()),
-        ]);
+            Log::info('Mod manager timing', [
+                'stage' => 'record_version_lookup_batch',
+                'request_id' => $this->modManagerTimingRequestId,
+                'source' => 'coordinator',
+                'started_after_ms' => $this->getModManagerTimingElapsedMs($startedAt),
+                'finished_after_ms' => $this->getModManagerTimingElapsedMs(),
+                'duration_ms' => $durationMs,
+                'project_count' => count($installedMods),
+                'resolved_count' => count($result->versions()),
+                'unresolved_count' => count($result->unresolvedKeys()),
+                'failed_count' => count($result->failures()),
+            ]);
+        }
     }
 
     protected function getCachedDatapackWorldName(Server $server, DaemonFileRepository $fileRepository): string
@@ -916,11 +903,11 @@ class ModManagerPage extends Page implements HasTable
         }
 
         Cache::forget(ModManager::getHashScanCacheKey($server, $type));
+        $this->installedFilesCount = null;
         $this->unknownFiles = array_values(
             array_filter($this->unknownFiles, fn (string $filename) => strtolower($filename) !== strtolower($safeNewFilename))
         );
     }
-
 
     /**
      * @param array<string, mixed> $record
@@ -965,10 +952,7 @@ class ModManagerPage extends Page implements HasTable
                     $unknownFiles = $scanResult === null ? [] : $scanResult->unknownFiles;
                     $this->unknownFiles = $unknownFiles;
                     $this->installedScanDataReady = $scanResult !== null;
-
-                    if ($scanResult !== null) {
-                        $this->installedFilesCount = $scanResult->diskFileCount;
-                    }
+                    $this->installedFilesCount = $scanResult?->diskFileCount;
 
                     $operations = app(InstalledOperationManager::class);
                     $scanState = $operations->state(
@@ -1023,7 +1007,6 @@ class ModManagerPage extends Page implements HasTable
                         ? array_merge(...array_values($installedBySource))
                         : [];
                     $totalCount = count($orderedInstalledMods) + count($unknownFiles);
-                    $this->installedFilesCount = $totalCount;
                     $offset = ($page - 1) * $perPage;
                     $pagedInstalledMods = array_slice($orderedInstalledMods, $offset, $perPage);
 
@@ -1057,7 +1040,7 @@ class ModManagerPage extends Page implements HasTable
 
                 $currentSource = $this->getCurrentSource();
 
-                $catalogStartedAt = microtime(true);
+                $catalogStartedAt = $this->isModManagerTimingEnabled() ? microtime(true) : 0.0;
 
                 if (!$type || !$currentSource || !$currentSource->isConfigured() || !$currentSource->supportsSearch()) {
                     return new LengthAwarePaginator([], 0, 20, $page);
@@ -1070,15 +1053,17 @@ class ModManagerPage extends Page implements HasTable
 
                 $response = $currentSource->search($server, $type, $page, $search, ['sort' => $sortOption, 'category' => $category, 'environment' => $currentSource->getKey() === ProjectSourceKey::Modrinth ? $environment : null]);
 
-                Log::info('Mod manager timing', [
-                    'stage' => 'catalog_records',
-                    'request_id' => $this->modManagerTimingRequestId,
-                    'source' => $currentSource->getKey()->value,
-                    'started_after_ms' => $this->getModManagerTimingElapsedMs($catalogStartedAt),
-                    'finished_after_ms' => $this->getModManagerTimingElapsedMs(),
-                    'duration_ms' => (int) round((microtime(true) - $catalogStartedAt) * 1000),
-                    'hits' => count($response['hits']),
-                ]);
+                if ($this->isModManagerTimingEnabled()) {
+                    Log::info('Mod manager timing', [
+                        'stage' => 'catalog_records',
+                        'request_id' => $this->modManagerTimingRequestId,
+                        'source' => $currentSource->getKey()->value,
+                        'started_after_ms' => $this->getModManagerTimingElapsedMs($catalogStartedAt),
+                        'finished_after_ms' => $this->getModManagerTimingElapsedMs(),
+                        'duration_ms' => (int) round((microtime(true) - $catalogStartedAt) * 1000),
+                        'hits' => count($response['hits']),
+                    ]);
+                }
 
                 $hits = array_map(function (array $hit) use ($currentSource) {
                     $hit['source'] = $currentSource->getKey()->value;
@@ -1591,6 +1576,7 @@ class ModManagerPage extends Page implements HasTable
                                 ->throw();
 
                             Cache::forget(ModManager::getHashScanCacheKey($server, $type));
+                            $this->installedFilesCount = null;
                             $this->unknownFiles = array_values(
                                 array_filter($this->unknownFiles, fn (string $filename) => strtolower($filename) !== strtolower($safeFilename))
                             );
@@ -1664,6 +1650,7 @@ class ModManagerPage extends Page implements HasTable
             default => [],
         };
     }
+
     protected function getHeaderActions(): array
     {
         /** @var Server $server */

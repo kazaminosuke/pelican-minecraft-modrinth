@@ -121,7 +121,6 @@ class InstalledMetadataDocument
     }
 
     /**
-     * @param mixed $entry
      * @return array<string, mixed>|null
      */
     protected static function normalizeInstalledMod(mixed $entry): ?array
@@ -152,7 +151,6 @@ class InstalledMetadataDocument
     }
 
     /**
-     * @param mixed $entry
      * @return array<string, mixed>|null
      */
     protected static function normalizeUnresolvedFile(mixed $entry): ?array

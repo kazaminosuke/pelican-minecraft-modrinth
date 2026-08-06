@@ -2,9 +2,9 @@
 
 namespace Kazaminosuke\ModManager\Support;
 
-use Kazaminosuke\ModManager\Enums\ProjectType;
 use DateTimeImmutable;
 use InvalidArgumentException;
+use Kazaminosuke\ModManager\Enums\ProjectType;
 
 final class InstalledOperationState
 {

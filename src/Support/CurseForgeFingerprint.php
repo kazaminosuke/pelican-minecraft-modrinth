@@ -15,7 +15,7 @@ class CurseForgeFingerprint
 {
     private const SEED = 1;
 
-    private const M = 0x5bd1e995;
+    private const M = 0x5BD1E995;
 
     private const R = 24;
 

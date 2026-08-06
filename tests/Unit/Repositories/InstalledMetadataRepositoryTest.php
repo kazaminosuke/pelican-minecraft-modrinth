@@ -4,11 +4,11 @@ namespace Kazaminosuke\ModManager\Tests\Unit\Repositories;
 
 use App\Models\Server;
 use App\Repositories\Daemon\DaemonFileRepository;
+use Illuminate\Contracts\Filesystem\FileNotFoundException;
+use Illuminate\Http\Client\Response;
 use Kazaminosuke\ModManager\Repositories\InstalledMetadataRepository;
 use Kazaminosuke\ModManager\Support\InstalledMetadataDocument;
 use Kazaminosuke\ModManager\Support\InstalledMetadataReadStatus;
-use Illuminate\Contracts\Filesystem\FileNotFoundException;
-use Illuminate\Http\Client\Response;
 use Mockery;
 use PHPUnit\Framework\TestCase;
 

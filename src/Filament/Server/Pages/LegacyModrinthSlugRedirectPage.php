@@ -3,10 +3,10 @@
 namespace Kazaminosuke\ModManager\Filament\Server\Pages;
 
 use App\Models\Server;
-use Kazaminosuke\ModManager\Enums\ProjectType;
 use Filament\Facades\Filament;
 use Filament\Pages\Page;
 use Filament\Schemas\Schema;
+use Kazaminosuke\ModManager\Enums\ProjectType;
 
 /**
  * Kept at the plugin's original "modrinth" URL slug so links or bookmarks made

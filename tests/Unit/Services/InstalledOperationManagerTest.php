@@ -2,14 +2,14 @@
 
 namespace Kazaminosuke\ModManager\Tests\Unit\Services;
 
+use Illuminate\Contracts\Bus\Dispatcher;
+use Illuminate\Contracts\Cache\Repository as CacheRepository;
+use Illuminate\Contracts\Config\Repository as ConfigRepository;
 use Kazaminosuke\ModManager\Enums\ProjectType;
 use Kazaminosuke\ModManager\Jobs\BulkUpdateInstalledProjects;
 use Kazaminosuke\ModManager\Jobs\ScanInstalledProjects;
 use Kazaminosuke\ModManager\Services\InstalledOperationManager;
 use Kazaminosuke\ModManager\Support\InstalledOperationState;
-use Illuminate\Contracts\Bus\Dispatcher;
-use Illuminate\Contracts\Cache\Repository as CacheRepository;
-use Illuminate\Contracts\Config\Repository as ConfigRepository;
 use Mockery;
 use PHPUnit\Framework\TestCase;
 
@@ -122,6 +122,7 @@ class InstalledOperationManagerTest extends TestCase
         self::assertSame(InstalledOperationManager::OPERATION_BULK_UPDATE, $result['state']->operation);
         self::assertTrue($result['state']->isActive());
     }
+
     public function test_active_scan_prevents_a_bulk_update_from_being_dispatched(): void
     {
         $activeState = InstalledOperationState::queued(

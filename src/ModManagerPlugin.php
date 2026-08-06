@@ -7,11 +7,6 @@ use App\Models\Server;
 use App\Repositories\Daemon\DaemonFileRepository;
 use App\Traits\EnvironmentWriterTrait;
 use BladeUI\Icons\Factory as BladeIconsFactory;
-use Kazaminosuke\ModManager\Enums\ProjectType;
-use Kazaminosuke\ModManager\Filament\Server\Pages\ModManagerPage;
-use Kazaminosuke\ModManager\Services\InstalledOperationManager;
-use Kazaminosuke\ModManager\Services\InstalledProjectService;
-use Kazaminosuke\ModManager\Support\CacheVersion;
 use Exception;
 use Filament\Actions\Action;
 use Filament\Contracts\Plugin;
@@ -23,6 +18,11 @@ use Filament\Schemas\Components\Actions;
 use Filament\Tables\View\TablesRenderHook;
 use Filament\View\PanelsRenderHook;
 use Illuminate\Support\HtmlString;
+use Kazaminosuke\ModManager\Enums\ProjectType;
+use Kazaminosuke\ModManager\Filament\Server\Pages\ModManagerPage;
+use Kazaminosuke\ModManager\Services\InstalledOperationManager;
+use Kazaminosuke\ModManager\Services\InstalledProjectService;
+use Kazaminosuke\ModManager\Support\CacheVersion;
 
 class ModManagerPlugin implements HasPluginSettings, Plugin
 {
@@ -354,8 +354,7 @@ class ModManagerPlugin implements HasPluginSettings, Plugin
         DaemonFileRepository $fileRepository,
         InstalledOperationManager $operations,
         int $serverId,
-    ): void
-    {
+    ): void {
         if (!$operations->supportsAsyncDispatch()) {
             Notification::make()
                 ->title(trans('pelican-minecraft-modrinth::strings.operations.queue_required'))

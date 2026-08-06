@@ -3,17 +3,17 @@
 namespace Kazaminosuke\ModManager\Sources;
 
 use App\Models\Server;
-use Kazaminosuke\ModManager\Contracts\BatchLatestVersionSourceInterface;
-use Kazaminosuke\ModManager\Contracts\ProjectSourceInterface;
-use Kazaminosuke\ModManager\Enums\MinecraftLoader;
-use Kazaminosuke\ModManager\Enums\ProjectType;
-use Kazaminosuke\ModManager\Enums\ProjectSourceKey;
-use Kazaminosuke\ModManager\Support\LatestVersionLookupRequest;
-use Kazaminosuke\ModManager\Support\LatestVersionLookupResult;
-use Kazaminosuke\ModManager\Support\MinecraftVersionResolver;
 use Exception;
 use Illuminate\Http\Client\Pool;
 use Illuminate\Support\Facades\Http;
+use Kazaminosuke\ModManager\Contracts\BatchLatestVersionSourceInterface;
+use Kazaminosuke\ModManager\Contracts\ProjectSourceInterface;
+use Kazaminosuke\ModManager\Enums\MinecraftLoader;
+use Kazaminosuke\ModManager\Enums\ProjectSourceKey;
+use Kazaminosuke\ModManager\Enums\ProjectType;
+use Kazaminosuke\ModManager\Support\LatestVersionLookupRequest;
+use Kazaminosuke\ModManager\Support\LatestVersionLookupResult;
+use Kazaminosuke\ModManager\Support\MinecraftVersionResolver;
 
 class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSourceInterface
 {
@@ -141,8 +141,9 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
             return $cached;
         }
 
-        $startedAt = microtime(true);
-        $responseBytes = 0;
+        $debugTiming = (bool) config('pelican-minecraft-modrinth.debug_timing', false);
+        $startedAt = $debugTiming ? microtime(true) : 0.0;
+        $responseBytes = null;
 
         try {
             $response = Http::asJson()
@@ -151,7 +152,10 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
                 ->connectTimeout(1)
                 ->throw()
                 ->get(self::BASE_URL.'/mods/search', $params);
-            $responseBytes = strlen($response->body());
+            if ($debugTiming) {
+                $responseBytes = strlen($response->body());
+            }
+
             $payload = $response->json();
 
             if (!is_array($payload)) {
@@ -175,7 +179,7 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
 
             return ['hits' => [], 'total_hits' => 0];
         } finally {
-            if (config('app.debug')) {
+            if ($debugTiming) {
                 logger()->debug('Catalog search API timing', [
                     'source' => 'curseforge',
                     'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
@@ -275,13 +279,13 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
      */
     public function warmVersions(array $projectIds, Server $server, ProjectType $type): array
     {
+        $this->lastWarmVersionFailures = [];
         $params = $this->getVersionRequestParams($server, $type);
 
         if ($params === null) {
             return [];
         }
 
-        $this->lastWarmVersionFailures = [];
         $versionsByProjectId = [];
         $pending = [];
 
@@ -303,7 +307,9 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
             return $versionsByProjectId;
         }
 
-        $bulkStartedAt = microtime(true);
+        $bulkStartedAt = (bool) config('pelican-minecraft-modrinth.debug_timing', false)
+            ? microtime(true)
+            : 0.0;
         $bulkResponse = $this->getBulkMods(array_keys($pending));
 
         $this->logBulkVersionsTiming(
@@ -393,7 +399,8 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
         Server $server,
         ProjectType $type,
     ): LatestVersionLookupResult {
-        $startedAt = microtime(true);
+        $debugTiming = (bool) config('pelican-minecraft-modrinth.debug_timing', false);
+        $startedAt = $debugTiming ? microtime(true) : 0.0;
         $validRequests = array_values(array_filter(
             $requests,
             fn ($request) => $request instanceof LatestVersionLookupRequest,
@@ -425,17 +432,19 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
             }
         }
 
-        logger()->info('Mod manager timing', [
-            'stage' => 'curseforge_latest_lookup_batch',
-            'request_id' => request()->attributes->get('mmr_timing_request_id'),
-            'started_after_ms' => $this->getModManagerTimingElapsedMs($startedAt),
-            'finished_after_ms' => $this->getModManagerTimingElapsedMs(),
-            'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
-            'requested_project_count' => count($validRequests),
-            'resolved_project_count' => count($versionsByKey),
-            'unresolved_project_count' => count($unresolvedKeys),
-            'failed_project_count' => count($failuresByKey),
-        ]);
+        if ($debugTiming) {
+            logger()->info('Mod manager timing', [
+                'stage' => 'curseforge_latest_lookup_batch',
+                'request_id' => request()->attributes->get('mmr_timing_request_id'),
+                'started_after_ms' => $this->getModManagerTimingElapsedMs($startedAt),
+                'finished_after_ms' => $this->getModManagerTimingElapsedMs(),
+                'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+                'requested_project_count' => count($validRequests),
+                'resolved_project_count' => count($versionsByKey),
+                'unresolved_project_count' => count($unresolvedKeys),
+                'failed_project_count' => count($failuresByKey),
+            ]);
+        }
 
         return new LatestVersionLookupResult(
             versionsByKey: $versionsByKey,
@@ -512,7 +521,9 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
         $missingFileIds = array_values(array_diff($requiredFileIds, array_keys($filesById)));
 
         if ($missingFileIds !== []) {
-            $bulkFilesStartedAt = microtime(true);
+            $bulkFilesStartedAt = (bool) config('pelican-minecraft-modrinth.debug_timing', false)
+                ? microtime(true)
+                : 0.0;
             $bulkFilesResponse = $this->getBulkFiles($missingFileIds);
             $returnedFiles = is_array($bulkFilesResponse['data'] ?? null) ? $bulkFilesResponse['data'] : [];
 
@@ -573,6 +584,10 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
 
     protected function logBulkVersionsTiming(float $startedAt, int $requestedProjectCount, int $returnedProjectCount): void
     {
+        if (!(bool) config('pelican-minecraft-modrinth.debug_timing', false)) {
+            return;
+        }
+
         logger()->info('Mod manager timing', [
             'stage' => 'curseforge_versions_bulk_request',
             'request_id' => request()->attributes->get('mmr_timing_request_id'),
@@ -587,6 +602,10 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
 
     protected function logBulkFilesTiming(float $startedAt, int $requestedFileCount, int $returnedFileCount, int $requestCount): void
     {
+        if (!(bool) config('pelican-minecraft-modrinth.debug_timing', false)) {
+            return;
+        }
+
         logger()->info('Mod manager timing', [
             'stage' => 'curseforge_files_bulk_request',
             'request_id' => request()->attributes->get('mmr_timing_request_id'),
@@ -602,6 +621,10 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
 
     protected function getModManagerTimingElapsedMs(?float $timestamp = null): ?int
     {
+        if (!(bool) config('pelican-minecraft-modrinth.debug_timing', false)) {
+            return null;
+        }
+
         $startedAt = request()->attributes->get('mmr_timing_started_at');
 
         if (!is_float($startedAt)) {

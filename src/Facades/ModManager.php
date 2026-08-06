@@ -3,9 +3,9 @@
 namespace Kazaminosuke\ModManager\Facades;
 
 use App\Models\Server;
+use Illuminate\Support\Facades\Facade;
 use Kazaminosuke\ModManager\Enums\ProjectType;
 use Kazaminosuke\ModManager\Services\InstalledProjectService;
-use Illuminate\Support\Facades\Facade;
 
 /**
  * @method static ?string getMinecraftVersion(Server $server)

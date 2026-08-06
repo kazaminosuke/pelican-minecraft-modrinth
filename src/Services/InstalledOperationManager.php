@@ -3,14 +3,14 @@
 namespace Kazaminosuke\ModManager\Services;
 
 use App\Models\Server;
-use Kazaminosuke\ModManager\Enums\ProjectType;
-use Kazaminosuke\ModManager\Jobs\BulkUpdateInstalledProjects;
-use Kazaminosuke\ModManager\Jobs\ScanInstalledProjects;
-use Kazaminosuke\ModManager\Support\InstalledOperationState;
 use DateTimeImmutable;
 use Illuminate\Contracts\Bus\Dispatcher;
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
 use Illuminate\Contracts\Config\Repository as ConfigRepository;
+use Kazaminosuke\ModManager\Enums\ProjectType;
+use Kazaminosuke\ModManager\Jobs\BulkUpdateInstalledProjects;
+use Kazaminosuke\ModManager\Jobs\ScanInstalledProjects;
+use Kazaminosuke\ModManager\Support\InstalledOperationState;
 use Throwable;
 
 final class InstalledOperationManager
@@ -264,6 +264,7 @@ final class InstalledOperationManager
 
         return $serverId;
     }
+
     /**
      * @return array{dispatched: bool, reason: null|'already_active'|'sync_queue'|'dispatch_failed', state: ?InstalledOperationState}
      */

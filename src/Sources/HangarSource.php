@@ -3,19 +3,19 @@
 namespace Kazaminosuke\ModManager\Sources;
 
 use App\Models\Server;
-use Kazaminosuke\ModManager\Contracts\BatchLatestVersionSourceInterface;
-use Kazaminosuke\ModManager\Contracts\ProjectSourceInterface;
-use Kazaminosuke\ModManager\Enums\MinecraftLoader;
-use Kazaminosuke\ModManager\Enums\ProjectType;
-use Kazaminosuke\ModManager\Enums\ProjectSourceKey;
-use Kazaminosuke\ModManager\Support\CacheVersion;
-use Kazaminosuke\ModManager\Support\LatestVersionLookupRequest;
-use Kazaminosuke\ModManager\Support\LatestVersionLookupResult;
-use Kazaminosuke\ModManager\Support\MinecraftVersionResolver;
 use Exception;
 use Illuminate\Http\Client\Pool;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
+use Kazaminosuke\ModManager\Contracts\BatchLatestVersionSourceInterface;
+use Kazaminosuke\ModManager\Contracts\ProjectSourceInterface;
+use Kazaminosuke\ModManager\Enums\MinecraftLoader;
+use Kazaminosuke\ModManager\Enums\ProjectSourceKey;
+use Kazaminosuke\ModManager\Enums\ProjectType;
+use Kazaminosuke\ModManager\Support\CacheVersion;
+use Kazaminosuke\ModManager\Support\LatestVersionLookupRequest;
+use Kazaminosuke\ModManager\Support\LatestVersionLookupResult;
+use Kazaminosuke\ModManager\Support\MinecraftVersionResolver;
 use Throwable;
 
 class HangarSource implements BatchLatestVersionSourceInterface, ProjectSourceInterface
@@ -254,13 +254,16 @@ class HangarSource implements BatchLatestVersionSourceInterface, ProjectSourceIn
                     $versions[$request->key()] = $cached;
                 }
                 $cacheHits += count($projectRequests);
+
                 continue;
             }
 
             $pending[$projectId] = $cacheKey;
         }
 
-        $startedAt = microtime(true);
+        $startedAt = (bool) config('pelican-minecraft-modrinth.debug_timing', false)
+            ? microtime(true)
+            : 0.0;
         $successfulProjects = 0;
         $requestCount = 0;
 
@@ -273,6 +276,7 @@ class HangarSource implements BatchLatestVersionSourceInterface, ProjectSourceIn
                     foreach ($requestsByProject[$projectId] as $request) {
                         $failures[$request->key()] = $chunkFailures[$projectId];
                     }
+
                     continue;
                 }
 
@@ -280,6 +284,7 @@ class HangarSource implements BatchLatestVersionSourceInterface, ProjectSourceIn
                     foreach ($requestsByProject[$projectId] as $request) {
                         $unresolved[] = $request->key();
                     }
+
                     continue;
                 }
 
@@ -592,6 +597,10 @@ class HangarSource implements BatchLatestVersionSourceInterface, ProjectSourceIn
         int $cacheHitCount,
         int $failureCount,
     ): void {
+        if (!(bool) config('pelican-minecraft-modrinth.debug_timing', false)) {
+            return;
+        }
+
         logger()->info('Mod manager timing', [
             'stage' => 'hangar_versions_parallel_request',
             'request_id' => request()->attributes->get('mmr_timing_request_id'),
@@ -610,6 +619,10 @@ class HangarSource implements BatchLatestVersionSourceInterface, ProjectSourceIn
 
     protected function getModManagerTimingElapsedMs(?float $timestamp = null): ?int
     {
+        if (!(bool) config('pelican-minecraft-modrinth.debug_timing', false)) {
+            return null;
+        }
+
         $requestStartedAt = request()->attributes->get('mmr_timing_started_at');
 
         if (!is_float($requestStartedAt)) {

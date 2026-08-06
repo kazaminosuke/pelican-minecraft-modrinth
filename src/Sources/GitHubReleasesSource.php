@@ -3,16 +3,16 @@
 namespace Kazaminosuke\ModManager\Sources;
 
 use App\Models\Server;
-use Kazaminosuke\ModManager\Contracts\BatchLatestVersionSourceInterface;
-use Kazaminosuke\ModManager\Contracts\ProjectSourceInterface;
-use Kazaminosuke\ModManager\Enums\ProjectType;
-use Kazaminosuke\ModManager\Enums\ProjectSourceKey;
-use Kazaminosuke\ModManager\Support\LatestVersionLookupRequest;
-use Kazaminosuke\ModManager\Support\LatestVersionLookupResult;
 use Exception;
 use Illuminate\Http\Client\Pool;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
+use Kazaminosuke\ModManager\Contracts\BatchLatestVersionSourceInterface;
+use Kazaminosuke\ModManager\Contracts\ProjectSourceInterface;
+use Kazaminosuke\ModManager\Enums\ProjectSourceKey;
+use Kazaminosuke\ModManager\Enums\ProjectType;
+use Kazaminosuke\ModManager\Support\LatestVersionLookupRequest;
+use Kazaminosuke\ModManager\Support\LatestVersionLookupResult;
 use Throwable;
 
 /**
@@ -177,6 +177,7 @@ class GitHubReleasesSource implements BatchLatestVersionSourceInterface, Project
 
             if ($parsed === null) {
                 $unresolved[] = $request->key();
+
                 continue;
             }
 
@@ -196,6 +197,7 @@ class GitHubReleasesSource implements BatchLatestVersionSourceInterface, Project
                 foreach ($requestsByRepository[$repositoryKey] as $request) {
                     $versions[$request->key()] = $cached;
                 }
+
                 continue;
             }
 
@@ -324,7 +326,9 @@ class GitHubReleasesSource implements BatchLatestVersionSourceInterface, Project
      */
     protected function lookupLatestVersionsWithGraphQl(array $pending, array $requestsByRepository): LatestVersionLookupResult
     {
-        $startedAt = microtime(true);
+        $startedAt = (bool) config('pelican-minecraft-modrinth.debug_timing', false)
+            ? microtime(true)
+            : 0.0;
         $versions = [];
         $unresolved = [];
         $failures = [];
@@ -362,6 +366,7 @@ class GitHubReleasesSource implements BatchLatestVersionSourceInterface, Project
                 foreach (array_keys($chunk) as $repositoryKey) {
                     $this->recordFailure($failures, $requestsByRepository[$repositoryKey], $exception->getMessage());
                 }
+
                 continue;
             }
 
@@ -370,18 +375,21 @@ class GitHubReleasesSource implements BatchLatestVersionSourceInterface, Project
             foreach ($aliases as $alias => $repositoryKey) {
                 if (isset($errorsByAlias[$alias])) {
                     $this->recordFailure($failures, $requestsByRepository[$repositoryKey], $errorsByAlias[$alias]);
+
                     continue;
                 }
 
                 $repository = $response['data'][$alias] ?? null;
                 if (!is_array($repository)) {
                     $this->recordUnresolved($unresolved, $requestsByRepository[$repositoryKey]);
+
                     continue;
                 }
 
                 $version = $this->latestNormalizedGraphQlVersion($repository);
                 if ($version === null) {
                     $this->recordUnresolved($unresolved, $requestsByRepository[$repositoryKey]);
+
                     continue;
                 }
 
@@ -411,13 +419,16 @@ class GitHubReleasesSource implements BatchLatestVersionSourceInterface, Project
 
         );
     }
+
     /**
      * @param array<string, array{owner: string, name: string, cache_key: string}> $pending
      * @param array<string, array<int, LatestVersionLookupRequest>> $requestsByRepository
      */
     protected function lookupLatestVersionsWithRestPool(array $pending, array $requestsByRepository): LatestVersionLookupResult
     {
-        $startedAt = microtime(true);
+        $startedAt = (bool) config('pelican-minecraft-modrinth.debug_timing', false)
+            ? microtime(true)
+            : 0.0;
         $versions = [];
         $unresolved = [];
         $failures = [];
@@ -456,6 +467,7 @@ class GitHubReleasesSource implements BatchLatestVersionSourceInterface, Project
                 foreach (array_keys($chunk) as $repositoryKey) {
                     $this->recordFailure($failures, $requestsByRepository[$repositoryKey], $exception->getMessage());
                 }
+
                 continue;
             }
 
@@ -476,11 +488,13 @@ class GitHubReleasesSource implements BatchLatestVersionSourceInterface, Project
                 } catch (Throwable $exception) {
                     report($exception);
                     $this->recordFailure($failures, $requestsByRepository[$repositoryKey], $exception->getMessage());
+
                     continue;
                 }
 
                 if ($version === null) {
                     $this->recordUnresolved($unresolved, $requestsByRepository[$repositoryKey]);
+
                     continue;
                 }
 
@@ -510,6 +524,7 @@ class GitHubReleasesSource implements BatchLatestVersionSourceInterface, Project
 
         );
     }
+
     /**
      * @param array<string, array{owner: string, name: string, cache_key: string}> $repositories
      * @return array{0: string, 1: array<string, string>, 2: array<string, string>}
@@ -581,9 +596,9 @@ class GitHubReleasesSource implements BatchLatestVersionSourceInterface, Project
             }
         }
 
-
         return $messages;
     }
+
     /**
      * @param array<string, mixed> $repository
      * @return array<string, mixed>|null
@@ -671,6 +686,7 @@ class GitHubReleasesSource implements BatchLatestVersionSourceInterface, Project
 
         }
     }
+
     protected function logLatestVersionsTiming(
         string $stage,
         string $endpoint,
@@ -680,6 +696,10 @@ class GitHubReleasesSource implements BatchLatestVersionSourceInterface, Project
         int $requestCount,
         int $failureCount,
     ): void {
+        if (!(bool) config('pelican-minecraft-modrinth.debug_timing', false)) {
+            return;
+        }
+
         logger()->info('Mod manager timing', [
             'stage' => $stage,
             'request_id' => request()->attributes->get('mmr_timing_request_id'),
@@ -697,6 +717,10 @@ class GitHubReleasesSource implements BatchLatestVersionSourceInterface, Project
 
     protected function getModManagerTimingElapsedMs(?float $timestamp = null): ?int
     {
+        if (!(bool) config('pelican-minecraft-modrinth.debug_timing', false)) {
+            return null;
+        }
+
         $requestStartedAt = request()->attributes->get('mmr_timing_started_at');
 
         if (!is_float($requestStartedAt)) {

@@ -1,0 +1,37 @@
+<?php
+
+namespace Kazaminosuke\ModManager\Tests\Unit\Providers;
+
+use Illuminate\Foundation\Application;
+use Kazaminosuke\ModManager\Providers\ModManagerServiceProvider;
+use Kazaminosuke\ModManager\Services\InstalledOperationManager;
+use Kazaminosuke\ModManager\Services\InstalledProjectService;
+use Kazaminosuke\ModManager\Services\VersionLookupCoordinator;
+use Kazaminosuke\ModManager\Sources\CurseForgeSource;
+use Kazaminosuke\ModManager\Sources\GitHubReleasesSource;
+use Kazaminosuke\ModManager\Sources\HangarSource;
+use Kazaminosuke\ModManager\Sources\ModrinthSource;
+use Kazaminosuke\ModManager\Support\ProjectSourceRegistry;
+use PHPUnit\Framework\TestCase;
+
+class ModManagerServiceProviderTest extends TestCase
+{
+    public function test_expensive_services_are_registered_as_singletons(): void
+    {
+        $application = new Application();
+        (new ModManagerServiceProvider($application))->register();
+
+        foreach ([
+            ProjectSourceRegistry::class,
+            ModrinthSource::class,
+            CurseForgeSource::class,
+            HangarSource::class,
+            GitHubReleasesSource::class,
+            VersionLookupCoordinator::class,
+            InstalledProjectService::class,
+            InstalledOperationManager::class,
+        ] as $service) {
+            self::assertTrue($application->isShared($service), "{$service} was not registered as a singleton.");
+        }
+    }
+}
