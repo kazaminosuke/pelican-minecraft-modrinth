@@ -4,18 +4,44 @@ namespace Kazaminosuke\ModManager\Sources;
 
 use App\Models\Server;
 use Exception;
+use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Support\Facades\Http;
 use Kazaminosuke\ModManager\Contracts\BatchLatestVersionSourceInterface;
 use Kazaminosuke\ModManager\Contracts\ProjectSourceInterface;
+use Kazaminosuke\ModManager\Contracts\SourceFetchAuthoritativeInterface;
+use Kazaminosuke\ModManager\Contracts\SourceFetchHandlerInterface;
 use Kazaminosuke\ModManager\Enums\ProjectSourceKey;
 use Kazaminosuke\ModManager\Enums\ProjectType;
+use Kazaminosuke\ModManager\Support\CacheProfile;
 use Kazaminosuke\ModManager\Support\LatestVersionLookupRequest;
 use Kazaminosuke\ModManager\Support\LatestVersionLookupResult;
 use Kazaminosuke\ModManager\Support\MinecraftVersionResolver;
+use Kazaminosuke\ModManager\Support\SourceCache;
+use Kazaminosuke\ModManager\Support\SourceFetchSpec;
 
-class ModrinthSource implements BatchLatestVersionSourceInterface, ProjectSourceInterface
+class ModrinthSource implements BatchLatestVersionSourceInterface, ProjectSourceInterface, SourceFetchAuthoritativeInterface, SourceFetchHandlerInterface
 {
     protected const BASE_URL = 'https://api.modrinth.com/v2';
+
+    private const OPERATION_HASH_MATCH = 'hash_match';
+
+    private const OPERATION_LATEST = 'latest';
+
+    private const OPERATION_PROJECT = 'project';
+
+    private const OPERATION_PROJECTS = 'projects';
+
+    private const OPERATION_SEARCH = 'search';
+
+    private const OPERATION_TEAM = 'team';
+
+    private const OPERATION_USER = 'user';
+
+    private const OPERATION_VERSIONS = 'versions';
+
+    public function __construct(
+        private readonly SourceCache $sourceCache,
+    ) {}
 
     public function getKey(): ProjectSourceKey
     {
@@ -62,7 +88,40 @@ class ModrinthSource implements BatchLatestVersionSourceInterface, ProjectSource
         return true;
     }
 
-    /** @return array{hits: array<int, array<string, mixed>>, total_hits: int} */
+    public function fetchSourceData(SourceFetchSpec $spec, float $timeoutSeconds): mixed
+    {
+        if ($spec->sourceKey !== $this->getKey()->value) {
+            throw new Exception("Invalid source key [{$spec->sourceKey}] for Modrinth.");
+        }
+
+        return match ($spec->operation) {
+            self::OPERATION_HASH_MATCH => $this->requestVersionsByHash($spec, $timeoutSeconds),
+            self::OPERATION_LATEST => $this->requestLatestVersions($spec, $timeoutSeconds),
+            self::OPERATION_PROJECT => $this->requestProject($spec, $timeoutSeconds),
+            self::OPERATION_PROJECTS => $this->requestProjects($spec, $timeoutSeconds),
+            self::OPERATION_SEARCH => $this->requestSearch($spec, $timeoutSeconds),
+            self::OPERATION_TEAM => $this->requestTeamPrimaryUsername($spec, $timeoutSeconds),
+            self::OPERATION_USER => $this->requestUsername($spec, $timeoutSeconds),
+            self::OPERATION_VERSIONS => $this->requestVersions($spec, $timeoutSeconds),
+            default => throw new Exception("Unsupported Modrinth cache operation [{$spec->operation}]."),
+        };
+    }
+
+    public function emptySourceData(SourceFetchSpec $spec): mixed
+    {
+        return match ($spec->operation) {
+            self::OPERATION_LATEST => $this->emptyLatestVersionResult($spec),
+            self::OPERATION_PROJECT, self::OPERATION_TEAM, self::OPERATION_USER => null,
+            self::OPERATION_SEARCH => ['hits' => [], 'total_hits' => 0],
+            self::OPERATION_HASH_MATCH, self::OPERATION_PROJECTS, self::OPERATION_VERSIONS => [],
+            default => [],
+        };
+    }
+
+    /**
+     * @param array<string, mixed> $filters
+     * @return array{hits: array<int, array<string, mixed>>, total_hits: int}
+     */
     public function search(Server $server, ProjectType $type, int $page = 1, ?string $search = null, array $filters = []): array
     {
         $minecraftLoader = $type->getLoaderSlug($server);
@@ -103,60 +162,18 @@ class ModrinthSource implements BatchLatestVersionSourceInterface, ProjectSource
             $data['query'] = $search;
         }
 
-        $cacheKey = 'modrinth_search:v2:'.md5(json_encode($data));
-        $cached = cache()->get($cacheKey);
-        if (is_array($cached)) {
-            return $cached;
-        }
+        $result = $this->sourceCache->swr(
+            $this->spec(self::OPERATION_SEARCH, ['query' => $data]),
+            CacheProfile::Search,
+        );
 
-        $debugTiming = (bool) config('pelican-minecraft-modrinth.debug_timing', false);
-        $startedAt = $debugTiming ? microtime(true) : 0.0;
-        $responseBytes = null;
-
-        try {
-            $response = Http::asJson()
-                ->timeout(2)
-                ->connectTimeout(1)
-                ->throw()
-                ->get(self::BASE_URL.'/search', $data);
-            if ($debugTiming) {
-                $responseBytes = strlen($response->body());
-            }
-
-            $payload = $response->json();
-
-            if (!is_array($payload)) {
-                throw new Exception('Invalid Modrinth search response');
-            }
-
-            $result = [
-                'hits' => collect($payload['hits'] ?? [])
-                    ->filter(fn ($project) => is_array($project))
-                    ->map(fn (array $project) => $this->normalizeSearchProject($project))
-                    ->values()
-                    ->all(),
-                'total_hits' => (int) ($payload['total_hits'] ?? 0),
-            ];
-
-            cache()->put($cacheKey, $result, now()->addMinutes(30));
-
-            return $result;
-        } catch (Exception $exception) {
-            report($exception);
-
-            return ['hits' => [], 'total_hits' => 0];
-        } finally {
-            if ($debugTiming) {
-                logger()->debug('Catalog search API timing', [
-                    'source' => 'modrinth',
-                    'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
-                    'response_bytes' => $responseBytes,
-                ]);
-            }
-        }
+        return is_array($result) ? $result : ['hits' => [], 'total_hits' => 0];
     }
 
-    /** @param array<string, mixed> $project */
+    /**
+     * @param array<string, mixed> $project
+     * @return array<string, mixed>
+     */
     protected function normalizeSearchProject(array $project): array
     {
         return [
@@ -192,36 +209,7 @@ class ModrinthSource implements BatchLatestVersionSourceInterface, ProjectSource
             return [];
         }
 
-        $idsParam = '["'.implode('","', $pageIds).'"]';
-        $key = 'modrinth_bulk:'.md5($idsParam);
-
-        $modrinthProjects = cache()->remember($key, now()->addMinutes(30), function () use ($idsParam) {
-            try {
-                return Http::asJson()
-                    ->timeout(10)
-                    ->connectTimeout(5)
-                    ->throw()
-                    ->get(self::BASE_URL.'/projects', [
-                        'ids' => $idsParam,
-                    ])
-                    ->json();
-            } catch (Exception $exception) {
-                report($exception);
-
-                return [];
-            }
-        });
-
-        if (!is_array($modrinthProjects)) {
-            $modrinthProjects = [];
-        }
-
-        $modrinthMap = [];
-        foreach ($modrinthProjects as $project) {
-            if (isset($project['id'])) {
-                $modrinthMap[$project['id']] = $project;
-            }
-        }
+        $modrinthMap = $this->getProjectsByIds($pageIds);
 
         $results = [];
         foreach ($pageIds as $projectId) {
@@ -239,10 +227,7 @@ class ModrinthSource implements BatchLatestVersionSourceInterface, ProjectSource
 
             if (isset($modrinthMap[$projectId])) {
                 $project = $modrinthMap[$projectId];
-                $project['project_id'] = $project['id'];
-                if (isset($project['updated']) && !isset($project['date_modified'])) {
-                    $project['date_modified'] = $project['updated'];
-                }
+                $project['project_id'] = (string) ($project['project_id'] ?? $projectId);
                 if (isset($installedMod['author']) && !isset($project['author'])) {
                     $project['author'] = $installedMod['author'];
                 }
@@ -276,35 +261,16 @@ class ModrinthSource implements BatchLatestVersionSourceInterface, ProjectSource
         }
 
         $minecraftVersion = MinecraftVersionResolver::resolve($server);
+        $versions = $this->sourceCache->swr(
+            $this->spec(self::OPERATION_VERSIONS, [
+                'project_id' => $projectId,
+                'game_version' => $minecraftVersion,
+                'loader' => $minecraftLoader,
+            ]),
+            CacheProfile::InstalledLatest,
+        );
 
-        $data = [
-            'game_versions' => "[\"$minecraftVersion\"]",
-            'loaders' => "[\"$minecraftLoader\"]",
-            'include_changelog' => 'false',
-        ];
-
-        return cache()->remember("modrinth_versions:$projectId:$minecraftVersion:$minecraftLoader", now()->addMinutes(30), function () use ($projectId, $data) {
-            try {
-                $versions = Http::asJson()
-                    ->timeout(5)
-                    ->connectTimeout(5)
-                    ->throw()
-                    ->get(self::BASE_URL."/project/$projectId/version", $data)
-                    ->json();
-
-                if (!empty($versions) && is_array($versions) && isset($versions[0]['date_published'])) {
-                    usort($versions, function ($a, $b) {
-                        return strcmp($b['date_published'] ?? '', $a['date_published'] ?? '');
-                    });
-                }
-
-                return $versions;
-            } catch (Exception $exception) {
-                report($exception);
-
-                return [];
-            }
-        });
+        return is_array($versions) ? $versions : [];
     }
 
     /**
@@ -332,95 +298,44 @@ class ModrinthSource implements BatchLatestVersionSourceInterface, ProjectSource
         }
 
         $minecraftVersion = MinecraftVersionResolver::resolve($server);
-        $versionsByKey = [];
-        $unresolvedKeys = [];
-        $failuresByKey = [];
-        $pendingByHash = [];
-        $cacheKeysByHash = [];
+        $hashesByKey = [];
+        $unresolvedRequests = [];
 
         foreach ($validRequests as $request) {
             $sha512 = $request->hash('sha512');
 
             if ($sha512 === null) {
-                $unresolvedKeys[] = $request->key();
+                $unresolvedRequests[] = $request->key();
 
                 continue;
             }
 
-            $cacheKey = 'modrinth_latest:'.md5($sha512.'|'.$minecraftVersion.'|'.$minecraftLoader);
-            $cached = cache()->get($cacheKey);
-
-            if (is_array($cached) && $cached !== []) {
-                $versionsByKey[$request->key()] = $cached;
-
-                continue;
-            }
-
-            $pendingByHash[$sha512][] = $request;
-            $cacheKeysByHash[$sha512] = $cacheKey;
+            $hashesByKey[$request->key()] = $sha512;
         }
 
-        $requestStartedAt = null;
-        $returnedHashCount = 0;
+        ksort($hashesByKey);
 
-        if ($pendingByHash !== []) {
-            $requestStartedAt = $debugTiming ? microtime(true) : 0.0;
+        if ($hashesByKey === []) {
+            $result = new LatestVersionLookupResult(unresolvedKeys: $unresolvedRequests);
+        } else {
+            $cachedResult = $this->sourceCache->swr(
+                $this->spec(self::OPERATION_LATEST, [
+                    'hashes_by_key' => $hashesByKey,
+                    'game_version' => $minecraftVersion,
+                    'loader' => $minecraftLoader,
+                ]),
+                CacheProfile::InstalledLatest,
+            );
+            $result = $cachedResult instanceof LatestVersionLookupResult
+                ? $cachedResult
+                : $this->emptyLatestVersionResult($this->spec(self::OPERATION_LATEST, [
+                    'hashes_by_key' => $hashesByKey,
+                    'game_version' => $minecraftVersion,
+                    'loader' => $minecraftLoader,
+                ]));
 
-            try {
-                $payload = Http::asJson()
-                    ->timeout(10)
-                    ->connectTimeout(5)
-                    ->throw()
-                    ->post(self::BASE_URL.'/version_files/update', [
-                        'hashes' => array_keys($pendingByHash),
-                        'algorithm' => 'sha512',
-                        'loaders' => [$minecraftLoader],
-                        'game_versions' => [$minecraftVersion],
-                    ])
-                    ->json();
-
-                if (!is_array($payload)) {
-                    throw new Exception('Invalid Modrinth bulk latest-version response.');
-                }
-
-                $returnedHashCount = count($payload);
-
-                foreach ($pendingByHash as $hash => $hashRequests) {
-                    $version = $payload[$hash] ?? null;
-
-                    if (is_array($version) && $version !== []) {
-                        cache()->put($cacheKeysByHash[$hash], $version, now()->addMinutes(30));
-
-                        foreach ($hashRequests as $request) {
-                            $versionsByKey[$request->key()] = $version;
-                        }
-                    } else {
-                        foreach ($hashRequests as $request) {
-                            $unresolvedKeys[] = $request->key();
-                        }
-                    }
-                }
-            } catch (Exception $exception) {
-                report($exception);
-
-                foreach ($pendingByHash as $hashRequests) {
-                    foreach ($hashRequests as $request) {
-                        $failuresByKey[$request->key()] = $exception->getMessage();
-                    }
-                }
-            } finally {
-                if ($debugTiming) {
-                    logger()->info('Mod manager timing', [
-                        'stage' => 'modrinth_versions_bulk_request',
-                        'request_id' => request()->attributes->get('mmr_timing_request_id'),
-                        'endpoint' => '/version_files/update',
-                        'started_after_ms' => $this->getModManagerTimingElapsedMs($requestStartedAt),
-                        'finished_after_ms' => $this->getModManagerTimingElapsedMs(),
-                        'duration_ms' => (int) round((microtime(true) - $requestStartedAt) * 1000),
-                        'requested_hash_count' => count($pendingByHash),
-                        'returned_hash_count' => $returnedHashCount,
-                    ]);
-                }
+            if ($unresolvedRequests !== []) {
+                $result = $result->merge(new LatestVersionLookupResult(unresolvedKeys: $unresolvedRequests));
             }
         }
 
@@ -432,17 +347,13 @@ class ModrinthSource implements BatchLatestVersionSourceInterface, ProjectSource
                 'finished_after_ms' => $this->getModManagerTimingElapsedMs(),
                 'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
                 'requested_project_count' => count($validRequests),
-                'resolved_project_count' => count($versionsByKey),
-                'unresolved_project_count' => count($unresolvedKeys),
-                'failed_project_count' => count($failuresByKey),
+                'resolved_project_count' => count($result->versions()),
+                'unresolved_project_count' => count($result->unresolvedKeys()),
+                'failed_project_count' => count($result->failures()),
             ]);
         }
 
-        return new LatestVersionLookupResult(
-            versionsByKey: $versionsByKey,
-            unresolvedKeys: $unresolvedKeys,
-            failuresByKey: $failuresByKey,
-        );
+        return $result;
     }
 
     /**
@@ -451,29 +362,32 @@ class ModrinthSource implements BatchLatestVersionSourceInterface, ProjectSource
      */
     public function findVersionsByHash(array $hashesByFilename): array
     {
+        return $this->findVersionsByHashUsingCache($hashesByFilename, authoritative: false);
+    }
+
+    public function findVersionsByHashAuthoritatively(array $hashesByFilename): array
+    {
+        return $this->findVersionsByHashUsingCache($hashesByFilename, authoritative: true);
+    }
+
+    /**
+     * @param array<string, string> $hashesByFilename
+     * @return array<string, mixed>
+     */
+    private function findVersionsByHashUsingCache(array $hashesByFilename, bool $authoritative): array
+    {
         if (empty($hashesByFilename)) {
             return [];
         }
 
-        $hashes = array_values($hashesByFilename);
+        $hashes = array_values(array_unique($hashesByFilename));
+        sort($hashes);
+        $spec = $this->spec(self::OPERATION_HASH_MATCH, ['hashes' => $hashes]);
+        $result = $authoritative
+            ? $this->sourceCache->swrRequired($spec, CacheProfile::HashMatch)
+            : $this->sourceCache->swr($spec, CacheProfile::HashMatch);
 
-        try {
-            $result = Http::asJson()
-                ->timeout(10)
-                ->connectTimeout(5)
-                ->throw()
-                ->post(self::BASE_URL.'/version_files', [
-                    'hashes' => $hashes,
-                    'algorithm' => 'sha512',
-                ])
-                ->json();
-
-            return is_array($result) ? $result : [];
-        } catch (Exception $exception) {
-            report($exception);
-
-            return [];
-        }
+        return is_array($result) ? $result : [];
     }
 
     /**
@@ -484,71 +398,43 @@ class ModrinthSource implements BatchLatestVersionSourceInterface, ProjectSource
      */
     public function getProjectsByIds(array $projectIds): array
     {
+        return $this->getProjectsByIdsUsingCache($projectIds, authoritative: false);
+    }
+
+    public function getProjectsByIdsAuthoritatively(array $projectIds): array
+    {
+        return $this->getProjectsByIdsUsingCache($projectIds, authoritative: true);
+    }
+
+    /**
+     * @param array<int, string> $projectIds
+     * @return array<string, mixed>
+     */
+    private function getProjectsByIdsUsingCache(array $projectIds, bool $authoritative): array
+    {
         if (empty($projectIds)) {
             return [];
         }
 
         $projectIds = array_values(array_unique($projectIds));
-        $idsParam = '["'.implode('","', $projectIds).'"]';
+        sort($projectIds);
+        $spec = $this->spec(self::OPERATION_PROJECTS, ['project_ids' => $projectIds]);
+        $projects = $authoritative
+            ? $this->sourceCache->swrRequired($spec, CacheProfile::ProjectMetadata)
+            : $this->sourceCache->swr($spec, CacheProfile::ProjectMetadata);
 
-        try {
-            $projects = Http::asJson()
-                ->timeout(10)
-                ->connectTimeout(5)
-                ->throw()
-                ->get(self::BASE_URL.'/projects', [
-                    'ids' => $idsParam,
-                ])
-                ->json();
-
-            if (!is_array($projects)) {
-                return [];
-            }
-
-            $map = [];
-            foreach ($projects as $project) {
-                if (isset($project['id'])) {
-                    $map[$project['id']] = [
-                        'project_id' => (string) $project['id'],
-                        'slug' => $project['slug'] ?? '',
-                        'title' => $project['title'] ?? '',
-                        'description' => $project['description'] ?? '',
-                        'icon_url' => $project['icon_url'] ?? null,
-                        'author' => null,
-                        'downloads' => (int) ($project['downloads'] ?? 0),
-                        'date_modified' => $project['updated'] ?? null,
-                        'project_type' => $project['project_type'] ?? '',
-                    ];
-                }
-            }
-
-            return $map;
-        } catch (Exception $exception) {
-            report($exception);
-
-            throw new Exception('Modrinth projects lookup failed', previous: $exception);
-        }
+        return is_array($projects) ? $projects : [];
     }
 
     /** @return array<string, mixed>|null */
     public function getProject(string $projectId): ?array
     {
-        return cache()->remember("modrinth_project:$projectId", now()->addMinutes(30), function () use ($projectId) {
-            try {
-                $project = Http::asJson()
-                    ->timeout(5)
-                    ->connectTimeout(5)
-                    ->throw()
-                    ->get(self::BASE_URL."/project/$projectId")
-                    ->json();
+        $project = $this->sourceCache->swr(
+            $this->spec(self::OPERATION_PROJECT, ['project_id' => $projectId]),
+            CacheProfile::ProjectMetadata,
+        );
 
-                return is_array($project) ? $project : null;
-            } catch (Exception $exception) {
-                report($exception);
-
-                return null;
-            }
-        });
+        return is_array($project) ? $project : null;
     }
 
     /** @return array<string, mixed>|null */
@@ -557,6 +443,10 @@ class ModrinthSource implements BatchLatestVersionSourceInterface, ProjectSource
         return $this->getProject($identifier);
     }
 
+    /**
+     * @param array<string, mixed>|null $project
+     * @param array<string, mixed> $versionData
+     */
     public function resolveAuthor(?array $project, array $versionData): ?string
     {
         if (is_string($project['author'] ?? null) && $project['author'] !== '') {
@@ -579,59 +469,397 @@ class ModrinthSource implements BatchLatestVersionSourceInterface, ProjectSource
 
     protected function fetchTeamPrimaryUsername(string $teamId): ?string
     {
-        $cacheKey = 'modrinth_team_primary_user:'.$teamId;
+        $username = $this->sourceCache->swr(
+            $this->spec(self::OPERATION_TEAM, ['team_id' => $teamId]),
+            CacheProfile::Identity,
+        );
 
-        return cache()->remember($cacheKey, now()->addMinutes(30), function () use ($teamId) {
-            try {
-                $members = Http::asJson()
-                    ->timeout(10)
-                    ->connectTimeout(5)
-                    ->throw()
-                    ->get(self::BASE_URL."/team/{$teamId}/members")
-                    ->json();
-
-                if (!is_array($members) || empty($members)) {
-                    return null;
-                }
-
-                foreach ($members as $member) {
-                    $username = $member['user']['username'] ?? null;
-                    if (is_string($username) && $username !== '') {
-                        return $username;
-                    }
-                }
-
-                return null;
-            } catch (Exception $exception) {
-                report($exception);
-
-                return null;
-            }
-        });
+        return is_string($username) && $username !== '' ? $username : null;
     }
 
     protected function fetchUsernameByUserId(string $userId): ?string
     {
-        $cacheKey = 'modrinth_user_username:'.$userId;
+        $username = $this->sourceCache->swr(
+            $this->spec(self::OPERATION_USER, ['user_id' => $userId]),
+            CacheProfile::Identity,
+        );
 
-        return cache()->remember($cacheKey, now()->addMinutes(30), function () use ($userId) {
-            try {
-                $user = Http::asJson()
-                    ->timeout(10)
-                    ->connectTimeout(5)
-                    ->throw()
-                    ->get(self::BASE_URL."/user/{$userId}")
-                    ->json();
+        return is_string($username) && $username !== '' ? $username : null;
+    }
 
-                $username = $user['username'] ?? null;
+    /**
+     * @return array{hits: array<int, array<string, mixed>>, total_hits: int}
+     *
+     * @throws Exception
+     */
+    private function requestSearch(SourceFetchSpec $spec, float $timeoutSeconds): array
+    {
+        $query = $spec->arguments['query'] ?? null;
+        if (!is_array($query)) {
+            throw new Exception('Invalid Modrinth search arguments.');
+        }
 
-                return is_string($username) && $username !== '' ? $username : null;
-            } catch (Exception $exception) {
-                report($exception);
+        $debugTiming = (bool) config('pelican-minecraft-modrinth.debug_timing', false);
+        $startedAt = microtime(true);
+        $responseBytes = null;
 
-                return null;
+        try {
+            $response = $this->http($timeoutSeconds)
+                ->throw()
+                ->get(self::BASE_URL.'/search', $query);
+            if ($debugTiming) {
+                $responseBytes = strlen($response->body());
             }
-        });
+
+            $payload = $response->json();
+            if (!is_array($payload)) {
+                throw new Exception('Invalid Modrinth search response.');
+            }
+
+            $hits = $payload['hits'] ?? [];
+            if (!is_array($hits)) {
+                throw new Exception('Invalid Modrinth search hits response.');
+            }
+
+            $normalizedHits = [];
+            foreach ($hits as $project) {
+                if (is_array($project)) {
+                    $normalizedHits[] = $this->normalizeSearchProject($project);
+                }
+            }
+
+            return [
+                'hits' => $normalizedHits,
+                'total_hits' => (int) ($payload['total_hits'] ?? 0),
+            ];
+        } finally {
+            if ($debugTiming) {
+                logger()->debug('Catalog search API timing', [
+                    'source' => 'modrinth',
+                    'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+                    'response_bytes' => $responseBytes,
+                ]);
+            }
+        }
+    }
+
+    /**
+     * @return array<int, mixed>
+     *
+     * @throws Exception
+     */
+    private function requestVersions(SourceFetchSpec $spec, float $timeoutSeconds): array
+    {
+        $projectId = $this->stringArgument($spec, 'project_id');
+        $minecraftVersion = $this->stringArgument($spec, 'game_version');
+        $minecraftLoader = $this->stringArgument($spec, 'loader');
+        $versions = $this->http($timeoutSeconds)
+            ->throw()
+            ->get(self::BASE_URL."/project/$projectId/version", [
+                'game_versions' => json_encode([$minecraftVersion], JSON_THROW_ON_ERROR),
+                'loaders' => json_encode([$minecraftLoader], JSON_THROW_ON_ERROR),
+                'include_changelog' => 'false',
+            ])
+            ->json();
+
+        if (!is_array($versions)) {
+            throw new Exception('Invalid Modrinth versions response.');
+        }
+
+        if (isset($versions[0]['date_published'])) {
+            usort($versions, function ($a, $b) {
+                return strcmp($b['date_published'] ?? '', $a['date_published'] ?? '');
+            });
+        }
+
+        return $versions;
+    }
+
+    /**
+     * @return array<string, array<string, mixed>>
+     *
+     * @throws Exception
+     */
+    private function requestProjects(SourceFetchSpec $spec, float $timeoutSeconds): array
+    {
+        $projectIds = $this->stringListArgument($spec, 'project_ids');
+        $projects = $this->http($timeoutSeconds)
+            ->throw()
+            ->get(self::BASE_URL.'/projects', [
+                'ids' => json_encode($projectIds, JSON_THROW_ON_ERROR),
+            ])
+            ->json();
+
+        if (!is_array($projects)) {
+            throw new Exception('Invalid Modrinth projects response.');
+        }
+
+        $map = [];
+        foreach ($projects as $project) {
+            if (!is_array($project) || !is_string($project['id'] ?? null) || $project['id'] === '') {
+                continue;
+            }
+
+            $map[$project['id']] = [
+                'project_id' => $project['id'],
+                'slug' => $project['slug'] ?? '',
+                'title' => $project['title'] ?? '',
+                'description' => $project['description'] ?? '',
+                'icon_url' => $project['icon_url'] ?? null,
+                'author' => null,
+                'downloads' => (int) ($project['downloads'] ?? 0),
+                'date_modified' => $project['updated'] ?? null,
+                'project_type' => $project['project_type'] ?? '',
+            ];
+        }
+
+        return $map;
+    }
+
+    /**
+     * @return array<string, mixed>
+     *
+     * @throws Exception
+     */
+    private function requestProject(SourceFetchSpec $spec, float $timeoutSeconds): array
+    {
+        $projectId = $this->stringArgument($spec, 'project_id');
+        $project = $this->http($timeoutSeconds)
+            ->throw()
+            ->get(self::BASE_URL."/project/$projectId")
+            ->json();
+
+        if (!is_array($project)) {
+            throw new Exception('Invalid Modrinth project response.');
+        }
+
+        return $project;
+    }
+
+    /**
+     * @return array<string, mixed>
+     *
+     * @throws Exception
+     */
+    private function requestVersionsByHash(SourceFetchSpec $spec, float $timeoutSeconds): array
+    {
+        $hashes = $this->stringListArgument($spec, 'hashes');
+        $result = $this->http($timeoutSeconds)
+            ->throw()
+            ->post(self::BASE_URL.'/version_files', [
+                'hashes' => $hashes,
+                'algorithm' => 'sha512',
+            ])
+            ->json();
+
+        if (!is_array($result)) {
+            throw new Exception('Invalid Modrinth hash lookup response.');
+        }
+
+        return $result;
+    }
+
+    /**
+     * @throws Exception
+     */
+    private function requestLatestVersions(SourceFetchSpec $spec, float $timeoutSeconds): LatestVersionLookupResult
+    {
+        $hashesByKey = $this->stringMapArgument($spec, 'hashes_by_key');
+        $minecraftVersion = $this->stringArgument($spec, 'game_version');
+        $minecraftLoader = $this->stringArgument($spec, 'loader');
+        $requestsByHash = [];
+
+        foreach ($hashesByKey as $key => $hash) {
+            $requestsByHash[$hash][] = $key;
+        }
+
+        $debugTiming = (bool) config('pelican-minecraft-modrinth.debug_timing', false);
+        $startedAt = microtime(true);
+        $returnedHashCount = 0;
+
+        try {
+            $payload = $this->http($timeoutSeconds)
+                ->throw()
+                ->post(self::BASE_URL.'/version_files/update', [
+                    'hashes' => array_keys($requestsByHash),
+                    'algorithm' => 'sha512',
+                    'loaders' => [$minecraftLoader],
+                    'game_versions' => [$minecraftVersion],
+                ])
+                ->json();
+
+            if (!is_array($payload)) {
+                throw new Exception('Invalid Modrinth bulk latest-version response.');
+            }
+
+            $returnedHashCount = count($payload);
+            $versionsByKey = [];
+            $unresolvedKeys = [];
+
+            foreach ($requestsByHash as $hash => $keys) {
+                $version = $payload[$hash] ?? null;
+
+                if (is_array($version) && $version !== []) {
+                    foreach ($keys as $key) {
+                        $versionsByKey[$key] = $version;
+                    }
+
+                    continue;
+                }
+
+                array_push($unresolvedKeys, ...$keys);
+            }
+
+            return new LatestVersionLookupResult(
+                versionsByKey: $versionsByKey,
+                unresolvedKeys: $unresolvedKeys,
+            );
+        } finally {
+            if ($debugTiming) {
+                logger()->info('Mod manager timing', [
+                    'stage' => 'modrinth_versions_bulk_request',
+                    'request_id' => request()->attributes->get('mmr_timing_request_id'),
+                    'endpoint' => '/version_files/update',
+                    'started_after_ms' => $this->getModManagerTimingElapsedMs($startedAt),
+                    'finished_after_ms' => $this->getModManagerTimingElapsedMs(),
+                    'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+                    'requested_hash_count' => count($requestsByHash),
+                    'returned_hash_count' => $returnedHashCount,
+                ]);
+            }
+        }
+    }
+
+    /**
+     * @throws Exception
+     */
+    private function requestTeamPrimaryUsername(SourceFetchSpec $spec, float $timeoutSeconds): ?string
+    {
+        $teamId = $this->stringArgument($spec, 'team_id');
+        $members = $this->http($timeoutSeconds)
+            ->throw()
+            ->get(self::BASE_URL."/team/{$teamId}/members")
+            ->json();
+
+        if (!is_array($members)) {
+            throw new Exception('Invalid Modrinth team response.');
+        }
+
+        foreach ($members as $member) {
+            $username = is_array($member) ? ($member['user']['username'] ?? null) : null;
+            if (is_string($username) && $username !== '') {
+                return $username;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @throws Exception
+     */
+    private function requestUsername(SourceFetchSpec $spec, float $timeoutSeconds): ?string
+    {
+        $userId = $this->stringArgument($spec, 'user_id');
+        $user = $this->http($timeoutSeconds)
+            ->throw()
+            ->get(self::BASE_URL."/user/{$userId}")
+            ->json();
+
+        if (!is_array($user)) {
+            throw new Exception('Invalid Modrinth user response.');
+        }
+
+        $username = $user['username'] ?? null;
+
+        return is_string($username) && $username !== '' ? $username : null;
+    }
+
+    private function emptyLatestVersionResult(SourceFetchSpec $spec): LatestVersionLookupResult
+    {
+        $hashesByKey = $spec->arguments['hashes_by_key'] ?? [];
+        $failures = [];
+
+        if (is_array($hashesByKey)) {
+            foreach (array_keys($hashesByKey) as $key) {
+                if (is_string($key) && $key !== '') {
+                    $failures[$key] = 'Modrinth latest-version lookup is unavailable.';
+                }
+            }
+        }
+
+        return new LatestVersionLookupResult(failuresByKey: $failures);
+    }
+
+    /** @param array<int|string, mixed> $arguments */
+    private function spec(string $operation, array $arguments = []): SourceFetchSpec
+    {
+        return new SourceFetchSpec($this->getKey()->value, $operation, $arguments);
+    }
+
+    /**
+     * @throws Exception
+     */
+    private function stringArgument(SourceFetchSpec $spec, string $key): string
+    {
+        $value = $spec->arguments[$key] ?? null;
+
+        if (!is_string($value) || $value === '') {
+            throw new Exception("Invalid Modrinth [{$spec->operation}] argument [$key].");
+        }
+
+        return $value;
+    }
+
+    /**
+     * @return array<int, string>
+     *
+     * @throws Exception
+     */
+    private function stringListArgument(SourceFetchSpec $spec, string $key): array
+    {
+        $value = $spec->arguments[$key] ?? null;
+
+        if (!is_array($value) || !array_is_list($value)) {
+            throw new Exception("Invalid Modrinth [{$spec->operation}] argument [$key].");
+        }
+
+        foreach ($value as $item) {
+            if (!is_string($item) || $item === '') {
+                throw new Exception("Invalid Modrinth [{$spec->operation}] argument [$key].");
+            }
+        }
+
+        return $value;
+    }
+
+    /**
+     * @return array<string, string>
+     *
+     * @throws Exception
+     */
+    private function stringMapArgument(SourceFetchSpec $spec, string $key): array
+    {
+        $value = $spec->arguments[$key] ?? null;
+
+        if (!is_array($value)) {
+            throw new Exception("Invalid Modrinth [{$spec->operation}] argument [$key].");
+        }
+
+        foreach ($value as $mapKey => $item) {
+            if (!is_string($mapKey) || $mapKey === '' || !is_string($item) || $item === '') {
+                throw new Exception("Invalid Modrinth [{$spec->operation}] argument [$key].");
+            }
+        }
+
+        return $value;
+    }
+
+    private function http(float $timeoutSeconds): PendingRequest
+    {
+        return Http::asJson()
+            ->timeout($timeoutSeconds)
+            ->connectTimeout(min(1.0, $timeoutSeconds));
     }
 
     protected function getModManagerTimingElapsedMs(?float $timestamp = null): ?int

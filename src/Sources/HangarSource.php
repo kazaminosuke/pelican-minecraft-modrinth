@@ -9,16 +9,22 @@ use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
 use Kazaminosuke\ModManager\Contracts\BatchLatestVersionSourceInterface;
 use Kazaminosuke\ModManager\Contracts\ProjectSourceInterface;
+use Kazaminosuke\ModManager\Contracts\SourceFetchAuthoritativeInterface;
+use Kazaminosuke\ModManager\Contracts\SourceFetchHandlerInterface;
 use Kazaminosuke\ModManager\Enums\MinecraftLoader;
 use Kazaminosuke\ModManager\Enums\ProjectSourceKey;
 use Kazaminosuke\ModManager\Enums\ProjectType;
+use Kazaminosuke\ModManager\Exceptions\PartialSourceFetchException;
+use Kazaminosuke\ModManager\Support\CacheProfile;
 use Kazaminosuke\ModManager\Support\CacheVersion;
 use Kazaminosuke\ModManager\Support\LatestVersionLookupRequest;
 use Kazaminosuke\ModManager\Support\LatestVersionLookupResult;
 use Kazaminosuke\ModManager\Support\MinecraftVersionResolver;
+use Kazaminosuke\ModManager\Support\SourceCache;
+use Kazaminosuke\ModManager\Support\SourceFetchSpec;
 use Throwable;
 
-class HangarSource implements BatchLatestVersionSourceInterface, ProjectSourceInterface
+class HangarSource implements BatchLatestVersionSourceInterface, ProjectSourceInterface, SourceFetchAuthoritativeInterface, SourceFetchHandlerInterface
 {
     protected const BASE_URL = 'https://hangar.papermc.io/api/v1';
 
@@ -33,15 +39,22 @@ class HangarSource implements BatchLatestVersionSourceInterface, ProjectSourceIn
      */
     protected const HASH_SCAN_MAX_PAGES = 4;
 
-    /**
-     * A hash->version match is an immutable fact (a given file's bytes will
-     * always resolve to the same Hangar file), so this cache is kept far
-     * longer than the other API-response caches in this codebase.
-     */
-    protected const HASH_MATCH_CACHE_DAYS = 7;
-
     /** Hangar has no bulk endpoint, so bound the concurrent fallbacks. */
     protected const LATEST_VERSION_POOL_SIZE = 4;
+
+    private const OPERATION_HASH_MATCH = 'hash_match';
+
+    private const OPERATION_LATEST = 'latest';
+
+    private const OPERATION_PROJECT = 'project';
+
+    private const OPERATION_SEARCH = 'search';
+
+    private const OPERATION_VERSIONS = 'versions';
+
+    public function __construct(
+        private readonly SourceCache $sourceCache,
+    ) {}
 
     public function getKey(): ProjectSourceKey
     {
@@ -88,6 +101,33 @@ class HangarSource implements BatchLatestVersionSourceInterface, ProjectSourceIn
         return true;
     }
 
+    public function fetchSourceData(SourceFetchSpec $spec, float $timeoutSeconds): mixed
+    {
+        if ($spec->sourceKey !== $this->getKey()->value) {
+            throw new Exception("Invalid source key [{$spec->sourceKey}] for Hangar.");
+        }
+
+        return match ($spec->operation) {
+            self::OPERATION_HASH_MATCH => $this->fetchHashMatch($spec, $timeoutSeconds),
+            self::OPERATION_LATEST => $this->fetchLatestVersions($spec, $timeoutSeconds),
+            self::OPERATION_PROJECT => $this->fetchProject($spec, $timeoutSeconds),
+            self::OPERATION_SEARCH => $this->fetchSearch($spec, $timeoutSeconds),
+            self::OPERATION_VERSIONS => $this->fetchVersions($spec, $timeoutSeconds),
+            default => throw new Exception("Unsupported Hangar cache operation [{$spec->operation}]."),
+        };
+    }
+
+    public function emptySourceData(SourceFetchSpec $spec): mixed
+    {
+        return match ($spec->operation) {
+            self::OPERATION_HASH_MATCH, self::OPERATION_PROJECT => null,
+            self::OPERATION_LATEST => $this->emptyLatestVersions($spec),
+            self::OPERATION_SEARCH => ['hits' => [], 'total_hits' => 0],
+            self::OPERATION_VERSIONS => [],
+            default => [],
+        };
+    }
+
     /** @return array{hits: array<int, array<string, mixed>>, total_hits: int} */
     public function search(Server $server, ProjectType $type, int $page = 1, ?string $search = null, array $filters = []): array
     {
@@ -124,30 +164,29 @@ class HangarSource implements BatchLatestVersionSourceInterface, ProjectSourceIn
             $params['query'] = $search;
         }
 
-        $cacheKey = 'hangar_search:'.md5(json_encode($params));
+        $result = $this->sourceCache->swr(
+            $this->spec(self::OPERATION_SEARCH, ['params' => $params]),
+            CacheProfile::Search,
+        );
 
-        $response = cache()->remember($cacheKey, now()->addMinutes(30), fn () => $this->getJson('/projects', $params));
-
-        $hits = collect($response['result'] ?? [])
-            ->filter(fn ($project) => is_array($project))
-            ->map(fn (array $project) => $this->normalizeProject($project))
-            ->values()
-            ->all();
-
-        return [
-            'hits' => $hits,
-            'total_hits' => (int) ($response['pagination']['count'] ?? count($hits)),
-        ];
+        return is_array($result) ? $result : ['hits' => [], 'total_hits' => 0];
     }
 
     /** @return array<string, mixed>|null */
     public function getProject(string $projectId): ?array
     {
-        return cache()->remember("hangar_project:$projectId", now()->addMinutes(30), function () use ($projectId) {
-            $response = $this->getJson("/projects/$projectId");
+        return $this->getProjectUsingCache($projectId, authoritative: false);
+    }
 
-            return isset($response['id']) ? $this->normalizeProject($response) : null;
-        });
+    /** @return array<string, mixed>|null */
+    protected function getProjectUsingCache(string $projectId, bool $authoritative): ?array
+    {
+        $spec = $this->spec(self::OPERATION_PROJECT, ['project_id' => $projectId]);
+        $project = $authoritative
+            ? $this->sourceCache->swrRequired($spec, CacheProfile::ProjectMetadata)
+            : $this->sourceCache->swr($spec, CacheProfile::ProjectMetadata);
+
+        return is_array($project) ? $project : null;
     }
 
     /**
@@ -159,10 +198,24 @@ class HangarSource implements BatchLatestVersionSourceInterface, ProjectSourceIn
      */
     public function getProjectsByIds(array $projectIds): array
     {
+        return $this->getProjectsByIdsUsingCache($projectIds, authoritative: false);
+    }
+
+    public function getProjectsByIdsAuthoritatively(array $projectIds): array
+    {
+        return $this->getProjectsByIdsUsingCache($projectIds, authoritative: true);
+    }
+
+    /**
+     * @param array<int, string> $projectIds
+     * @return array<string, mixed>
+     */
+    protected function getProjectsByIdsUsingCache(array $projectIds, bool $authoritative): array
+    {
         $map = [];
 
         foreach (array_unique($projectIds) as $projectId) {
-            $project = $this->getProject((string) $projectId);
+            $project = $this->getProjectUsingCache((string) $projectId, $authoritative);
 
             if ($project !== null) {
                 $map[(string) $projectId] = $project;
@@ -191,16 +244,16 @@ class HangarSource implements BatchLatestVersionSourceInterface, ProjectSourceIn
             'limit' => self::PAGE_SIZE,
         ];
 
-        $cacheKey = "hangar_versions:$projectId:".md5(json_encode($params));
+        $versions = $this->sourceCache->swr(
+            $this->spec(self::OPERATION_VERSIONS, [
+                'project_id' => $projectId,
+                'platform' => $platform,
+                'params' => $params,
+            ]),
+            CacheProfile::InstalledLatest,
+        );
 
-        $response = cache()->remember($cacheKey, now()->addMinutes(30), fn () => $this->getJson("/projects/$projectId/versions", $params));
-
-        return collect($response['result'] ?? [])
-            ->filter(fn ($version) => is_array($version))
-            ->map(fn (array $version) => $this->normalizeVersion($version, $platform))
-            ->filter(fn ($version) => $version !== null)
-            ->values()
-            ->all();
+        return is_array($versions) ? $versions : [];
     }
 
     /**
@@ -235,84 +288,41 @@ class HangarSource implements BatchLatestVersionSourceInterface, ProjectSourceIn
             'limit' => self::PAGE_SIZE,
         ];
         $requestsByProject = [];
-        $versions = [];
-        $unresolved = [];
-        $failures = [];
-        $pending = [];
-        $cacheHits = 0;
 
         foreach ($requests as $request) {
             $requestsByProject[$request->projectId][] = $request;
         }
 
-        foreach ($requestsByProject as $projectId => $projectRequests) {
-            $cacheKey = 'hangar_latest_version:v1:'.$projectId.':'.md5(json_encode($params));
-            $cached = cache()->get($cacheKey);
-
-            if (is_array($cached)) {
-                foreach ($projectRequests as $request) {
-                    $versions[$request->key()] = $cached;
-                }
-                $cacheHits += count($projectRequests);
-
-                continue;
-            }
-
-            $pending[$projectId] = $cacheKey;
-        }
-
-        $startedAt = (bool) config('pelican-minecraft-modrinth.debug_timing', false)
-            ? microtime(true)
-            : 0.0;
-        $successfulProjects = 0;
-        $requestCount = 0;
-
-        foreach (array_chunk(array_keys($pending), self::LATEST_VERSION_POOL_SIZE) as $projectIds) {
-            [$resolved, $chunkFailures] = $this->fetchLatestVersionChunk($projectIds, $params, $platform);
-            $requestCount += count($projectIds);
-
-            foreach ($projectIds as $projectId) {
-                if (isset($chunkFailures[$projectId])) {
-                    foreach ($requestsByProject[$projectId] as $request) {
-                        $failures[$request->key()] = $chunkFailures[$projectId];
-                    }
-
-                    continue;
-                }
-
-                if (!isset($resolved[$projectId])) {
-                    foreach ($requestsByProject[$projectId] as $request) {
-                        $unresolved[] = $request->key();
-                    }
-
-                    continue;
-                }
-
-                cache()->put($pending[$projectId], $resolved[$projectId], now()->addMinutes(30));
-                $successfulProjects++;
-
-                foreach ($requestsByProject[$projectId] as $request) {
-                    $versions[$request->key()] = $resolved[$projectId];
-                }
-            }
-        }
-
-        if ($pending !== []) {
-            $this->logLatestVersionsTiming(
-                $startedAt,
-                count($pending),
-                $successfulProjects,
-                $requestCount,
-                $cacheHits,
-                count($failures),
-            );
-        }
-
-        return new LatestVersionLookupResult(
-            versionsByKey: $versions,
-            unresolvedKeys: $unresolved,
-            failuresByKey: $failures,
+        $projectIds = array_keys($requestsByProject);
+        sort($projectIds, SORT_STRING);
+        $payload = $this->sourceCache->swr(
+            $this->spec(self::OPERATION_LATEST, [
+                'project_ids' => $projectIds,
+                'platform' => $platform,
+                'params' => $params,
+            ]),
+            CacheProfile::InstalledLatest,
         );
+        $resolved = is_array($payload) && is_array($payload['versions'] ?? null)
+            ? $payload['versions']
+            : [];
+        $unresolvedProjects = is_array($payload) && is_array($payload['unresolved'] ?? null)
+            ? array_fill_keys($payload['unresolved'], true)
+            : [];
+        $versions = [];
+        $unresolved = [];
+
+        foreach ($requestsByProject as $projectId => $projectRequests) {
+            foreach ($projectRequests as $request) {
+                if (is_array($resolved[$projectId] ?? null)) {
+                    $versions[$request->key()] = $resolved[$projectId];
+                } elseif (isset($unresolvedProjects[$projectId]) || !isset($resolved[$projectId])) {
+                    $unresolved[] = $request->key();
+                }
+            }
+        }
+
+        return new LatestVersionLookupResult(versionsByKey: $versions, unresolvedKeys: $unresolved);
     }
 
     /**
@@ -321,29 +331,44 @@ class HangarSource implements BatchLatestVersionSourceInterface, ProjectSourceIn
      */
     public function findVersionsByHash(array $hashesByFilename): array
     {
+        return $this->findVersionsByHashUsingCache($hashesByFilename, authoritative: false);
+    }
+
+    public function findVersionsByHashAuthoritatively(array $hashesByFilename): array
+    {
+        return $this->findVersionsByHashUsingCache($hashesByFilename, authoritative: true);
+    }
+
+    /**
+     * @param array<string, string> $hashesByFilename
+     * @return array<string, mixed>
+     */
+    protected function findVersionsByHashUsingCache(array $hashesByFilename, bool $authoritative): array
+    {
         if (empty($hashesByFilename)) {
             return [];
         }
 
         $results = [];
+        $generation = CacheVersion::hangarHash();
 
         foreach (array_unique(array_values($hashesByFilename)) as $hash) {
-            $hash = (string) $hash;
+            $hash = strtolower((string) $hash);
 
             if (!preg_match('/^[a-f0-9]{64}$/i', $hash)) {
                 continue;
             }
 
-            $project = $this->getJson("/versions/hash/$hash");
+            $spec = $this->spec(self::OPERATION_HASH_MATCH, [
+                'generation' => $generation,
+                'hash' => $hash,
+            ]);
+            $entry = $authoritative
+                ? $this->sourceCache->swrRequired($spec, CacheProfile::HashMatch)
+                : $this->sourceCache->swr($spec, CacheProfile::HashMatch);
 
-            if (!isset($project['id'])) {
-                continue;
-            }
-
-            $entry = $this->findVersionEntryByHash((string) $project['id'], strtolower($hash));
-
-            if ($entry !== null) {
-                $results[strtolower($hash)] = $entry;
+            if (is_array($entry)) {
+                $results[$hash] = $entry;
             }
         }
 
@@ -356,36 +381,193 @@ class HangarSource implements BatchLatestVersionSourceInterface, ProjectSourceIn
         return $this->getProject($identifier);
     }
 
-    /**
-     * Scans a bounded window of a project's most recent versions (across all
-     * platforms) for the file matching the given sha256 hash, since Hangar's
-     * hash endpoint only identifies the parent project. This is the expensive
-     * part of Hangar hash matching, so a successful result is cached by hash
-     * (see HASH_MATCH_CACHE_TTL) - the hash is the cache key, so if a file's
-     * content ever changes its hash changes too and the old entry is simply
-     * never looked up again, with no explicit invalidation needed on its own.
-     * The plugin settings "clear cache" action has no per-file granularity to
-     * target though, so CacheVersion::hangarHash() is also folded into the
-     * key - bumping it is the only way that action can invalidate this cache
-     * as a whole. Only successful matches are cached; a miss isn't, since a
-     * project could be published to Hangar after this file was last scanned.
-     */
-    protected function findVersionEntryByHash(string $projectId, string $hash): ?array
+    /** @return array{hits: array<int, array<string, mixed>>, total_hits: int} */
+    protected function fetchSearch(SourceFetchSpec $spec, float $timeoutSeconds): array
     {
-        $cacheKey = 'hangar_hash_match:v2:'.CacheVersion::hangarHash().":$hash";
-        $cached = cache()->get($cacheKey);
-
-        if (is_array($cached)) {
-            return $cached;
+        $params = $spec->arguments['params'] ?? null;
+        if (!is_array($params)) {
+            throw new Exception('Invalid Hangar search parameters.');
         }
 
+        $response = $this->getJson('/projects', $params, $timeoutSeconds);
+        if (!is_array($response['result'] ?? null) || !is_array($response['pagination'] ?? null)) {
+            throw new Exception('Invalid Hangar search response.');
+        }
+
+        $hits = collect($response['result'])
+            ->filter(fn ($project) => is_array($project))
+            ->map(fn (array $project) => $this->normalizeProject($project))
+            ->values()
+            ->all();
+
+        return [
+            'hits' => $hits,
+            'total_hits' => (int) ($response['pagination']['count'] ?? count($hits)),
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    protected function fetchProject(SourceFetchSpec $spec, float $timeoutSeconds): array
+    {
+        $projectId = $spec->arguments['project_id'] ?? null;
+        if (!is_string($projectId) || $projectId === '') {
+            throw new Exception('Invalid Hangar project identifier.');
+        }
+
+        $response = $this->getJson("/projects/$projectId", [], $timeoutSeconds);
+        if (!isset($response['id'])) {
+            throw new Exception("Hangar project [$projectId] was not found.");
+        }
+
+        return $this->normalizeProject($response);
+    }
+
+    /** @return array<int, array<string, mixed>> */
+    protected function fetchVersions(SourceFetchSpec $spec, float $timeoutSeconds): array
+    {
+        $projectId = $spec->arguments['project_id'] ?? null;
+        $platform = $spec->arguments['platform'] ?? null;
+        $params = $spec->arguments['params'] ?? null;
+
+        if (!is_string($projectId) || $projectId === '' || !is_string($platform) || $platform === '' || !is_array($params)) {
+            throw new Exception('Invalid Hangar versions parameters.');
+        }
+
+        $response = $this->getJson("/projects/$projectId/versions", $params, $timeoutSeconds);
+        if (!is_array($response['result'] ?? null)) {
+            throw new Exception("Invalid Hangar versions response for project [$projectId].");
+        }
+
+        return collect($response['result'])
+            ->filter(fn ($version) => is_array($version))
+            ->map(fn (array $version) => $this->normalizeVersion($version, $platform))
+            ->filter(fn ($version) => $version !== null)
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @return array{versions: array<string, array<string, mixed>>, unresolved: array<int, string>}
+     */
+    protected function fetchLatestVersions(SourceFetchSpec $spec, float $timeoutSeconds): array
+    {
+        $projectIds = $spec->arguments['project_ids'] ?? null;
+        $platform = $spec->arguments['platform'] ?? null;
+        $params = $spec->arguments['params'] ?? null;
+
+        if (!is_array($projectIds) || !is_string($platform) || $platform === '' || !is_array($params)) {
+            throw new Exception('Invalid Hangar latest-version parameters.');
+        }
+
+        $projectIds = array_values(array_filter(
+            $projectIds,
+            fn ($projectId): bool => is_string($projectId) && $projectId !== '',
+        ));
+        $startedAt = (bool) config('pelican-minecraft-modrinth.debug_timing', false)
+            ? microtime(true)
+            : 0.0;
+        $deadline = microtime(true) + max(0.1, $timeoutSeconds);
+        $resolved = [];
+        $unresolved = [];
+        $failures = [];
+        $requestCount = 0;
+
+        foreach (array_chunk($projectIds, self::LATEST_VERSION_POOL_SIZE) as $chunk) {
+            [$chunkResolved, $chunkFailures] = $this->fetchLatestVersionChunk(
+                $chunk,
+                $params,
+                $platform,
+                $this->remainingTimeout($deadline),
+            );
+            $requestCount += count($chunk);
+
+            $failures = array_merge($failures, $chunkFailures);
+
+            foreach ($chunk as $projectId) {
+                if (isset($chunkResolved[$projectId])) {
+                    $resolved[$projectId] = $chunkResolved[$projectId];
+                } else {
+                    $unresolved[] = $projectId;
+                }
+            }
+        }
+
+        if ($projectIds !== []) {
+            $this->logLatestVersionsTiming(
+                $startedAt,
+                count($projectIds),
+                count($resolved),
+                $requestCount,
+                0,
+                count($failures),
+            );
+        }
+
+        $result = ['versions' => $resolved, 'unresolved' => $unresolved];
+
+        if ($failures !== []) {
+            throw new PartialSourceFetchException(
+                'Hangar latest-version batch completed with partial failures: '.implode('; ', $failures),
+                $result,
+            );
+        }
+
+        return $result;
+    }
+
+    /** @return array{versions: array<never, never>, unresolved: array<int, string>} */
+    protected function emptyLatestVersions(SourceFetchSpec $spec): array
+    {
+        $projectIds = $spec->arguments['project_ids'] ?? [];
+
+        return [
+            'versions' => [],
+            'unresolved' => is_array($projectIds)
+                ? array_values(array_filter($projectIds, fn ($projectId): bool => is_string($projectId) && $projectId !== ''))
+                : [],
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    protected function fetchHashMatch(SourceFetchSpec $spec, float $timeoutSeconds): array
+    {
+        $hash = $spec->arguments['hash'] ?? null;
+        if (!is_string($hash) || preg_match('/^[a-f0-9]{64}$/', $hash) !== 1) {
+            throw new Exception('Invalid Hangar SHA-256 hash.');
+        }
+
+        // The generation argument intentionally participates in SourceFetchSpec's
+        // cache key. CacheVersion::bumpHangarHash() therefore invalidates even
+        // indefinitely retained stale matches without deleting old keys.
+        if (!is_int($spec->arguments['generation'] ?? null)) {
+            throw new Exception('Invalid Hangar hash-cache generation.');
+        }
+
+        $deadline = microtime(true) + max(0.1, $timeoutSeconds);
+        $project = $this->getJson("/versions/hash/$hash", [], $this->remainingTimeout($deadline));
+        if (!isset($project['id'])) {
+            throw new Exception("No Hangar project matched hash [$hash].");
+        }
+
+        $entry = $this->fetchVersionEntryByHash((string) $project['id'], $hash, $deadline);
+        if ($entry === null) {
+            // Do not persist a negative match indefinitely: the matching
+            // release may be published after this scan.
+            throw new Exception("No Hangar version matched hash [$hash].");
+        }
+
+        return $entry;
+    }
+
+    protected function fetchVersionEntryByHash(string $projectId, string $hash, float $deadline): ?array
+    {
         $entry = null;
 
         for ($page = 0; $page < self::HASH_SCAN_MAX_PAGES; $page++) {
             $response = $this->getJson("/projects/$projectId/versions", [
                 'limit' => self::PAGE_SIZE,
                 'offset' => $page * self::PAGE_SIZE,
-            ]);
+            ], $this->remainingTimeout($deadline));
 
             $versions = $response['result'] ?? [];
 
@@ -416,10 +598,6 @@ class HangarSource implements BatchLatestVersionSourceInterface, ProjectSourceIn
             if (count($versions) < self::PAGE_SIZE) {
                 break;
             }
-        }
-
-        if ($entry !== null) {
-            cache()->put($cacheKey, $entry, now()->addDays(self::HASH_MATCH_CACHE_DAYS));
         }
 
         return $entry;
@@ -513,12 +691,16 @@ class HangarSource implements BatchLatestVersionSourceInterface, ProjectSourceIn
      * @param array<string, int|string> $params
      * @return array{0: array<string, array<string, mixed>>, 1: array<string, string>}
      */
-    protected function fetchLatestVersionChunk(array $projectIds, array $params, string $platform): array
-    {
+    protected function fetchLatestVersionChunk(
+        array $projectIds,
+        array $params,
+        string $platform,
+        float $timeoutSeconds,
+    ): array {
         $aliases = [];
 
         try {
-            $responses = Http::pool(function (Pool $pool) use ($projectIds, $params, &$aliases) {
+            $responses = Http::pool(function (Pool $pool) use ($projectIds, $params, $timeoutSeconds, &$aliases) {
                 $poolRequests = [];
 
                 foreach ($projectIds as $index => $projectId) {
@@ -526,8 +708,8 @@ class HangarSource implements BatchLatestVersionSourceInterface, ProjectSourceIn
                     $aliases[$alias] = $projectId;
                     $poolRequests[] = $pool->as($alias)
                         ->asJson()
-                        ->timeout(10)
-                        ->connectTimeout(5)
+                        ->timeout($timeoutSeconds)
+                        ->connectTimeout(min(1.0, $timeoutSeconds))
                         ->get(self::BASE_URL."/projects/$projectId/versions", $params);
                 }
 
@@ -633,21 +815,36 @@ class HangarSource implements BatchLatestVersionSourceInterface, ProjectSourceIn
     }
 
     /** @param array<string, mixed> $query */
-    protected function getJson(string $path, array $query = []): array
+    protected function getJson(string $path, array $query, float $timeoutSeconds): array
     {
-        try {
-            $response = Http::asJson()
-                ->timeout(10)
-                ->connectTimeout(5)
-                ->throw()
-                ->get(self::BASE_URL.$path, $query)
-                ->json();
+        $timeoutSeconds = max(0.1, $timeoutSeconds);
+        $response = Http::asJson()
+            ->timeout($timeoutSeconds)
+            ->connectTimeout(min(1.0, $timeoutSeconds))
+            ->throw()
+            ->get(self::BASE_URL.$path, $query)
+            ->json();
 
-            return is_array($response) ? $response : [];
-        } catch (Exception $exception) {
-            report($exception);
-
-            return [];
+        if (!is_array($response)) {
+            throw new Exception("Invalid Hangar response for [$path].");
         }
+
+        return $response;
+    }
+
+    protected function remainingTimeout(float $deadline): float
+    {
+        $remaining = $deadline - microtime(true);
+        if ($remaining <= 0.0) {
+            throw new Exception('Hangar source fetch exceeded its time budget.');
+        }
+
+        return max(0.1, $remaining);
+    }
+
+    /** @param array<int|string, mixed> $arguments */
+    protected function spec(string $operation, array $arguments = []): SourceFetchSpec
+    {
+        return new SourceFetchSpec($this->getKey()->value, $operation, $arguments);
     }
 }

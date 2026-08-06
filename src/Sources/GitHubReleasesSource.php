@@ -9,10 +9,16 @@ use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
 use Kazaminosuke\ModManager\Contracts\BatchLatestVersionSourceInterface;
 use Kazaminosuke\ModManager\Contracts\ProjectSourceInterface;
+use Kazaminosuke\ModManager\Contracts\SourceFetchAuthoritativeInterface;
+use Kazaminosuke\ModManager\Contracts\SourceFetchHandlerInterface;
 use Kazaminosuke\ModManager\Enums\ProjectSourceKey;
 use Kazaminosuke\ModManager\Enums\ProjectType;
+use Kazaminosuke\ModManager\Exceptions\PartialSourceFetchException;
+use Kazaminosuke\ModManager\Support\CacheProfile;
 use Kazaminosuke\ModManager\Support\LatestVersionLookupRequest;
 use Kazaminosuke\ModManager\Support\LatestVersionLookupResult;
+use Kazaminosuke\ModManager\Support\SourceCache;
+use Kazaminosuke\ModManager\Support\SourceFetchSpec;
 use Throwable;
 
 /**
@@ -24,13 +30,23 @@ use Throwable;
  * non-draft release is returned as-is by getVersions() - the admin is responsible
  * for picking the right one, same as they would on the repo's Releases page.
  */
-class GitHubReleasesSource implements BatchLatestVersionSourceInterface, ProjectSourceInterface
+class GitHubReleasesSource implements BatchLatestVersionSourceInterface, ProjectSourceInterface, SourceFetchAuthoritativeInterface, SourceFetchHandlerInterface
 {
     protected const BASE_URL = 'https://api.github.com';
 
     protected const GRAPHQL_BATCH_SIZE = 20;
 
     protected const REST_POOL_SIZE = 4;
+
+    private const OPERATION_LATEST = 'latest';
+
+    private const OPERATION_PROJECT = 'project';
+
+    private const OPERATION_RELEASES = 'releases';
+
+    public function __construct(
+        private readonly SourceCache $sourceCache,
+    ) {}
 
     public function getKey(): ProjectSourceKey
     {
@@ -81,6 +97,30 @@ class GitHubReleasesSource implements BatchLatestVersionSourceInterface, Project
         return true;
     }
 
+    public function fetchSourceData(SourceFetchSpec $spec, float $timeoutSeconds): mixed
+    {
+        if ($spec->sourceKey !== $this->getKey()->value) {
+            throw new Exception("Invalid source key [{$spec->sourceKey}] for GitHub Releases.");
+        }
+
+        return match ($spec->operation) {
+            self::OPERATION_LATEST => $this->fetchLatestReleases($spec, $timeoutSeconds),
+            self::OPERATION_PROJECT => $this->fetchProject($spec, $timeoutSeconds),
+            self::OPERATION_RELEASES => $this->fetchReleases($spec, $timeoutSeconds),
+            default => throw new Exception("Unsupported GitHub Releases cache operation [{$spec->operation}]."),
+        };
+    }
+
+    public function emptySourceData(SourceFetchSpec $spec): mixed
+    {
+        return match ($spec->operation) {
+            self::OPERATION_LATEST => $this->emptyLatestReleases($spec),
+            self::OPERATION_PROJECT => null,
+            self::OPERATION_RELEASES => [],
+            default => [],
+        };
+    }
+
     /** @return array{hits: array<int, array<string, mixed>>, total_hits: int} */
     public function search(Server $server, ProjectType $type, int $page = 1, ?string $search = null, array $filters = []): array
     {
@@ -99,10 +139,24 @@ class GitHubReleasesSource implements BatchLatestVersionSourceInterface, Project
      */
     public function getProjectsByIds(array $projectIds): array
     {
+        return $this->getProjectsByIdsUsingCache($projectIds, authoritative: false);
+    }
+
+    public function getProjectsByIdsAuthoritatively(array $projectIds): array
+    {
+        return $this->getProjectsByIdsUsingCache($projectIds, authoritative: true);
+    }
+
+    /**
+     * @param array<int, string> $projectIds
+     * @return array<string, mixed>
+     */
+    protected function getProjectsByIdsUsingCache(array $projectIds, bool $authoritative): array
+    {
         $map = [];
 
         foreach (array_unique($projectIds) as $projectId) {
-            $project = $this->getProject((string) $projectId);
+            $project = $this->resolveProjectByIdentifierUsingCache((string) $projectId, $authoritative);
 
             if ($project !== null) {
                 $map[(string) $projectId] = $project;
@@ -121,22 +175,16 @@ class GitHubReleasesSource implements BatchLatestVersionSourceInterface, Project
             return [];
         }
 
-        [$owner, $name] = $repo;
+        [$owner, $name] = array_map('strtolower', $repo);
+        $versions = $this->sourceCache->swr(
+            $this->spec(self::OPERATION_RELEASES, [
+                'name' => $name,
+                'owner' => $owner,
+            ]),
+            CacheProfile::InstalledLatest,
+        );
 
-        $cacheKey = "github_releases:$owner/$name";
-
-        $response = cache()->remember($cacheKey, now()->addMinutes(30), fn () => $this->getJson("/repos/$owner/$name/releases", ['per_page' => 30]));
-
-        if (!is_array($response)) {
-            return [];
-        }
-
-        return collect($response)
-            ->filter(fn ($release) => is_array($release) && !($release['draft'] ?? false))
-            ->map(fn (array $release) => $this->normalizeVersion($release))
-            ->filter(fn ($version) => $version !== null)
-            ->values()
-            ->all();
+        return is_array($versions) ? $versions : [];
     }
 
     /**
@@ -168,7 +216,6 @@ class GitHubReleasesSource implements BatchLatestVersionSourceInterface, Project
 
         $versions = [];
         $unresolved = [];
-        $failures = [];
         $requestsByRepository = [];
         $repositories = [];
 
@@ -184,39 +231,42 @@ class GitHubReleasesSource implements BatchLatestVersionSourceInterface, Project
             [$owner, $name] = $parsed;
             $repositoryKey = strtolower("$owner/$name");
             $requestsByRepository[$repositoryKey][] = $request;
-            $repositories[$repositoryKey] = ['owner' => $owner, 'name' => $name];
+            $repositories[$repositoryKey] = [
+                'key' => $repositoryKey,
+                'owner' => strtolower($owner),
+                'name' => strtolower($name),
+            ];
         }
 
-        $pending = [];
+        if ($repositories !== []) {
+            ksort($repositories);
+            $payload = $this->sourceCache->swr(
+                $this->spec(self::OPERATION_LATEST, [
+                    'repositories' => array_values($repositories),
+                ]),
+                CacheProfile::InstalledLatest,
+            );
+            $versionsByRepository = is_array($payload) && is_array($payload['versions'] ?? null)
+                ? $payload['versions']
+                : [];
+            $unresolvedRepositories = is_array($payload) && is_array($payload['unresolved'] ?? null)
+                ? array_fill_keys($payload['unresolved'], true)
+                : [];
 
-        foreach ($repositories as $repositoryKey => $repository) {
-            $cacheKey = 'github_latest_release:v1:'.$repositoryKey;
-            $cached = cache()->get($cacheKey);
-
-            if (is_array($cached)) {
-                foreach ($requestsByRepository[$repositoryKey] as $request) {
-                    $versions[$request->key()] = $cached;
+            foreach ($requestsByRepository as $repositoryKey => $repositoryRequests) {
+                foreach ($repositoryRequests as $request) {
+                    if (is_array($versionsByRepository[$repositoryKey] ?? null)) {
+                        $versions[$request->key()] = $versionsByRepository[$repositoryKey];
+                    } elseif (isset($unresolvedRepositories[$repositoryKey]) || !isset($versionsByRepository[$repositoryKey])) {
+                        $unresolved[] = $request->key();
+                    }
                 }
-
-                continue;
             }
-
-            $pending[$repositoryKey] = [...$repository, 'cache_key' => $cacheKey];
-        }
-
-        if ($pending !== []) {
-            $resolved = $this->token() !== ''
-                ? $this->lookupLatestVersionsWithGraphQl($pending, $requestsByRepository)
-                : $this->lookupLatestVersionsWithRestPool($pending, $requestsByRepository);
-            $versions = array_replace($versions, $resolved->versions());
-            $unresolved = array_merge($unresolved, $resolved->unresolvedKeys());
-            $failures = array_replace($failures, $resolved->failures());
         }
 
         return new LatestVersionLookupResult(
             versionsByKey: $versions,
             unresolvedKeys: $unresolved,
-            failuresByKey: $failures,
         );
     }
 
@@ -229,8 +279,19 @@ class GitHubReleasesSource implements BatchLatestVersionSourceInterface, Project
         return [];
     }
 
+    public function findVersionsByHashAuthoritatively(array $hashesByFilename): array
+    {
+        return [];
+    }
+
     /** @return array<string, mixed>|null */
     public function resolveProjectByIdentifier(string $identifier): ?array
+    {
+        return $this->resolveProjectByIdentifierUsingCache($identifier, authoritative: false);
+    }
+
+    /** @return array<string, mixed>|null */
+    protected function resolveProjectByIdentifierUsingCache(string $identifier, bool $authoritative): ?array
     {
         $repo = $this->parseIdentifier($identifier);
 
@@ -238,13 +299,150 @@ class GitHubReleasesSource implements BatchLatestVersionSourceInterface, Project
             return null;
         }
 
-        [$owner, $name] = $repo;
+        [$owner, $name] = array_map('strtolower', $repo);
+        $spec = $this->spec(self::OPERATION_PROJECT, [
+            'name' => $name,
+            'owner' => $owner,
+        ]);
+        $project = $authoritative
+            ? $this->sourceCache->swrRequired($spec, CacheProfile::ProjectMetadata)
+            : $this->sourceCache->swr($spec, CacheProfile::ProjectMetadata);
 
-        return cache()->remember("github_repo:$owner/$name", now()->addMinutes(30), function () use ($owner, $name) {
-            $response = $this->getJson("/repos/$owner/$name");
+        return is_array($project) ? $project : null;
+    }
 
-            return isset($response['id']) ? $this->normalizeProject($response) : null;
-        });
+    /** @return array<int, array<string, mixed>> */
+    protected function fetchReleases(SourceFetchSpec $spec, float $timeoutSeconds): array
+    {
+        [$owner, $name] = $this->repositoryArguments($spec);
+        $response = $this->getJson(
+            "/repos/$owner/$name/releases",
+            ['per_page' => 30],
+            $timeoutSeconds,
+        );
+
+        return collect($response)
+            ->filter(fn ($release) => is_array($release) && !($release['draft'] ?? false))
+            ->map(fn (array $release) => $this->normalizeVersion($release))
+            ->filter(fn ($version) => $version !== null)
+            ->values()
+            ->all();
+    }
+
+    /** @return array<string, mixed> */
+    protected function fetchProject(SourceFetchSpec $spec, float $timeoutSeconds): array
+    {
+        [$owner, $name] = $this->repositoryArguments($spec);
+        $response = $this->getJson("/repos/$owner/$name", [], $timeoutSeconds);
+        if (!isset($response['id'])) {
+            throw new Exception("GitHub repository [$owner/$name] was not found.");
+        }
+
+        return $this->normalizeProject($response);
+    }
+
+    /**
+     * @return array{versions: array<string, array<string, mixed>>, unresolved: array<int, string>}
+     */
+    protected function fetchLatestReleases(SourceFetchSpec $spec, float $timeoutSeconds): array
+    {
+        $repositories = $this->repositoriesArgument($spec);
+        if ($repositories === []) {
+            return ['versions' => [], 'unresolved' => []];
+        }
+
+        $requestsByRepository = [];
+        foreach ($repositories as $repositoryKey => $repository) {
+            $requestsByRepository[$repositoryKey] = [
+                new LatestVersionLookupRequest(
+                    source: $this->getKey()->value,
+                    projectId: $repositoryKey,
+                ),
+            ];
+        }
+
+        $resolved = $this->token() !== ''
+            ? $this->lookupLatestVersionsWithGraphQl($repositories, $requestsByRepository, $timeoutSeconds)
+            : $this->lookupLatestVersionsWithRestPool($repositories, $requestsByRepository, $timeoutSeconds);
+
+        $versions = [];
+        $unresolved = [];
+        $unresolvedKeys = array_fill_keys($resolved->unresolvedKeys(), true);
+
+        foreach (array_keys($repositories) as $repositoryKey) {
+            $lookupKey = $this->getKey()->value.':'.$repositoryKey;
+            $version = $resolved->version($lookupKey);
+
+            if (is_array($version)) {
+                $versions[$repositoryKey] = $version;
+            } elseif (isset($unresolvedKeys[$lookupKey]) || $version === null) {
+                $unresolved[] = $repositoryKey;
+            }
+        }
+
+        $result = ['versions' => $versions, 'unresolved' => $unresolved];
+
+        if ($resolved->failures() !== []) {
+            throw new PartialSourceFetchException(
+                'GitHub latest-release batch completed with partial failures: '.implode('; ', $resolved->failures()),
+                $result,
+            );
+        }
+
+        return $result;
+    }
+
+    /** @return array{versions: array<never, never>, unresolved: array<int, string>} */
+    protected function emptyLatestReleases(SourceFetchSpec $spec): array
+    {
+        return [
+            'versions' => [],
+            'unresolved' => array_keys($this->repositoriesArgument($spec)),
+        ];
+    }
+
+    /** @return array{0: string, 1: string} */
+    protected function repositoryArguments(SourceFetchSpec $spec): array
+    {
+        $owner = $spec->arguments['owner'] ?? null;
+        $name = $spec->arguments['name'] ?? null;
+
+        if (!is_string($owner) || $owner === '' || !is_string($name) || $name === '') {
+            throw new Exception('Invalid GitHub repository parameters.');
+        }
+
+        return [$owner, $name];
+    }
+
+    /**
+     * @return array<string, array{key: string, owner: string, name: string}>
+     */
+    protected function repositoriesArgument(SourceFetchSpec $spec): array
+    {
+        $repositories = $spec->arguments['repositories'] ?? null;
+        if (!is_array($repositories)) {
+            throw new Exception('Invalid GitHub latest-release parameters.');
+        }
+
+        $result = [];
+        foreach ($repositories as $repository) {
+            if (!is_array($repository)) {
+                throw new Exception('Invalid GitHub latest-release repository.');
+            }
+
+            $key = $repository['key'] ?? null;
+            $owner = $repository['owner'] ?? null;
+            $name = $repository['name'] ?? null;
+            if (!is_string($key) || $key === '' || !is_string($owner) || $owner === '' || !is_string($name) || $name === '') {
+                throw new Exception('Invalid GitHub latest-release repository.');
+            }
+
+            $result[$key] = ['key' => $key, 'owner' => $owner, 'name' => $name];
+        }
+
+        ksort($result);
+
+        return $result;
     }
 
     /** @return array{0: string, 1: string}|null [owner, repo] */
@@ -321,14 +519,18 @@ class GitHubReleasesSource implements BatchLatestVersionSourceInterface, Project
     }
 
     /**
-     * @param array<string, array{owner: string, name: string, cache_key: string}> $pending
+     * @param array<string, array{key: string, owner: string, name: string}> $pending
      * @param array<string, array<int, LatestVersionLookupRequest>> $requestsByRepository
      */
-    protected function lookupLatestVersionsWithGraphQl(array $pending, array $requestsByRepository): LatestVersionLookupResult
-    {
+    protected function lookupLatestVersionsWithGraphQl(
+        array $pending,
+        array $requestsByRepository,
+        float $timeoutSeconds,
+    ): LatestVersionLookupResult {
         $startedAt = (bool) config('pelican-minecraft-modrinth.debug_timing', false)
             ? microtime(true)
             : 0.0;
+        $deadline = microtime(true) + max(0.1, $timeoutSeconds);
         $versions = [];
         $unresolved = [];
         $failures = [];
@@ -340,14 +542,15 @@ class GitHubReleasesSource implements BatchLatestVersionSourceInterface, Project
             $requestCount++;
 
             try {
+                $remaining = $this->remainingTimeout($deadline);
                 $response = Http::asJson()
                     ->withHeaders([
                         'Accept' => 'application/vnd.github+json',
                         'X-GitHub-Api-Version' => '2022-11-28',
                     ])
                     ->withToken($this->token())
-                    ->timeout(10)
-                    ->connectTimeout(5)
+                    ->timeout($remaining)
+                    ->connectTimeout(min(1.0, $remaining))
                     ->throw()
                     ->post(self::BASE_URL.'/graphql', [
                         'query' => $query,
@@ -393,7 +596,6 @@ class GitHubReleasesSource implements BatchLatestVersionSourceInterface, Project
                     continue;
                 }
 
-                cache()->put($chunk[$repositoryKey]['cache_key'], $version, now()->addMinutes(30));
                 $returnedProjects++;
 
                 foreach ($requestsByRepository[$repositoryKey] as $request) {
@@ -421,14 +623,18 @@ class GitHubReleasesSource implements BatchLatestVersionSourceInterface, Project
     }
 
     /**
-     * @param array<string, array{owner: string, name: string, cache_key: string}> $pending
+     * @param array<string, array{key: string, owner: string, name: string}> $pending
      * @param array<string, array<int, LatestVersionLookupRequest>> $requestsByRepository
      */
-    protected function lookupLatestVersionsWithRestPool(array $pending, array $requestsByRepository): LatestVersionLookupResult
-    {
+    protected function lookupLatestVersionsWithRestPool(
+        array $pending,
+        array $requestsByRepository,
+        float $timeoutSeconds,
+    ): LatestVersionLookupResult {
         $startedAt = (bool) config('pelican-minecraft-modrinth.debug_timing', false)
             ? microtime(true)
             : 0.0;
+        $deadline = microtime(true) + max(0.1, $timeoutSeconds);
         $versions = [];
         $unresolved = [];
         $failures = [];
@@ -439,7 +645,8 @@ class GitHubReleasesSource implements BatchLatestVersionSourceInterface, Project
             $aliases = [];
 
             try {
-                $responses = Http::pool(function (Pool $pool) use ($chunk, &$aliases) {
+                $remaining = $this->remainingTimeout($deadline);
+                $responses = Http::pool(function (Pool $pool) use ($chunk, $remaining, &$aliases) {
                     $poolRequests = [];
 
                     foreach ($chunk as $repositoryKey => $repository) {
@@ -451,8 +658,8 @@ class GitHubReleasesSource implements BatchLatestVersionSourceInterface, Project
                                 'Accept' => 'application/vnd.github+json',
                                 'X-GitHub-Api-Version' => '2022-11-28',
                             ])
-                            ->timeout(10)
-                            ->connectTimeout(5)
+                            ->timeout($remaining)
+                            ->connectTimeout(min(1.0, $remaining))
                             ->get(self::BASE_URL."/repos/{$repository['owner']}/{$repository['name']}/releases", [
                                 'per_page' => 30,
                             ]);
@@ -498,7 +705,6 @@ class GitHubReleasesSource implements BatchLatestVersionSourceInterface, Project
                     continue;
                 }
 
-                cache()->put($chunk[$repositoryKey]['cache_key'], $version, now()->addMinutes(30));
                 $returnedProjects++;
 
                 foreach ($requestsByRepository[$repositoryKey] as $request) {
@@ -526,7 +732,7 @@ class GitHubReleasesSource implements BatchLatestVersionSourceInterface, Project
     }
 
     /**
-     * @param array<string, array{owner: string, name: string, cache_key: string}> $repositories
+     * @param array<string, array{key: string, owner: string, name: string}> $repositories
      * @return array{0: string, 1: array<string, string>, 2: array<string, string>}
      */
     protected function buildGraphQlReleaseQuery(array $repositories): array
@@ -731,33 +937,48 @@ class GitHubReleasesSource implements BatchLatestVersionSourceInterface, Project
     }
 
     /** @param array<string, mixed> $query */
-    protected function getJson(string $path, array $query = []): array
+    protected function getJson(string $path, array $query, float $timeoutSeconds): array
     {
-        try {
-            $request = Http::asJson()->withHeaders([
-                'Accept' => 'application/vnd.github+json',
-                'X-GitHub-Api-Version' => '2022-11-28',
-            ]);
+        $request = Http::asJson()->withHeaders([
+            'Accept' => 'application/vnd.github+json',
+            'X-GitHub-Api-Version' => '2022-11-28',
+        ]);
 
-            $token = $this->token();
+        $token = $this->token();
 
-            if ($token !== '') {
-                $request = $request->withToken($token);
-            }
-
-            $response = $request
-                ->timeout(10)
-                ->connectTimeout(5)
-                ->throw()
-                ->get(self::BASE_URL.$path, $query)
-                ->json();
-
-            return is_array($response) ? $response : [];
-        } catch (Exception $exception) {
-            report($exception);
-
-            return [];
+        if ($token !== '') {
+            $request = $request->withToken($token);
         }
+
+        $timeoutSeconds = max(0.1, $timeoutSeconds);
+        $response = $request
+            ->timeout($timeoutSeconds)
+            ->connectTimeout(min(1.0, $timeoutSeconds))
+            ->throw()
+            ->get(self::BASE_URL.$path, $query)
+            ->json();
+
+        if (!is_array($response)) {
+            throw new Exception("Invalid GitHub response for [$path].");
+        }
+
+        return $response;
+    }
+
+    protected function remainingTimeout(float $deadline): float
+    {
+        $remaining = $deadline - microtime(true);
+        if ($remaining <= 0.0) {
+            throw new Exception('GitHub source fetch exceeded its time budget.');
+        }
+
+        return max(0.1, $remaining);
+    }
+
+    /** @param array<int|string, mixed> $arguments */
+    protected function spec(string $operation, array $arguments = []): SourceFetchSpec
+    {
+        return new SourceFetchSpec($this->getKey()->value, $operation, $arguments);
     }
 
     protected function token(): string

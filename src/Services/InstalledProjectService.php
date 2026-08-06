@@ -8,6 +8,7 @@ use Exception;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Kazaminosuke\ModManager\Contracts\ProjectSourceInterface;
+use Kazaminosuke\ModManager\Contracts\SourceFetchAuthoritativeInterface;
 use Kazaminosuke\ModManager\Enums\ProjectSourceKey;
 use Kazaminosuke\ModManager\Enums\ProjectType;
 use Kazaminosuke\ModManager\Repositories\InstalledMetadataRepository;
@@ -439,7 +440,9 @@ class InstalledProjectService
 
             $hashLookupStartedAt = $this->debugTimingEnabled ? microtime(true) : 0.0;
             try {
-                $versionsByHash = $hashSource->findVersionsByHash($hashMap);
+                $versionsByHash = $hashSource instanceof SourceFetchAuthoritativeInterface
+                    ? $hashSource->findVersionsByHashAuthoritatively($hashMap)
+                    : $hashSource->findVersionsByHash($hashMap);
             } catch (Exception $exception) {
                 report($exception);
                 $lookupFailures[] = $hashSource->getKey()->value;
@@ -483,7 +486,10 @@ class InstalledProjectService
 
             $projectLookupStartedAt = $this->debugTimingEnabled ? microtime(true) : 0.0;
             try {
-                $projectsMap = $hashSource->getProjectsByIds(array_values(array_unique($projectIds)));
+                $uniqueProjectIds = array_values(array_unique($projectIds));
+                $projectsMap = $hashSource instanceof SourceFetchAuthoritativeInterface
+                    ? $hashSource->getProjectsByIdsAuthoritatively($uniqueProjectIds)
+                    : $hashSource->getProjectsByIds($uniqueProjectIds);
             } catch (Exception $exception) {
                 report($exception);
                 $projectsMap = [];

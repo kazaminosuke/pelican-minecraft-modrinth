@@ -3,6 +3,7 @@
 namespace Kazaminosuke\ModManager\Tests\Unit\Providers;
 
 use Illuminate\Foundation\Application;
+use Kazaminosuke\ModManager\Contracts\SourceFetchExecutorInterface;
 use Kazaminosuke\ModManager\Providers\ModManagerServiceProvider;
 use Kazaminosuke\ModManager\Services\InstalledOperationManager;
 use Kazaminosuke\ModManager\Services\InstalledProjectService;
@@ -12,6 +13,7 @@ use Kazaminosuke\ModManager\Sources\GitHubReleasesSource;
 use Kazaminosuke\ModManager\Sources\HangarSource;
 use Kazaminosuke\ModManager\Sources\ModrinthSource;
 use Kazaminosuke\ModManager\Support\ProjectSourceRegistry;
+use Kazaminosuke\ModManager\Support\SourceCache;
 use PHPUnit\Framework\TestCase;
 
 class ModManagerServiceProviderTest extends TestCase
@@ -22,6 +24,8 @@ class ModManagerServiceProviderTest extends TestCase
         (new ModManagerServiceProvider($application))->register();
 
         foreach ([
+            SourceFetchExecutorInterface::class,
+            SourceCache::class,
             ProjectSourceRegistry::class,
             ModrinthSource::class,
             CurseForgeSource::class,

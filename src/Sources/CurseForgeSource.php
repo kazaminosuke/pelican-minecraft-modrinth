@@ -8,14 +8,20 @@ use Illuminate\Http\Client\Pool;
 use Illuminate\Support\Facades\Http;
 use Kazaminosuke\ModManager\Contracts\BatchLatestVersionSourceInterface;
 use Kazaminosuke\ModManager\Contracts\ProjectSourceInterface;
+use Kazaminosuke\ModManager\Contracts\SourceFetchAuthoritativeInterface;
+use Kazaminosuke\ModManager\Contracts\SourceFetchHandlerInterface;
 use Kazaminosuke\ModManager\Enums\MinecraftLoader;
 use Kazaminosuke\ModManager\Enums\ProjectSourceKey;
 use Kazaminosuke\ModManager\Enums\ProjectType;
+use Kazaminosuke\ModManager\Exceptions\PartialSourceFetchException;
+use Kazaminosuke\ModManager\Support\CacheProfile;
 use Kazaminosuke\ModManager\Support\LatestVersionLookupRequest;
 use Kazaminosuke\ModManager\Support\LatestVersionLookupResult;
 use Kazaminosuke\ModManager\Support\MinecraftVersionResolver;
+use Kazaminosuke\ModManager\Support\SourceCache;
+use Kazaminosuke\ModManager\Support\SourceFetchSpec;
 
-class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSourceInterface
+class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSourceInterface, SourceFetchAuthoritativeInterface, SourceFetchHandlerInterface
 {
     protected const BASE_URL = 'https://api.curseforge.com/v1';
 
@@ -48,6 +54,10 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
 
     /** @var array<string, string> */
     protected array $lastWarmVersionFailures = [];
+
+    public function __construct(
+        private readonly SourceCache $sourceCache,
+    ) {}
 
     public function getKey(): ProjectSourceKey
     {
@@ -135,12 +145,26 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
             $params['searchFilter'] = $search;
         }
 
-        $cacheKey = 'curseforge_search:v2:'.md5(json_encode($params));
-        $cached = cache()->get($cacheKey);
-        if (is_array($cached)) {
-            return $cached;
-        }
+        $result = $this->cache()->swr(new SourceFetchSpec(
+            sourceKey: $this->getKey()->value,
+            operation: 'search',
+            arguments: [
+                'params' => $params,
+                'project_type' => $type->value,
+            ],
+        ), CacheProfile::Search);
 
+        return is_array($result)
+            ? $result
+            : ['hits' => [], 'total_hits' => 0];
+    }
+
+    /**
+     * @param array<string, int|string> $params
+     * @return array{hits: array<int, array<string, mixed>>, total_hits: int}
+     */
+    protected function fetchSearch(array $params, ProjectType $type, float $timeoutSeconds): array
+    {
         $debugTiming = (bool) config('pelican-minecraft-modrinth.debug_timing', false);
         $startedAt = $debugTiming ? microtime(true) : 0.0;
         $responseBytes = null;
@@ -148,8 +172,8 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
         try {
             $response = Http::asJson()
                 ->withHeaders(['x-api-key' => $this->apiKey()])
-                ->timeout(2)
-                ->connectTimeout(1)
+                ->timeout($timeoutSeconds)
+                ->connectTimeout(min(1.0, $timeoutSeconds))
                 ->throw()
                 ->get(self::BASE_URL.'/mods/search', $params);
             if ($debugTiming) {
@@ -162,7 +186,7 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
                 throw new Exception('Invalid CurseForge search response');
             }
 
-            $result = [
+            return [
                 'hits' => collect($payload['data'] ?? [])
                     ->filter(fn ($mod) => is_array($mod))
                     ->map(fn (array $mod) => $this->normalizeProject($mod, $type))
@@ -170,14 +194,6 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
                     ->all(),
                 'total_hits' => (int) ($payload['pagination']['totalCount'] ?? 0),
             ];
-
-            cache()->put($cacheKey, $result, now()->addMinutes(30));
-
-            return $result;
-        } catch (Exception $exception) {
-            report($exception);
-
-            return ['hits' => [], 'total_hits' => 0];
         } finally {
             if ($debugTiming) {
                 logger()->debug('Catalog search API timing', [
@@ -196,12 +212,13 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
             return null;
         }
 
-        return cache()->remember("curseforge_mod:$projectId", now()->addMinutes(30), function () use ($projectId) {
-            $response = $this->getJson("/mods/$projectId");
-            $mod = $response['data'] ?? null;
+        $project = $this->cache()->swr(new SourceFetchSpec(
+            sourceKey: $this->getKey()->value,
+            operation: 'project',
+            arguments: ['project_id' => $projectId],
+        ), CacheProfile::ProjectMetadata);
 
-            return is_array($mod) ? $this->normalizeProject($mod) : null;
-        });
+        return is_array($project) ? $project : null;
     }
 
     /**
@@ -212,40 +229,64 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
      */
     public function getProjectsByIds(array $projectIds): array
     {
+        return $this->getProjectsByIdsUsingCache($projectIds, authoritative: false);
+    }
+
+    public function getProjectsByIdsAuthoritatively(array $projectIds): array
+    {
+        return $this->getProjectsByIdsUsingCache($projectIds, authoritative: true);
+    }
+
+    /**
+     * @param array<int, string> $projectIds
+     * @return array<string, mixed>
+     */
+    protected function getProjectsByIdsUsingCache(array $projectIds, bool $authoritative): array
+    {
         if (empty($projectIds) || !$this->isConfigured()) {
             return [];
         }
 
         $modIds = array_values(array_unique(array_map('intval', $projectIds)));
+        sort($modIds);
 
-        try {
-            $response = Http::asJson()
-                ->withHeaders(['x-api-key' => $this->apiKey()])
-                ->timeout(10)
-                ->connectTimeout(5)
-                ->throw()
-                ->post(self::BASE_URL.'/mods', ['modIds' => $modIds])
-                ->json();
+        $spec = new SourceFetchSpec(
+            sourceKey: $this->getKey()->value,
+            operation: 'projects',
+            arguments: ['project_ids' => $modIds],
+        );
+        $projects = $authoritative
+            ? $this->cache()->swrRequired($spec, CacheProfile::ProjectMetadata)
+            : $this->cache()->swr($spec, CacheProfile::ProjectMetadata);
 
-            $mods = $response['data'] ?? [];
+        return is_array($projects) ? $projects : [];
+    }
 
-            if (!is_array($mods)) {
-                return [];
-            }
+    /** @param array<int, int> $modIds */
+    protected function fetchProjectsByIds(array $modIds, float $timeoutSeconds): array
+    {
+        $response = Http::asJson()
+            ->withHeaders(['x-api-key' => $this->apiKey()])
+            ->timeout($timeoutSeconds)
+            ->connectTimeout(min(1.0, $timeoutSeconds))
+            ->throw()
+            ->post(self::BASE_URL.'/mods', ['modIds' => $modIds])
+            ->json();
 
-            $map = [];
-            foreach ($mods as $mod) {
-                if (is_array($mod) && isset($mod['id'])) {
-                    $map[(string) $mod['id']] = $this->normalizeProject($mod);
-                }
-            }
+        $mods = $response['data'] ?? [];
 
-            return $map;
-        } catch (Exception $exception) {
-            report($exception);
-
-            throw new Exception('CurseForge projects lookup failed', previous: $exception);
+        if (!is_array($mods)) {
+            throw new Exception('Invalid CurseForge projects response');
         }
+
+        $map = [];
+        foreach ($mods as $mod) {
+            if (is_array($mod) && isset($mod['id'])) {
+                $map[(string) $mod['id']] = $this->normalizeProject($mod);
+            }
+        }
+
+        return $map;
     }
 
     /** @return array<int, mixed> */
@@ -257,10 +298,16 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
             return [];
         }
 
-        $cacheKey = "curseforge_files:$projectId:".md5(json_encode($params));
-        $response = cache()->remember($cacheKey, now()->addMinutes(30), fn () => $this->getJson("/mods/$projectId/files", $params));
+        $versions = $this->cache()->swr(new SourceFetchSpec(
+            sourceKey: $this->getKey()->value,
+            operation: 'versions',
+            arguments: [
+                'project_id' => $projectId,
+                'params' => $params,
+            ],
+        ), CacheProfile::InstalledLatest);
 
-        return $this->normalizeVersions($response);
+        return is_array($versions) ? $versions : [];
     }
 
     /**
@@ -279,38 +326,48 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
      */
     public function warmVersions(array $projectIds, Server $server, ProjectType $type): array
     {
-        $this->lastWarmVersionFailures = [];
-        $params = $this->getVersionRequestParams($server, $type);
+        $requests = array_map(
+            fn (string $projectId): LatestVersionLookupRequest => new LatestVersionLookupRequest(
+                source: $this->getKey()->value,
+                projectId: $projectId,
+            ),
+            array_values(array_unique(array_map('strval', $projectIds))),
+        );
+        $result = $this->lookupLatestVersions($requests, $server, $type);
+        $versionsByProjectId = [];
 
-        if ($params === null) {
-            return [];
+        foreach ($requests as $request) {
+            $version = $result->version($request->key());
+            if (is_array($version)) {
+                $versionsByProjectId[$request->projectId] = [$version];
+            }
         }
 
+        return $versionsByProjectId;
+    }
+
+    protected function fetchWarmVersions(
+        array $projectIds,
+        array $params,
+        float $timeoutSeconds,
+    ): array {
+        $this->lastWarmVersionFailures = [];
         $versionsByProjectId = [];
         $pending = [];
 
         foreach (array_values(array_unique($projectIds)) as $projectId) {
             $projectId = (string) $projectId;
-            $cacheKey = "curseforge_latest:$projectId:".md5(json_encode($params));
-            $cached = cache()->get($cacheKey);
-
-            if (is_array($cached)) {
-                $versionsByProjectId[$projectId] = $cached;
-
-                continue;
-            }
-
-            $pending[$projectId] = $cacheKey;
-        }
-
-        if ($pending === []) {
-            return $versionsByProjectId;
+            $pending[$projectId] = true;
         }
 
         $bulkStartedAt = (bool) config('pelican-minecraft-modrinth.debug_timing', false)
             ? microtime(true)
             : 0.0;
-        $bulkResponse = $this->getBulkMods(array_keys($pending));
+        $deadline = microtime(true) + $timeoutSeconds;
+        $bulkResponse = $this->getBulkMods(
+            array_keys($pending),
+            $this->remainingTimeout($deadline),
+        );
 
         $this->logBulkVersionsTiming(
             $bulkStartedAt,
@@ -318,17 +375,15 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
             is_array($bulkResponse['data'] ?? null) ? count($bulkResponse['data']) : 0,
         );
 
-        $bulkVersionsByProjectId = $this->extractBulkLatestVersions($bulkResponse, $params);
+        $bulkVersionsByProjectId = $this->extractBulkLatestVersions($bulkResponse, $params, $deadline);
 
         foreach ($bulkVersionsByProjectId as $projectId => $payload) {
             if (!isset($pending[$projectId])) {
                 continue;
             }
 
-            $cacheKey = $pending[$projectId];
             $versions = $this->normalizeVersions($payload);
             if ($versions !== []) {
-                cache()->put($cacheKey, $versions, now()->addMinutes(30));
                 $versionsByProjectId[$projectId] = $versions;
             }
             unset($pending[$projectId]);
@@ -339,15 +394,16 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
         }
 
         try {
-            $responses = Http::pool(function (Pool $pool) use ($pending, $params) {
+            $requestTimeout = $this->remainingTimeout($deadline);
+            $responses = Http::pool(function (Pool $pool) use ($pending, $params, $requestTimeout) {
                 $requests = [];
 
                 foreach (array_keys($pending) as $projectId) {
                     $requests[] = $pool->as((string) $projectId)
                         ->asJson()
                         ->withHeaders(['x-api-key' => $this->apiKey()])
-                        ->timeout(10)
-                        ->connectTimeout(5)
+                        ->timeout($requestTimeout)
+                        ->connectTimeout(min(1.0, $requestTimeout))
                         ->get(self::BASE_URL."/mods/$projectId/files", $params);
                 }
 
@@ -358,7 +414,7 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
             $responses = [];
         }
 
-        foreach ($pending as $projectId => $cacheKey) {
+        foreach ($pending as $projectId => $_pending) {
             try {
                 $response = $responses[$projectId] ?? null;
 
@@ -383,7 +439,6 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
             // Do not negative-cache a transient API failure or an empty result.
             // A later request should be able to retry without waiting 30 minutes.
             if ($versions !== []) {
-                cache()->put($cacheKey, $versions, now()->addMinutes(30));
                 $versionsByProjectId[$projectId] = $versions;
             }
         }
@@ -399,6 +454,42 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
         Server $server,
         ProjectType $type,
     ): LatestVersionLookupResult {
+        $serializedRequests = $this->serializeLatestRequests($requests);
+
+        if ($serializedRequests === []) {
+            return LatestVersionLookupResult::empty();
+        }
+
+        $params = $this->getVersionRequestParams($server, $type);
+        if ($params === null) {
+            return LatestVersionLookupResult::failed(
+                $requests,
+                'No compatible CurseForge loader is configured.',
+            );
+        }
+
+        $result = $this->cache()->swr(new SourceFetchSpec(
+            sourceKey: $this->getKey()->value,
+            operation: 'latest',
+            arguments: [
+                'params' => $params,
+                'requests' => $serializedRequests,
+            ],
+        ), CacheProfile::InstalledLatest);
+
+        return $result instanceof LatestVersionLookupResult
+            ? $result
+            : LatestVersionLookupResult::empty();
+    }
+
+    /**
+     * @param array<int, LatestVersionLookupRequest> $requests
+     */
+    protected function fetchLatestVersions(
+        array $requests,
+        array $params,
+        float $timeoutSeconds,
+    ): LatestVersionLookupResult {
         $debugTiming = (bool) config('pelican-minecraft-modrinth.debug_timing', false);
         $startedAt = $debugTiming ? microtime(true) : 0.0;
         $validRequests = array_values(array_filter(
@@ -410,10 +501,10 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
             return LatestVersionLookupResult::empty();
         }
 
-        $versionsByProjectId = $this->warmVersions(
+        $versionsByProjectId = $this->fetchWarmVersions(
             array_map(fn (LatestVersionLookupRequest $request) => $request->projectId, $validRequests),
-            $server,
-            $type,
+            $params,
+            $timeoutSeconds,
         );
 
         $versionsByKey = [];
@@ -446,34 +537,41 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
             ]);
         }
 
-        return new LatestVersionLookupResult(
+        $result = new LatestVersionLookupResult(
             versionsByKey: $versionsByKey,
             unresolvedKeys: $unresolvedKeys,
             failuresByKey: $failuresByKey,
         );
+
+        if ($failuresByKey !== []) {
+            throw new PartialSourceFetchException(
+                'CurseForge latest-version batch completed with partial failures.',
+                $result,
+            );
+        }
+
+        return $result;
     }
 
     /**
      * @param array<int, string> $projectIds
      * @return array<string, mixed>
      */
-    protected function getBulkMods(array $projectIds): array
+    protected function getBulkMods(array $projectIds, float $timeoutSeconds): array
     {
-        try {
-            $response = Http::asJson()
-                ->withHeaders(['x-api-key' => $this->apiKey()])
-                ->timeout(10)
-                ->connectTimeout(5)
-                ->throw()
-                ->post(self::BASE_URL.'/mods', ['modIds' => array_map('intval', $projectIds)])
-                ->json();
+        $response = Http::asJson()
+            ->withHeaders(['x-api-key' => $this->apiKey()])
+            ->timeout($timeoutSeconds)
+            ->connectTimeout(min(1.0, $timeoutSeconds))
+            ->throw()
+            ->post(self::BASE_URL.'/mods', ['modIds' => array_map('intval', $projectIds)])
+            ->json();
 
-            return is_array($response) ? $response : [];
-        } catch (Exception $exception) {
-            report($exception);
-
-            return [];
+        if (!is_array($response)) {
+            throw new Exception('Invalid CurseForge bulk mods response');
         }
+
+        return $response;
     }
 
     /**
@@ -481,7 +579,7 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
      * @param array<string, int|string> $params
      * @return array<string, array<string, array<int, mixed>>>
      */
-    protected function extractBulkLatestVersions(array $response, array $params): array
+    protected function extractBulkLatestVersions(array $response, array $params, float $deadline): array
     {
         $fileIdsByProjectId = [];
         $filesById = [];
@@ -524,7 +622,10 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
             $bulkFilesStartedAt = (bool) config('pelican-minecraft-modrinth.debug_timing', false)
                 ? microtime(true)
                 : 0.0;
-            $bulkFilesResponse = $this->getBulkFiles($missingFileIds);
+            $bulkFilesResponse = $this->getBulkFiles(
+                $missingFileIds,
+                $this->remainingTimeout($deadline),
+            );
             $returnedFiles = is_array($bulkFilesResponse['data'] ?? null) ? $bulkFilesResponse['data'] : [];
 
             $this->logBulkFilesTiming(
@@ -563,14 +664,15 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
      * @param array<int, string> $fileIds
      * @return array<string, mixed>
      */
-    protected function getBulkFiles(array $fileIds): array
+    protected function getBulkFiles(array $fileIds, float $timeoutSeconds): array
     {
         $files = [];
+        $deadline = microtime(true) + $timeoutSeconds;
 
         foreach (array_chunk(array_values(array_unique($fileIds)), self::BULK_FILES_CHUNK_SIZE) as $chunk) {
             $response = $this->postJson('/mods/files', [
                 'fileIds' => array_map('intval', $chunk),
-            ]);
+            ], $this->remainingTimeout($deadline));
 
             foreach ($response['data'] ?? [] as $file) {
                 if (is_array($file)) {
@@ -682,6 +784,20 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
      */
     public function findVersionsByHash(array $hashesByFilename): array
     {
+        return $this->findVersionsByHashUsingCache($hashesByFilename, authoritative: false);
+    }
+
+    public function findVersionsByHashAuthoritatively(array $hashesByFilename): array
+    {
+        return $this->findVersionsByHashUsingCache($hashesByFilename, authoritative: true);
+    }
+
+    /**
+     * @param array<string, string> $hashesByFilename
+     * @return array<string, mixed>
+     */
+    protected function findVersionsByHashUsingCache(array $hashesByFilename, bool $authoritative): array
+    {
         if (empty($hashesByFilename) || !$this->isConfigured()) {
             return [];
         }
@@ -699,7 +815,28 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
             return [];
         }
 
-        $response = $this->postJson('/fingerprints', ['fingerprints' => $fingerprints]);
+        sort($fingerprints);
+
+        $spec = new SourceFetchSpec(
+            sourceKey: $this->getKey()->value,
+            operation: 'hashes',
+            arguments: ['fingerprints' => $fingerprints],
+        );
+        $versions = $authoritative
+            ? $this->cache()->swrRequired($spec, CacheProfile::HashMatch)
+            : $this->cache()->swr($spec, CacheProfile::HashMatch);
+
+        return is_array($versions) ? $versions : [];
+    }
+
+    /** @param array<int, int> $fingerprints */
+    protected function fetchVersionsByHash(array $fingerprints, float $timeoutSeconds): array
+    {
+        $response = $this->postJson(
+            '/fingerprints',
+            ['fingerprints' => $fingerprints],
+            $timeoutSeconds,
+        );
 
         $exactMatches = $response['data']['exactMatches'] ?? [];
 
@@ -735,13 +872,26 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
             return $this->getProject($identifier);
         }
 
+        $project = $this->cache()->swr(new SourceFetchSpec(
+            sourceKey: $this->getKey()->value,
+            operation: 'resolve_identifier',
+            arguments: ['identifier' => $identifier],
+        ), CacheProfile::ProjectMetadata);
+
+        return is_array($project) ? $project : null;
+    }
+
+    protected function fetchProjectByIdentifier(string $identifier, float $timeoutSeconds): ?array
+    {
+        $deadline = microtime(true) + $timeoutSeconds;
+
         foreach ([self::CLASS_ID_MOD, self::CLASS_ID_PLUGIN] as $classId) {
             $response = $this->getJson('/mods/search', [
                 'gameId' => self::GAME_ID,
                 'classId' => $classId,
                 'slug' => $identifier,
                 'pageSize' => 1,
-            ]);
+            ], $this->remainingTimeout($deadline));
 
             $mod = $response['data'][0] ?? null;
 
@@ -751,6 +901,119 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
         }
 
         return null;
+    }
+
+    public function fetchSourceData(SourceFetchSpec $spec, float $timeoutSeconds): mixed
+    {
+        return match ($spec->operation) {
+            'search' => $this->fetchSearch(
+                (array) ($spec->arguments['params'] ?? []),
+                ProjectType::from((string) ($spec->arguments['project_type'] ?? '')),
+                $timeoutSeconds,
+            ),
+            'project' => $this->fetchProject(
+                (string) ($spec->arguments['project_id'] ?? ''),
+                $timeoutSeconds,
+            ),
+            'projects' => $this->fetchProjectsByIds(
+                array_values(array_map('intval', (array) ($spec->arguments['project_ids'] ?? []))),
+                $timeoutSeconds,
+            ),
+            'versions' => $this->normalizeVersions($this->getJson(
+                '/mods/'.(string) ($spec->arguments['project_id'] ?? '').'/files',
+                (array) ($spec->arguments['params'] ?? []),
+                $timeoutSeconds,
+            )),
+            'latest' => $this->fetchLatestVersions(
+                $this->hydrateLatestRequests((array) ($spec->arguments['requests'] ?? [])),
+                (array) ($spec->arguments['params'] ?? []),
+                $timeoutSeconds,
+            ),
+            'hashes' => $this->fetchVersionsByHash(
+                array_values(array_map('intval', (array) ($spec->arguments['fingerprints'] ?? []))),
+                $timeoutSeconds,
+            ),
+            'resolve_identifier' => $this->fetchProjectByIdentifier(
+                (string) ($spec->arguments['identifier'] ?? ''),
+                $timeoutSeconds,
+            ),
+            default => throw new Exception("Unsupported CurseForge source-cache operation [{$spec->operation}]."),
+        };
+    }
+
+    public function emptySourceData(SourceFetchSpec $spec): mixed
+    {
+        return match ($spec->operation) {
+            'search' => ['hits' => [], 'total_hits' => 0],
+            'project', 'resolve_identifier' => null,
+            'latest' => LatestVersionLookupResult::empty(),
+            default => [],
+        };
+    }
+
+    protected function fetchProject(string $projectId, float $timeoutSeconds): ?array
+    {
+        $response = $this->getJson("/mods/$projectId", timeoutSeconds: $timeoutSeconds);
+        $mod = $response['data'] ?? null;
+
+        return is_array($mod) ? $this->normalizeProject($mod) : null;
+    }
+
+    /**
+     * @param array<int, LatestVersionLookupRequest> $requests
+     * @return array<int, array<string, mixed>>
+     */
+    protected function serializeLatestRequests(array $requests): array
+    {
+        $serialized = [];
+
+        foreach ($requests as $request) {
+            if (!$request instanceof LatestVersionLookupRequest) {
+                continue;
+            }
+
+            $serialized[$request->key()] = [
+                'source' => $request->source,
+                'project_id' => $request->projectId,
+            ];
+        }
+
+        $serialized = array_values($serialized);
+        usort($serialized, fn (array $left, array $right): int => strcmp(
+            $left['source'].':'.$left['project_id'],
+            $right['source'].':'.$right['project_id'],
+        ));
+
+        return $serialized;
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $requests
+     * @return array<int, LatestVersionLookupRequest>
+     */
+    protected function hydrateLatestRequests(array $requests): array
+    {
+        $hydrated = [];
+
+        foreach ($requests as $request) {
+            if (!is_array($request)) {
+                continue;
+            }
+
+            $hydrated[] = new LatestVersionLookupRequest(
+                source: (string) ($request['source'] ?? $this->getKey()->value),
+                projectId: (string) ($request['project_id'] ?? ''),
+                installedVersionId: (string) ($request['installed_version_id'] ?? ''),
+                filename: (string) ($request['filename'] ?? ''),
+                hashes: array_filter(
+                    (array) ($request['hashes'] ?? []),
+                    fn (mixed $hash, mixed $algorithm): bool => is_string($algorithm) && is_string($hash),
+                    ARRAY_FILTER_USE_BOTH,
+                ),
+            );
+        }
+
+        return $hydrated;
     }
 
     protected function classIdFor(ProjectType $type): ?int
@@ -852,43 +1115,55 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
     }
 
     /** @param array<string, mixed> $query */
-    protected function getJson(string $path, array $query = []): array
+    protected function getJson(string $path, array $query = [], float $timeoutSeconds = 10.0): array
     {
-        try {
-            $response = Http::asJson()
-                ->withHeaders(['x-api-key' => $this->apiKey()])
-                ->timeout(10)
-                ->connectTimeout(5)
-                ->throw()
-                ->get(self::BASE_URL.$path, $query)
-                ->json();
+        $response = Http::asJson()
+            ->withHeaders(['x-api-key' => $this->apiKey()])
+            ->timeout($timeoutSeconds)
+            ->connectTimeout(min(1.0, $timeoutSeconds))
+            ->throw()
+            ->get(self::BASE_URL.$path, $query)
+            ->json();
 
-            return is_array($response) ? $response : [];
-        } catch (Exception $exception) {
-            report($exception);
-
-            return [];
+        if (!is_array($response)) {
+            throw new Exception("Invalid CurseForge response for [$path]");
         }
+
+        return $response;
     }
 
     /** @param array<string, mixed> $body */
-    protected function postJson(string $path, array $body): array
+    protected function postJson(string $path, array $body, float $timeoutSeconds = 10.0): array
     {
-        try {
-            $response = Http::asJson()
-                ->withHeaders(['x-api-key' => $this->apiKey()])
-                ->timeout(10)
-                ->connectTimeout(5)
-                ->throw()
-                ->post(self::BASE_URL.$path, $body)
-                ->json();
+        $response = Http::asJson()
+            ->withHeaders(['x-api-key' => $this->apiKey()])
+            ->timeout($timeoutSeconds)
+            ->connectTimeout(min(1.0, $timeoutSeconds))
+            ->throw()
+            ->post(self::BASE_URL.$path, $body)
+            ->json();
 
-            return is_array($response) ? $response : [];
-        } catch (Exception $exception) {
-            report($exception);
-
-            return [];
+        if (!is_array($response)) {
+            throw new Exception("Invalid CurseForge response for [$path]");
         }
+
+        return $response;
+    }
+
+    protected function remainingTimeout(float $deadline): float
+    {
+        $remaining = $deadline - microtime(true);
+
+        if ($remaining <= 0.05) {
+            throw new Exception('CurseForge source fetch exceeded its time budget.');
+        }
+
+        return $remaining;
+    }
+
+    protected function cache(): SourceCache
+    {
+        return $this->sourceCache;
     }
 
     protected function apiKey(): string
