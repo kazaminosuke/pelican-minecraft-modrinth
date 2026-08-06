@@ -1,10 +1,10 @@
 <?php
 
-namespace Boy132\MinecraftModrinth\Contracts;
+namespace Kazaminosuke\ModManager\Contracts;
 
 use App\Models\Server;
-use Boy132\MinecraftModrinth\Enums\ModrinthProjectType;
-use Boy132\MinecraftModrinth\Enums\ProjectSourceKey;
+use Kazaminosuke\ModManager\Enums\ProjectType;
+use Kazaminosuke\ModManager\Enums\ProjectSourceKey;
 
 /**
  * Contract implemented by every mod/plugin/datapack source (Modrinth, CurseForge, Hangar, ...).
@@ -24,7 +24,7 @@ interface ProjectSourceInterface
 
     public function isConfigured(): bool;
 
-    public function supportsProjectType(ModrinthProjectType $type): bool;
+    public function supportsProjectType(ProjectType $type): bool;
 
     /**
      * Whether this source exposes a searchable catalog (browse/search UI).
@@ -47,7 +47,7 @@ interface ProjectSourceInterface
     public function supportsDirectIdentifier(): bool;
 
     /** @return array{hits: array<int, array<string, mixed>>, total_hits: int} */
-    public function search(Server $server, ModrinthProjectType $type, int $page, ?string $search = null, array $filters = []): array;
+    public function search(Server $server, ProjectType $type, int $page, ?string $search = null, array $filters = []): array;
 
     /** @return array<string, mixed>|null normalized project data */
     public function getProject(string $projectId): ?array;
@@ -62,7 +62,7 @@ interface ProjectSourceInterface
     public function getProjectsByIds(array $projectIds): array;
 
     /** @return array<int, mixed> normalized versions, newest first */
-    public function getVersions(string $projectId, Server $server, ModrinthProjectType $type): array;
+    public function getVersions(string $projectId, Server $server, ProjectType $type): array;
 
     /**
      * @param array<string, string> $hashesByFilename [filename => hash]

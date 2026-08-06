@@ -1,15 +1,15 @@
 <?php
 
-namespace Boy132\MinecraftModrinth\Sources;
+namespace Kazaminosuke\ModManager\Sources;
 
 use App\Models\Server;
-use Boy132\MinecraftModrinth\Contracts\BatchLatestVersionSourceInterface;
-use Boy132\MinecraftModrinth\Contracts\ProjectSourceInterface;
-use Boy132\MinecraftModrinth\Enums\ModrinthProjectType;
-use Boy132\MinecraftModrinth\Enums\ProjectSourceKey;
-use Boy132\MinecraftModrinth\Support\LatestVersionLookupRequest;
-use Boy132\MinecraftModrinth\Support\LatestVersionLookupResult;
-use Boy132\MinecraftModrinth\Support\MinecraftVersionResolver;
+use Kazaminosuke\ModManager\Contracts\BatchLatestVersionSourceInterface;
+use Kazaminosuke\ModManager\Contracts\ProjectSourceInterface;
+use Kazaminosuke\ModManager\Enums\ProjectType;
+use Kazaminosuke\ModManager\Enums\ProjectSourceKey;
+use Kazaminosuke\ModManager\Support\LatestVersionLookupRequest;
+use Kazaminosuke\ModManager\Support\LatestVersionLookupResult;
+use Kazaminosuke\ModManager\Support\MinecraftVersionResolver;
 use Exception;
 use Illuminate\Support\Facades\Http;
 
@@ -37,7 +37,7 @@ class ModrinthSource implements BatchLatestVersionSourceInterface, ProjectSource
         return true;
     }
 
-    public function supportsProjectType(ModrinthProjectType $type): bool
+    public function supportsProjectType(ProjectType $type): bool
     {
         return true;
     }
@@ -63,13 +63,13 @@ class ModrinthSource implements BatchLatestVersionSourceInterface, ProjectSource
     }
 
     /** @return array{hits: array<int, array<string, mixed>>, total_hits: int} */
-    public function search(Server $server, ModrinthProjectType $type, int $page = 1, ?string $search = null, array $filters = []): array
+    public function search(Server $server, ProjectType $type, int $page = 1, ?string $search = null, array $filters = []): array
     {
-        $minecraftLoader = $type->getModrinthLoader($server);
+        $minecraftLoader = $type->getLoaderSlug($server);
         $projectType = $type->value;
         $minecraftVersion = MinecraftVersionResolver::resolve($server);
 
-        if ($type === ModrinthProjectType::Datapack) {
+        if ($type === ProjectType::Datapack) {
             $facetGroups = [["versions:$minecraftVersion"], ["project_type:{$projectType}"]];
         } else {
             if (!$minecraftLoader) {
@@ -263,9 +263,9 @@ class ModrinthSource implements BatchLatestVersionSourceInterface, ProjectSource
     }
 
     /** @return array<int, mixed> */
-    public function getVersions(string $projectId, Server $server, ModrinthProjectType $type): array
+    public function getVersions(string $projectId, Server $server, ProjectType $type): array
     {
-        $minecraftLoader = $type->getModrinthLoader($server);
+        $minecraftLoader = $type->getLoaderSlug($server);
 
         if (!$minecraftLoader) {
             return [];
@@ -309,7 +309,7 @@ class ModrinthSource implements BatchLatestVersionSourceInterface, ProjectSource
     public function lookupLatestVersions(
         array $requests,
         Server $server,
-        ModrinthProjectType $type,
+        ProjectType $type,
     ): LatestVersionLookupResult {
         $startedAt = microtime(true);
         $validRequests = array_values(array_filter(
@@ -321,7 +321,7 @@ class ModrinthSource implements BatchLatestVersionSourceInterface, ProjectSource
             return LatestVersionLookupResult::empty();
         }
 
-        $minecraftLoader = $type->getModrinthLoader($server);
+        $minecraftLoader = $type->getLoaderSlug($server);
         if (!$minecraftLoader) {
             return LatestVersionLookupResult::failed($validRequests, 'No compatible Modrinth loader is configured.');
         }

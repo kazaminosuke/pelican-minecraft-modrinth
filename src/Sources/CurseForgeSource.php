@@ -1,16 +1,16 @@
 <?php
 
-namespace Boy132\MinecraftModrinth\Sources;
+namespace Kazaminosuke\ModManager\Sources;
 
 use App\Models\Server;
-use Boy132\MinecraftModrinth\Contracts\BatchLatestVersionSourceInterface;
-use Boy132\MinecraftModrinth\Contracts\ProjectSourceInterface;
-use Boy132\MinecraftModrinth\Enums\MinecraftLoader;
-use Boy132\MinecraftModrinth\Enums\ModrinthProjectType;
-use Boy132\MinecraftModrinth\Enums\ProjectSourceKey;
-use Boy132\MinecraftModrinth\Support\LatestVersionLookupRequest;
-use Boy132\MinecraftModrinth\Support\LatestVersionLookupResult;
-use Boy132\MinecraftModrinth\Support\MinecraftVersionResolver;
+use Kazaminosuke\ModManager\Contracts\BatchLatestVersionSourceInterface;
+use Kazaminosuke\ModManager\Contracts\ProjectSourceInterface;
+use Kazaminosuke\ModManager\Enums\MinecraftLoader;
+use Kazaminosuke\ModManager\Enums\ProjectType;
+use Kazaminosuke\ModManager\Enums\ProjectSourceKey;
+use Kazaminosuke\ModManager\Support\LatestVersionLookupRequest;
+use Kazaminosuke\ModManager\Support\LatestVersionLookupResult;
+use Kazaminosuke\ModManager\Support\MinecraftVersionResolver;
 use Exception;
 use Illuminate\Http\Client\Pool;
 use Illuminate\Support\Facades\Http;
@@ -69,7 +69,7 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
         return filled($this->apiKey());
     }
 
-    public function supportsProjectType(ModrinthProjectType $type): bool
+    public function supportsProjectType(ProjectType $type): bool
     {
         return $this->classIdFor($type) !== null;
     }
@@ -95,7 +95,7 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
     }
 
     /** @return array{hits: array<int, array<string, mixed>>, total_hits: int} */
-    public function search(Server $server, ModrinthProjectType $type, int $page = 1, ?string $search = null, array $filters = []): array
+    public function search(Server $server, ProjectType $type, int $page = 1, ?string $search = null, array $filters = []): array
     {
         if (!$this->isConfigured()) {
             return ['hits' => [], 'total_hits' => 0];
@@ -245,7 +245,7 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
     }
 
     /** @return array<int, mixed> */
-    public function getVersions(string $projectId, Server $server, ModrinthProjectType $type): array
+    public function getVersions(string $projectId, Server $server, ProjectType $type): array
     {
         $params = $this->getVersionRequestParams($server, $type);
 
@@ -273,7 +273,7 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
      * @param array<int, string> $projectIds
      * @return array<string, array<int, mixed>>
      */
-    public function warmVersions(array $projectIds, Server $server, ModrinthProjectType $type): array
+    public function warmVersions(array $projectIds, Server $server, ProjectType $type): array
     {
         $params = $this->getVersionRequestParams($server, $type);
 
@@ -391,7 +391,7 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
     public function lookupLatestVersions(
         array $requests,
         Server $server,
-        ModrinthProjectType $type,
+        ProjectType $type,
     ): LatestVersionLookupResult {
         $startedAt = microtime(true);
         $validRequests = array_values(array_filter(
@@ -612,7 +612,7 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
     }
 
     /** @return array<string, int|string>|null */
-    protected function getVersionRequestParams(Server $server, ModrinthProjectType $type): ?array
+    protected function getVersionRequestParams(Server $server, ProjectType $type): ?array
     {
         if (!$this->isConfigured()) {
             return null;
@@ -730,12 +730,12 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
         return null;
     }
 
-    protected function classIdFor(ModrinthProjectType $type): ?int
+    protected function classIdFor(ProjectType $type): ?int
     {
         return match ($type) {
-            ModrinthProjectType::Mod => self::CLASS_ID_MOD,
-            ModrinthProjectType::Plugin => self::CLASS_ID_PLUGIN,
-            ModrinthProjectType::Datapack => null,
+            ProjectType::Mod => self::CLASS_ID_MOD,
+            ProjectType::Plugin => self::CLASS_ID_PLUGIN,
+            ProjectType::Datapack => null,
         };
     }
 
@@ -756,7 +756,7 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
     }
 
     /** @param array<string, mixed> $mod */
-    protected function normalizeProject(array $mod, ?ModrinthProjectType $type = null): array
+    protected function normalizeProject(array $mod, ?ProjectType $type = null): array
     {
         $logo = $mod['logo'] ?? null;
         $author = $mod['authors'][0]['name'] ?? null;

@@ -1,12 +1,12 @@
 <?php
 
-namespace Boy132\MinecraftModrinth\Jobs;
+namespace Kazaminosuke\ModManager\Jobs;
 
 use App\Models\Server;
 use App\Repositories\Daemon\DaemonFileRepository;
-use Boy132\MinecraftModrinth\Enums\ModrinthProjectType;
-use Boy132\MinecraftModrinth\Services\InstalledOperationManager;
-use Boy132\MinecraftModrinth\Services\MinecraftModrinthService;
+use Kazaminosuke\ModManager\Enums\ProjectType;
+use Kazaminosuke\ModManager\Services\InstalledOperationManager;
+use Kazaminosuke\ModManager\Services\InstalledProjectService;
 use Illuminate\Container\Container;
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
@@ -45,11 +45,11 @@ final class ScanInstalledProjects implements ShouldBeUnique, ShouldQueue
 
     public function handle(
         DaemonFileRepository $fileRepository,
-        MinecraftModrinthService $service,
+        InstalledProjectService $service,
         InstalledOperationManager $operations,
         CacheRepository $cache,
     ): void {
-        $type = ModrinthProjectType::tryFrom($this->projectType);
+        $type = ProjectType::tryFrom($this->projectType);
 
         if (!$type) {
             return;
@@ -152,7 +152,7 @@ final class ScanInstalledProjects implements ShouldBeUnique, ShouldQueue
 
     public function failed(?Throwable $exception): void
     {
-        $type = ModrinthProjectType::tryFrom($this->projectType);
+        $type = ProjectType::tryFrom($this->projectType);
 
         if (!$type) {
             return;

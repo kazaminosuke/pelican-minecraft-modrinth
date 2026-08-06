@@ -1,14 +1,14 @@
 <?php
 
-namespace Boy132\MinecraftModrinth\Tests\Unit\Support;
+namespace Kazaminosuke\ModManager\Tests\Unit\Support;
 
-use Boy132\MinecraftModrinth\Enums\ModrinthProjectType;
-use Boy132\MinecraftModrinth\Support\InstalledOperationState;
+use Kazaminosuke\ModManager\Enums\ProjectType;
+use Kazaminosuke\ModManager\Support\InstalledOperationState;
 use DateTimeImmutable;
 use PHPUnit\Framework\TestCase;
 use stdClass;
 
-require_once dirname(__DIR__, 3).'/src/Enums/ModrinthProjectType.php';
+require_once dirname(__DIR__, 3).'/src/Enums/ProjectType.php';
 require_once dirname(__DIR__, 3).'/src/Support/InstalledOperationState.php';
 
 class InstalledOperationStateTest extends TestCase
@@ -21,7 +21,7 @@ class InstalledOperationStateTest extends TestCase
         $state = InstalledOperationState::queued(
             operation: 'scan',
             serverId: 42,
-            projectType: ModrinthProjectType::Mod,
+            projectType: ProjectType::Mod,
             now: $queuedAt,
         )
             ->running(452, $queuedAt)
@@ -47,7 +47,7 @@ class InstalledOperationStateTest extends TestCase
         $state = InstalledOperationState::queued(
             operation: 'scan',
             serverId: 42,
-            projectType: ModrinthProjectType::Mod,
+            projectType: ProjectType::Mod,
         )->failed(
             'Wings returned /api/servers/secret path',
             [

@@ -1,12 +1,12 @@
 <?php
 
-namespace Boy132\MinecraftModrinth\Services;
+namespace Kazaminosuke\ModManager\Services;
 
 use App\Models\Server;
-use Boy132\MinecraftModrinth\Enums\ModrinthProjectType;
-use Boy132\MinecraftModrinth\Jobs\BulkUpdateInstalledProjects;
-use Boy132\MinecraftModrinth\Jobs\ScanInstalledProjects;
-use Boy132\MinecraftModrinth\Support\InstalledOperationState;
+use Kazaminosuke\ModManager\Enums\ProjectType;
+use Kazaminosuke\ModManager\Jobs\BulkUpdateInstalledProjects;
+use Kazaminosuke\ModManager\Jobs\ScanInstalledProjects;
+use Kazaminosuke\ModManager\Support\InstalledOperationState;
 use DateTimeImmutable;
 use Illuminate\Contracts\Bus\Dispatcher;
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
@@ -46,7 +46,7 @@ final class InstalledOperationManager
      */
     public function dispatchScan(
         Server|int $server,
-        ModrinthProjectType $projectType,
+        ProjectType $projectType,
         bool $force = false,
     ): array {
         $serverId = $this->serverId($server);
@@ -104,7 +104,7 @@ final class InstalledOperationManager
 
     public function state(
         Server|int $server,
-        ModrinthProjectType $projectType,
+        ProjectType $projectType,
         string $operation,
     ): ?InstalledOperationState {
         return InstalledOperationState::fromCachePayload(
@@ -117,7 +117,7 @@ final class InstalledOperationManager
      */
     public function queue(
         Server|int $server,
-        ModrinthProjectType $projectType,
+        ProjectType $projectType,
         string $operation,
         array $result = [],
     ): InstalledOperationState {
@@ -131,7 +131,7 @@ final class InstalledOperationManager
 
     public function start(
         Server|int $server,
-        ModrinthProjectType $projectType,
+        ProjectType $projectType,
         string $operation,
         ?int $total = null,
     ): InstalledOperationState {
@@ -144,7 +144,7 @@ final class InstalledOperationManager
 
     public function progress(
         Server|int $server,
-        ModrinthProjectType $projectType,
+        ProjectType $projectType,
         string $operation,
         int $progress,
         ?int $total = null,
@@ -159,7 +159,7 @@ final class InstalledOperationManager
      */
     public function defer(
         Server|int $server,
-        ModrinthProjectType $projectType,
+        ProjectType $projectType,
         string $operation,
         array $result = [],
     ): InstalledOperationState {
@@ -175,7 +175,7 @@ final class InstalledOperationManager
      */
     public function complete(
         Server|int $server,
-        ModrinthProjectType $projectType,
+        ProjectType $projectType,
         string $operation,
         array $result = [],
     ): InstalledOperationState {
@@ -191,7 +191,7 @@ final class InstalledOperationManager
      */
     public function fail(
         Server|int $server,
-        ModrinthProjectType $projectType,
+        ProjectType $projectType,
         string $operation,
         string $error,
         array $result = [],
@@ -205,7 +205,7 @@ final class InstalledOperationManager
 
     public function forget(
         Server|int $server,
-        ModrinthProjectType $projectType,
+        ProjectType $projectType,
         string $operation,
     ): void {
         $this->cache->forget($this->cacheKey($this->serverId($server), $projectType, $operation));
@@ -213,7 +213,7 @@ final class InstalledOperationManager
 
     private function operationStateOrActive(
         int $serverId,
-        ModrinthProjectType $projectType,
+        ProjectType $projectType,
         string $requestedOperation,
     ): ?InstalledOperationState {
         $current = $this->state($serverId, $projectType, $requestedOperation);
@@ -243,7 +243,7 @@ final class InstalledOperationManager
 
     private function cacheKey(
         int $serverId,
-        ModrinthProjectType $projectType,
+        ProjectType $projectType,
         string $operation,
     ): string {
         return implode(':', [
@@ -269,7 +269,7 @@ final class InstalledOperationManager
      */
     public function dispatchBulkUpdate(
         Server|int $server,
-        ModrinthProjectType $projectType,
+        ProjectType $projectType,
     ): array {
         $serverId = $this->serverId($server);
         $current = $this->operationStateOrActive($serverId, $projectType, self::OPERATION_BULK_UPDATE);

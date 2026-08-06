@@ -7,4 +7,4 @@ if (!is_file($panelAutoload)) {
 }
 
 $loader = require $panelAutoload;
-$loader->addPsr4('Boy132\\MinecraftModrinth\\', dirname(__DIR__).'/src/');
+$loader->addPsr4('Kazaminosuke\\ModManager\\', dirname(__DIR__).'/src/');

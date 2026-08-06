@@ -1,20 +1,20 @@
-# Minecraft Modrinth
+# Minecraft Mod Manager
 
-A plugin for [Pelican Panel](https://pelican.dev) that lets you search, install, update, and manage Minecraft mods/plugins from [Modrinth](https://modrinth.com) directly in the server panel.
+A plugin for [Pelican Panel](https://pelican.dev) that lets you search, install, update, and manage Minecraft mods and plugins from [Modrinth](https://modrinth.com), CurseForge, Hangar, and GitHub Releases directly in the server panel.
 
 > This repository is a **fork** of
 > [H1ghSyst3m/plugins](https://github.com/H1ghSyst3m/plugins/tree/featcomplete-mod-plugin-management), which forks [pelican-dev/plugins](https://github.com/pelican-dev/plugins).
 
 ## Features
 
-- Browse and search Modrinth projects from inside the server panel
+- Browse and search projects from supported sources inside the server panel
 - Install compatible mod/plugin versions with one click
 - Track installed files via `.modrinth-metadata.json`
 - Detect available updates for installed entries
 - Uninstall installed entries directly from the panel
 - **Fork-specific additions:**
   - Scan existing `.jar` files and import found matches into metadata
-  - Show "Not on Modrinth" state for unknown files
+  - Show an untracked state for unknown files
   - Rescan actions for mods/plugins update checks
   - Bulk update action for all updatable mods/plugins
   - Extended German/English notification and action texts

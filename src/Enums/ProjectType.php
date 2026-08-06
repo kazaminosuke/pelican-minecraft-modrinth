@@ -1,11 +1,11 @@
 <?php
 
-namespace Boy132\MinecraftModrinth\Enums;
+namespace Kazaminosuke\ModManager\Enums;
 
 use App\Models\Server;
 use Filament\Support\Contracts\HasLabel;
 
-enum ModrinthProjectType: string implements HasLabel
+enum ProjectType: string implements HasLabel
 {
     case Mod = 'mod';
     case Plugin = 'plugin';
@@ -37,7 +37,7 @@ enum ModrinthProjectType: string implements HasLabel
         };
     }
 
-    public function getModrinthLoader(Server $server): ?string
+    public function getLoaderSlug(Server $server): ?string
     {
         return match ($this) {
             self::Datapack => 'datapack',
@@ -45,7 +45,7 @@ enum ModrinthProjectType: string implements HasLabel
         };
     }
 
-    public static function fromServer(Server $server): ?ModrinthProjectType
+    public static function fromServer(Server $server): ?ProjectType
     {
         $server->loadMissing('egg');
 

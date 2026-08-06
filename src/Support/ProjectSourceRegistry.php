@@ -1,15 +1,15 @@
 <?php
 
-namespace Boy132\MinecraftModrinth\Support;
+namespace Kazaminosuke\ModManager\Support;
 
 use App\Models\Server;
-use Boy132\MinecraftModrinth\Contracts\ProjectSourceInterface;
-use Boy132\MinecraftModrinth\Enums\ModrinthProjectType;
-use Boy132\MinecraftModrinth\Enums\ProjectSourceKey;
-use Boy132\MinecraftModrinth\Sources\CurseForgeSource;
-use Boy132\MinecraftModrinth\Sources\GitHubReleasesSource;
-use Boy132\MinecraftModrinth\Sources\HangarSource;
-use Boy132\MinecraftModrinth\Sources\ModrinthSource;
+use Kazaminosuke\ModManager\Contracts\ProjectSourceInterface;
+use Kazaminosuke\ModManager\Enums\ProjectType;
+use Kazaminosuke\ModManager\Enums\ProjectSourceKey;
+use Kazaminosuke\ModManager\Sources\CurseForgeSource;
+use Kazaminosuke\ModManager\Sources\GitHubReleasesSource;
+use Kazaminosuke\ModManager\Sources\HangarSource;
+use Kazaminosuke\ModManager\Sources\ModrinthSource;
 use Exception;
 
 class ProjectSourceRegistry
@@ -63,7 +63,7 @@ class ProjectSourceRegistry
      *
      * @return array<int, ProjectSourceInterface>
      */
-    public function availableFor(Server $server, ModrinthProjectType $type): array
+    public function availableFor(Server $server, ProjectType $type): array
     {
         $server->loadMissing('egg');
         $features = $server->egg->features ?? [];
@@ -142,7 +142,7 @@ class ProjectSourceRegistry
     /**
      * Cached for a long time (see HYDRATE_CACHE_HOURS) since it's no longer
      * only time-bounded: CacheVersion::hydration() bakes in a per-server
-     * generation stamp that MinecraftModrinthService bumps whenever that
+     * generation stamp that InstalledProjectService bumps whenever that
      * server's installed-mods metadata is written (install/update/scan
      * import/uninstall), so a mutation is reflected immediately rather than
      * waiting out the TTL, while an unmodified server's chunk cache survives

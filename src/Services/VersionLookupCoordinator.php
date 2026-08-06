@@ -1,13 +1,13 @@
 <?php
 
-namespace Boy132\MinecraftModrinth\Services;
+namespace Kazaminosuke\ModManager\Services;
 
 use App\Models\Server;
-use Boy132\MinecraftModrinth\Contracts\BatchLatestVersionSourceInterface;
-use Boy132\MinecraftModrinth\Enums\ModrinthProjectType;
-use Boy132\MinecraftModrinth\Support\LatestVersionLookupRequest;
-use Boy132\MinecraftModrinth\Support\LatestVersionLookupResult;
-use Boy132\MinecraftModrinth\Support\ProjectSourceRegistry;
+use Kazaminosuke\ModManager\Contracts\BatchLatestVersionSourceInterface;
+use Kazaminosuke\ModManager\Enums\ProjectType;
+use Kazaminosuke\ModManager\Support\LatestVersionLookupRequest;
+use Kazaminosuke\ModManager\Support\LatestVersionLookupResult;
+use Kazaminosuke\ModManager\Support\ProjectSourceRegistry;
 use Throwable;
 
 class VersionLookupCoordinator
@@ -22,7 +22,7 @@ class VersionLookupCoordinator
     public function lookupInstalled(
         array $installedMods,
         Server $server,
-        ModrinthProjectType $type,
+        ProjectType $type,
     ): LatestVersionLookupResult {
         $requests = [];
 
@@ -43,7 +43,7 @@ class VersionLookupCoordinator
     public function lookup(
         array $requests,
         Server $server,
-        ModrinthProjectType $type,
+        ProjectType $type,
     ): LatestVersionLookupResult {
         $bySource = [];
 

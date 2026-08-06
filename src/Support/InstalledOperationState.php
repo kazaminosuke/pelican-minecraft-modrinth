@@ -1,8 +1,8 @@
 <?php
 
-namespace Boy132\MinecraftModrinth\Support;
+namespace Kazaminosuke\ModManager\Support;
 
-use Boy132\MinecraftModrinth\Enums\ModrinthProjectType;
+use Kazaminosuke\ModManager\Enums\ProjectType;
 use DateTimeImmutable;
 use InvalidArgumentException;
 
@@ -39,7 +39,7 @@ final class InstalledOperationState
         public readonly string $status,
         public readonly string $operation,
         public readonly int $serverId,
-        public readonly ModrinthProjectType $projectType,
+        public readonly ProjectType $projectType,
         public readonly int $progress,
         public readonly ?int $total,
         public readonly array $result,
@@ -67,7 +67,7 @@ final class InstalledOperationState
     public static function queued(
         string $operation,
         int $serverId,
-        ModrinthProjectType $projectType,
+        ProjectType $projectType,
         array $result = [],
         ?DateTimeImmutable $now = null,
     ): self {
@@ -237,7 +237,7 @@ final class InstalledOperationState
             return null;
         }
 
-        $projectType = ModrinthProjectType::tryFrom($payload['project_type']);
+        $projectType = ProjectType::tryFrom($payload['project_type']);
 
         if (!$projectType || !in_array($payload['status'], self::STATUSES, true)) {
             return null;

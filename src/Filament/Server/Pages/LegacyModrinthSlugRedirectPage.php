@@ -1,9 +1,9 @@
 <?php
 
-namespace Boy132\MinecraftModrinth\Filament\Server\Pages;
+namespace Kazaminosuke\ModManager\Filament\Server\Pages;
 
 use App\Models\Server;
-use Boy132\MinecraftModrinth\Enums\ModrinthProjectType;
+use Kazaminosuke\ModManager\Enums\ProjectType;
 use Filament\Facades\Filament;
 use Filament\Pages\Page;
 use Filament\Schemas\Schema;
@@ -11,10 +11,10 @@ use Filament\Schemas\Schema;
 /**
  * Kept at the plugin's original "modrinth" URL slug so links or bookmarks made
  * before the multi-source rename keep working, redirecting straight to
- * MinecraftModrinthProjectPage (now at "mod-manager"). Hidden from
+ * ModManagerPage (now at "mod-manager"). Hidden from
  * navigation - only reachable by visiting the old URL directly.
  */
-class MinecraftModrinthLegacyRedirectPage extends Page
+class LegacyModrinthSlugRedirectPage extends Page
 {
     protected static ?string $slug = 'modrinth';
 
@@ -28,12 +28,12 @@ class MinecraftModrinthLegacyRedirectPage extends Page
         /** @var Server $server */
         $server = Filament::getTenant();
 
-        return parent::canAccess() && ModrinthProjectType::fromServer($server) !== null;
+        return parent::canAccess() && ProjectType::fromServer($server) !== null;
     }
 
     public function mount(): void
     {
-        $this->redirect(MinecraftModrinthProjectPage::getUrl());
+        $this->redirect(ModManagerPage::getUrl());
     }
 
     public function content(Schema $schema): Schema

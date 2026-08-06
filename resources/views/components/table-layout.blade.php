@@ -3,7 +3,7 @@
         'use strict';
 
         // Everything about the table's vertical layout is expressed in CSS
-        // (see MinecraftModrinthPlugin's injected stylesheet): .fi-ta-main is
+        // (see ModManagerPlugin's injected stylesheet): .fi-ta-main is
         // a fixed-height flex column, the row viewport takes the slack, and
         // the paginator is the last auto-sized item in that column. The three
         // numbers CSS cannot derive on its own are all this script supplies.

@@ -1,28 +1,28 @@
 <?php
 
-namespace Boy132\MinecraftModrinth\Services;
+namespace Kazaminosuke\ModManager\Services;
 
 use App\Models\Server;
 use App\Repositories\Daemon\DaemonFileRepository;
-use Boy132\MinecraftModrinth\Contracts\ProjectSourceInterface;
-use Boy132\MinecraftModrinth\Enums\ModrinthProjectType;
-use Boy132\MinecraftModrinth\Enums\ProjectSourceKey;
-use Boy132\MinecraftModrinth\Repositories\InstalledMetadataRepository;
-use Boy132\MinecraftModrinth\Sources\CurseForgeSource;
-use Boy132\MinecraftModrinth\Sources\HangarSource;
-use Boy132\MinecraftModrinth\Sources\ModrinthSource;
-use Boy132\MinecraftModrinth\Support\CacheVersion;
-use Boy132\MinecraftModrinth\Support\CurseForgeFingerprint;
-use Boy132\MinecraftModrinth\Support\InstalledMetadataDocument;
-use Boy132\MinecraftModrinth\Support\InstalledMetadataReadResult;
-use Boy132\MinecraftModrinth\Support\InstalledMetadataReadStatus;
-use Boy132\MinecraftModrinth\Support\InstalledScanResult;
-use Boy132\MinecraftModrinth\Support\MinecraftVersionResolver;
+use Kazaminosuke\ModManager\Contracts\ProjectSourceInterface;
+use Kazaminosuke\ModManager\Enums\ProjectType;
+use Kazaminosuke\ModManager\Enums\ProjectSourceKey;
+use Kazaminosuke\ModManager\Repositories\InstalledMetadataRepository;
+use Kazaminosuke\ModManager\Sources\CurseForgeSource;
+use Kazaminosuke\ModManager\Sources\HangarSource;
+use Kazaminosuke\ModManager\Sources\ModrinthSource;
+use Kazaminosuke\ModManager\Support\CacheVersion;
+use Kazaminosuke\ModManager\Support\CurseForgeFingerprint;
+use Kazaminosuke\ModManager\Support\InstalledMetadataDocument;
+use Kazaminosuke\ModManager\Support\InstalledMetadataReadResult;
+use Kazaminosuke\ModManager\Support\InstalledMetadataReadStatus;
+use Kazaminosuke\ModManager\Support\InstalledScanResult;
+use Kazaminosuke\ModManager\Support\MinecraftVersionResolver;
 use Exception;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 
-class MinecraftModrinthService
+class InstalledProjectService
 {
     private const HASH_SCAN_CACHE_MINUTES = 10;
 
@@ -66,63 +66,18 @@ class MinecraftModrinthService
         return MinecraftVersionResolver::resolve($server);
     }
 
-    /** @return array{hits: array<int, array<string, mixed>>, total_hits: int} */
-    public function getModrinthProjects(Server $server, int $page = 1, ?string $search = null, ?ModrinthProjectType $type = null): array
-    {
-        $type ??= ModrinthProjectType::fromServer($server);
-
-        if (!$type) {
-            return [
-                'hits' => [],
-                'total_hits' => 0,
-            ];
-        }
-
-        return $this->source->search($server, $type, $page, $search);
-    }
-
-    /**
-     * @param array<int, array{project_id: string, project_slug: string, project_title: string, version_id: string, version_number: string, filename: string, installed_at: string, author?: string}> $installedMods
-     * @return array<int, array<string, mixed>>
-     */
-    public function getInstalledModsFromModrinth(array $installedMods, int $page = 1): array
-    {
-        return $this->source->getInstalledModsFromModrinth($installedMods, $page);
-    }
-
-    /** @return array<int, mixed> */
-    public function getModrinthVersions(string $projectId, Server $server, ?ModrinthProjectType $type = null): array
-    {
-        $type ??= ModrinthProjectType::fromServer($server);
-
-        if (!$type) {
-            return [];
-        }
-
-        return $this->source->getVersions($projectId, $server, $type);
-    }
-
-    /**
-     * @param array<string, string> $hashMap [filename => sha512hash]
-     * @return array<string, mixed> [sha512hash => versionData]
-     */
-    public function lookupVersionsByHashes(array $hashMap): array
-    {
-        return $this->source->findVersionsByHash($hashMap);
-    }
-
     /** @return array<int, string> */
-    public function scanAndImportMods(Server $server, DaemonFileRepository $fileRepository, ?ModrinthProjectType $type = null): array
+    public function scanAndImportMods(Server $server, DaemonFileRepository $fileRepository, ?ProjectType $type = null): array
     {
         return $this->scanAndImportModsResult($server, $fileRepository, $type)->unknownFiles;
     }
 
-    public function scanAndImportModsResult(Server $server, DaemonFileRepository $fileRepository, ?ModrinthProjectType $type = null): InstalledScanResult
+    public function scanAndImportModsResult(Server $server, DaemonFileRepository $fileRepository, ?ProjectType $type = null): InstalledScanResult
     {
         set_time_limit(240);
 
         $startedAt = microtime(true);
-        $resolvedType = $type ?? ModrinthProjectType::fromServer($server);
+        $resolvedType = $type ?? ProjectType::fromServer($server);
         $cacheKey = $this->getHashScanCacheKey($server, $resolvedType);
         $cachedResult = InstalledScanResult::fromCache(Cache::get($cacheKey));
         $scanExecuted = false;
@@ -173,10 +128,10 @@ class MinecraftModrinthService
         return $result;
     }
 
-    public function getHashScanCacheKey(Server $server, ?ModrinthProjectType $type = null): string
+    public function getHashScanCacheKey(Server $server, ?ProjectType $type = null): string
     {
-        $resolvedType = $type ?? ModrinthProjectType::fromServer($server);
-        $typeKey = $resolvedType instanceof ModrinthProjectType ? $resolvedType->value : 'unknown';
+        $resolvedType = $type ?? ProjectType::fromServer($server);
+        $typeKey = $resolvedType instanceof ProjectType ? $resolvedType->value : 'unknown';
 
         return "installed_scan:v2:{$server->id}:{$typeKey}";
     }
@@ -197,9 +152,9 @@ class MinecraftModrinthService
      *
      * @throws Exception
      */
-    public function clearInstalledModsMetadata(Server $server, DaemonFileRepository $fileRepository, ?ModrinthProjectType $type = null): void
+    public function clearInstalledModsMetadata(Server $server, DaemonFileRepository $fileRepository, ?ProjectType $type = null): void
     {
-        $type ??= ModrinthProjectType::fromServer($server);
+        $type ??= ProjectType::fromServer($server);
         $folder = $this->resolveMetadataFolder($server, $fileRepository, $type);
 
         try {
@@ -227,20 +182,20 @@ class MinecraftModrinthService
      *
      * @throws Exception
      */
-    public function resetInstalledMods(Server $server, DaemonFileRepository $fileRepository, ?ModrinthProjectType $type = null): array
+    public function resetInstalledMods(Server $server, DaemonFileRepository $fileRepository, ?ProjectType $type = null): array
     {
-        $type ??= ModrinthProjectType::fromServer($server);
+        $type ??= ProjectType::fromServer($server);
 
         $this->clearInstalledModsMetadata($server, $fileRepository, $type);
 
         return $this->scanAndImportMods($server, $fileRepository, $type);
     }
 
-    public function getProjectFolder(Server $server, DaemonFileRepository $fileRepository, ?ModrinthProjectType $type = null): string
+    public function getProjectFolder(Server $server, DaemonFileRepository $fileRepository, ?ProjectType $type = null): string
     {
-        $resolvedType = $type ?? ModrinthProjectType::fromServer($server);
+        $resolvedType = $type ?? ProjectType::fromServer($server);
 
-        if ($resolvedType !== ModrinthProjectType::Datapack) {
+        if ($resolvedType !== ProjectType::Datapack) {
             return $resolvedType?->getFolder($server) ?? 'mods';
         }
 
@@ -293,11 +248,11 @@ class MinecraftModrinthService
         return $properties;
     }
 
-    protected function performScan(Server $server, DaemonFileRepository $fileRepository, ?ModrinthProjectType $type = null): InstalledScanResult
+    protected function performScan(Server $server, DaemonFileRepository $fileRepository, ?ProjectType $type = null): InstalledScanResult
     {
         set_time_limit(120);
 
-        $type ??= ModrinthProjectType::fromServer($server);
+        $type ??= ProjectType::fromServer($server);
 
         if (!$type) {
             return InstalledScanResult::failed('unsupported_project_type');
@@ -845,12 +800,12 @@ class MinecraftModrinthService
     /**
      * @throws Exception
      */
-    protected function resolveMetadataFolder(Server $server, DaemonFileRepository $fileRepository, ?ModrinthProjectType $type = null): string
+    protected function resolveMetadataFolder(Server $server, DaemonFileRepository $fileRepository, ?ProjectType $type = null): string
     {
-        $type ??= ModrinthProjectType::fromServer($server);
+        $type ??= ProjectType::fromServer($server);
 
         if (!$type) {
-            throw new Exception("Server {$server->id} does not support Modrinth mods or plugins");
+            throw new Exception("Server {$server->id} does not support managed mods or plugins");
         }
 
         return $this->getProjectFolder($server, $fileRepository, $type);
@@ -860,7 +815,7 @@ class MinecraftModrinthService
      * Read the complete installed metadata document, including the persistent
      * file-signature and hash index used by incremental scans.
      */
-    public function getInstalledMetadataReadResult(Server $server, DaemonFileRepository $fileRepository, ?ModrinthProjectType $type = null): InstalledMetadataReadResult
+    public function getInstalledMetadataReadResult(Server $server, DaemonFileRepository $fileRepository, ?ProjectType $type = null): InstalledMetadataReadResult
     {
         try {
             $folder = $this->resolveMetadataFolder($server, $fileRepository, $type);
@@ -875,7 +830,7 @@ class MinecraftModrinthService
     }
 
     /** @return array<int, array<string, mixed>> */
-    public function getInstalledModsMetadata(Server $server, DaemonFileRepository $fileRepository, ?ModrinthProjectType $type = null): array
+    public function getInstalledModsMetadata(Server $server, DaemonFileRepository $fileRepository, ?ProjectType $type = null): array
     {
         return $this->getInstalledMetadataReadResult($server, $fileRepository, $type)->document->installedMods();
     }
@@ -890,7 +845,7 @@ class MinecraftModrinthService
         string $versionNumber,
         string $filename,
         ?string $author = null,
-        ?ModrinthProjectType $type = null,
+        ?ProjectType $type = null,
         ProjectSourceKey $source = ProjectSourceKey::Modrinth
     ): bool {
         try {
@@ -941,7 +896,7 @@ class MinecraftModrinthService
     }
 
     /** @param array<int, array<string, mixed>> $installedMods */
-    protected function saveInstalledModsMetadata(Server $server, DaemonFileRepository $fileRepository, array $installedMods, ?ModrinthProjectType $type = null): bool
+    protected function saveInstalledModsMetadata(Server $server, DaemonFileRepository $fileRepository, array $installedMods, ?ProjectType $type = null): bool
     {
         try {
             $folder = $this->resolveMetadataFolder($server, $fileRepository, $type);
@@ -959,7 +914,7 @@ class MinecraftModrinthService
         );
     }
 
-    public function saveInstalledMetadataDocument(Server $server, DaemonFileRepository $fileRepository, InstalledMetadataDocument $document, ?ModrinthProjectType $type = null): bool
+    public function saveInstalledMetadataDocument(Server $server, DaemonFileRepository $fileRepository, InstalledMetadataDocument $document, ?ProjectType $type = null): bool
     {
         try {
             $folder = $this->resolveMetadataFolder($server, $fileRepository, $type);
@@ -972,7 +927,7 @@ class MinecraftModrinthService
         return $this->metadataRepository->replace($server, $fileRepository, $folder, $document);
     }
 
-    public function removeModMetadata(Server $server, DaemonFileRepository $fileRepository, string $projectId, ?ModrinthProjectType $type = null, ProjectSourceKey $source = ProjectSourceKey::Modrinth): bool
+    public function removeModMetadata(Server $server, DaemonFileRepository $fileRepository, string $projectId, ?ProjectType $type = null, ProjectSourceKey $source = ProjectSourceKey::Modrinth): bool
     {
         try {
             $folder = $this->resolveMetadataFolder($server, $fileRepository, $type);
@@ -998,7 +953,7 @@ class MinecraftModrinthService
     }
 
     /** @return array{source: string, project_id: string, project_slug: string, project_title: string, version_id: string, version_number: string, filename: string, installed_at: string, author?: string}|null */
-    public function getInstalledMod(Server $server, DaemonFileRepository $fileRepository, string $projectId, ?ModrinthProjectType $type = null, ProjectSourceKey $source = ProjectSourceKey::Modrinth): ?array
+    public function getInstalledMod(Server $server, DaemonFileRepository $fileRepository, string $projectId, ?ProjectType $type = null, ProjectSourceKey $source = ProjectSourceKey::Modrinth): ?array
     {
         $installedMods = $this->getInstalledModsMetadata($server, $fileRepository, $type);
 
@@ -1029,7 +984,7 @@ class MinecraftModrinthService
     /**
      * @return array<string>
      */
-    public function getInstalledMods(Server $server, DaemonFileRepository $fileRepository, ?ModrinthProjectType $type = null): array
+    public function getInstalledMods(Server $server, DaemonFileRepository $fileRepository, ?ProjectType $type = null): array
     {
         $metadata = $this->getInstalledModsMetadata($server, $fileRepository, $type);
 

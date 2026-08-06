@@ -1,9 +1,9 @@
 <?php
 
-namespace Boy132\MinecraftModrinth\Tests\Unit\Support;
+namespace Kazaminosuke\ModManager\Tests\Unit\Support;
 
-use Boy132\MinecraftModrinth\Support\CurseForgeFingerprint;
-use Boy132\MinecraftModrinth\Support\InstalledScanResult;
+use Kazaminosuke\ModManager\Support\CurseForgeFingerprint;
+use Kazaminosuke\ModManager\Support\InstalledScanResult;
 use PHPUnit\Framework\TestCase;
 
 class InstalledScanAndHashTest extends TestCase

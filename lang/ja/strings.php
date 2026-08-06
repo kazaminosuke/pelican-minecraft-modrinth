@@ -1,7 +1,7 @@
 <?php
 
 return [
-    'plugin_name' => 'Modrinth',
+    'plugin_name' => 'Minecraft Modマネージャー',
     'minecraft_mods' => 'Minecraft Mod',
     'minecraft_plugins' => 'Minecraft Plugin',
     'minecraft_datapacks' => 'Minecraft Datapack',
@@ -89,7 +89,7 @@ return [
     ],
 
     'badges' => [
-        'not_on_modrinth' => '未追跡',
+        'untracked' => '未追跡',
     ],
 
     'modals' => [

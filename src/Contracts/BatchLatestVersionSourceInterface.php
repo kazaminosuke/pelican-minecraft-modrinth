@@ -1,11 +1,11 @@
 <?php
 
-namespace Boy132\MinecraftModrinth\Contracts;
+namespace Kazaminosuke\ModManager\Contracts;
 
 use App\Models\Server;
-use Boy132\MinecraftModrinth\Enums\ModrinthProjectType;
-use Boy132\MinecraftModrinth\Support\LatestVersionLookupRequest;
-use Boy132\MinecraftModrinth\Support\LatestVersionLookupResult;
+use Kazaminosuke\ModManager\Enums\ProjectType;
+use Kazaminosuke\ModManager\Support\LatestVersionLookupRequest;
+use Kazaminosuke\ModManager\Support\LatestVersionLookupResult;
 
 /**
  * Optional source capability for resolving the latest compatible version of
@@ -24,6 +24,6 @@ interface BatchLatestVersionSourceInterface
     public function lookupLatestVersions(
         array $requests,
         Server $server,
-        ModrinthProjectType $type,
+        ProjectType $type,
     ): LatestVersionLookupResult;
 }

@@ -1,12 +1,12 @@
 <?php
 
-namespace Boy132\MinecraftModrinth\Services;
+namespace Kazaminosuke\ModManager\Services;
 
 use App\Models\Server;
 use App\Repositories\Daemon\DaemonFileRepository;
-use Boy132\MinecraftModrinth\Enums\ModrinthProjectType;
-use Boy132\MinecraftModrinth\Enums\ProjectSourceKey;
-use Boy132\MinecraftModrinth\Support\LatestVersionLookupResult;
+use Kazaminosuke\ModManager\Enums\ProjectType;
+use Kazaminosuke\ModManager\Enums\ProjectSourceKey;
+use Kazaminosuke\ModManager\Support\LatestVersionLookupResult;
 use Exception;
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
 use Throwable;
@@ -14,7 +14,7 @@ use Throwable;
 final class InstalledProjectUpdateService
 {
     public function __construct(
-        private readonly MinecraftModrinthService $minecraft,
+        private readonly InstalledProjectService $minecraft,
         private readonly VersionLookupCoordinator $versions,
         private readonly CacheRepository $cache,
     ) {}
@@ -26,7 +26,7 @@ final class InstalledProjectUpdateService
     public function updateAll(
         Server $server,
         DaemonFileRepository $fileRepository,
-        ModrinthProjectType $type,
+        ProjectType $type,
         ?callable $progress = null,
     ): array {
         $metadata = $this->minecraft->getInstalledMetadataReadResult($server, $fileRepository, $type);
@@ -103,7 +103,7 @@ final class InstalledProjectUpdateService
     private function installVersion(
         Server $server,
         DaemonFileRepository $fileRepository,
-        ModrinthProjectType $type,
+        ProjectType $type,
         array $installedMod,
         array $version,
     ): void {

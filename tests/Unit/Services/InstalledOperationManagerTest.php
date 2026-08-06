@@ -1,19 +1,19 @@
 <?php
 
-namespace Boy132\MinecraftModrinth\Tests\Unit\Services;
+namespace Kazaminosuke\ModManager\Tests\Unit\Services;
 
-use Boy132\MinecraftModrinth\Enums\ModrinthProjectType;
-use Boy132\MinecraftModrinth\Jobs\BulkUpdateInstalledProjects;
-use Boy132\MinecraftModrinth\Jobs\ScanInstalledProjects;
-use Boy132\MinecraftModrinth\Services\InstalledOperationManager;
-use Boy132\MinecraftModrinth\Support\InstalledOperationState;
+use Kazaminosuke\ModManager\Enums\ProjectType;
+use Kazaminosuke\ModManager\Jobs\BulkUpdateInstalledProjects;
+use Kazaminosuke\ModManager\Jobs\ScanInstalledProjects;
+use Kazaminosuke\ModManager\Services\InstalledOperationManager;
+use Kazaminosuke\ModManager\Support\InstalledOperationState;
 use Illuminate\Contracts\Bus\Dispatcher;
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
 use Illuminate\Contracts\Config\Repository as ConfigRepository;
 use Mockery;
 use PHPUnit\Framework\TestCase;
 
-require_once dirname(__DIR__, 3).'/src/Enums/ModrinthProjectType.php';
+require_once dirname(__DIR__, 3).'/src/Enums/ProjectType.php';
 require_once dirname(__DIR__, 3).'/src/Support/InstalledOperationState.php';
 require_once dirname(__DIR__, 3).'/src/Jobs/BulkUpdateInstalledProjects.php';
 require_once dirname(__DIR__, 3).'/src/Jobs/ScanInstalledProjects.php';
@@ -38,7 +38,7 @@ class InstalledOperationManagerTest extends TestCase
         $dispatcher->shouldNotReceive('dispatch');
 
         $result = (new InstalledOperationManager($cache, $config, $dispatcher))
-            ->dispatchScan(42, ModrinthProjectType::Mod);
+            ->dispatchScan(42, ProjectType::Mod);
 
         self::assertFalse($result['dispatched']);
         self::assertSame('sync_queue', $result['reason']);
@@ -60,12 +60,12 @@ class InstalledOperationManagerTest extends TestCase
         $dispatcher->shouldReceive('dispatch')
             ->once()
             ->withArgs(fn (ScanInstalledProjects $job): bool => $job->serverId === 42
-                && $job->projectType === ModrinthProjectType::Mod->value
+                && $job->projectType === ProjectType::Mod->value
                 && $job->force)
             ->andReturn(1);
 
         $result = (new InstalledOperationManager($cache, $config, $dispatcher))
-            ->dispatchScan(42, ModrinthProjectType::Mod, force: true);
+            ->dispatchScan(42, ProjectType::Mod, force: true);
 
         self::assertTrue($result['dispatched']);
         self::assertNull($result['reason']);
@@ -87,11 +87,11 @@ class InstalledOperationManagerTest extends TestCase
         $dispatcher->shouldReceive('dispatch')
             ->once()
             ->withArgs(fn (BulkUpdateInstalledProjects $job): bool => $job->serverId === 42
-                && $job->projectType === ModrinthProjectType::Mod->value)
+                && $job->projectType === ProjectType::Mod->value)
             ->andReturn(1);
 
         $result = (new InstalledOperationManager($cache, $config, $dispatcher))
-            ->dispatchBulkUpdate(42, ModrinthProjectType::Mod);
+            ->dispatchBulkUpdate(42, ProjectType::Mod);
 
         self::assertTrue($result['dispatched']);
         self::assertNull($result['reason']);
@@ -104,7 +104,7 @@ class InstalledOperationManagerTest extends TestCase
         $activeState = InstalledOperationState::queued(
             InstalledOperationManager::OPERATION_BULK_UPDATE,
             42,
-            ModrinthProjectType::Mod,
+            ProjectType::Mod,
         );
         $cache = Mockery::mock(CacheRepository::class);
         $cache->shouldReceive('get')->once()->andReturn($activeState->toCachePayload());
@@ -115,7 +115,7 @@ class InstalledOperationManagerTest extends TestCase
         $dispatcher->shouldNotReceive('dispatch');
 
         $result = (new InstalledOperationManager($cache, $config, $dispatcher))
-            ->dispatchBulkUpdate(42, ModrinthProjectType::Mod);
+            ->dispatchBulkUpdate(42, ProjectType::Mod);
 
         self::assertFalse($result['dispatched']);
         self::assertSame('already_active', $result['reason']);
@@ -127,7 +127,7 @@ class InstalledOperationManagerTest extends TestCase
         $activeState = InstalledOperationState::queued(
             InstalledOperationManager::OPERATION_SCAN,
             42,
-            ModrinthProjectType::Mod,
+            ProjectType::Mod,
         );
         $cache = Mockery::mock(CacheRepository::class);
         $cache->shouldReceive('get')
@@ -140,7 +140,7 @@ class InstalledOperationManagerTest extends TestCase
         $dispatcher->shouldNotReceive('dispatch');
 
         $result = (new InstalledOperationManager($cache, $config, $dispatcher))
-            ->dispatchBulkUpdate(42, ModrinthProjectType::Mod);
+            ->dispatchBulkUpdate(42, ProjectType::Mod);
 
         self::assertFalse($result['dispatched']);
         self::assertSame('already_active', $result['reason']);

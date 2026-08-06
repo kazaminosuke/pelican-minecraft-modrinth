@@ -1,6 +1,6 @@
 <?php
 
-namespace Boy132\MinecraftModrinth\Enums;
+namespace Kazaminosuke\ModManager\Enums;
 
 enum ProjectSourceKey: string
 {

@@ -1,15 +1,15 @@
 <?php
 
-namespace Boy132\MinecraftModrinth\Tests\Unit\Services;
+namespace Kazaminosuke\ModManager\Tests\Unit\Services;
 
 use App\Models\Server;
-use Boy132\MinecraftModrinth\Contracts\BatchLatestVersionSourceInterface;
-use Boy132\MinecraftModrinth\Contracts\ProjectSourceInterface;
-use Boy132\MinecraftModrinth\Enums\ModrinthProjectType;
-use Boy132\MinecraftModrinth\Services\VersionLookupCoordinator;
-use Boy132\MinecraftModrinth\Support\LatestVersionLookupRequest;
-use Boy132\MinecraftModrinth\Support\LatestVersionLookupResult;
-use Boy132\MinecraftModrinth\Support\ProjectSourceRegistry;
+use Kazaminosuke\ModManager\Contracts\BatchLatestVersionSourceInterface;
+use Kazaminosuke\ModManager\Contracts\ProjectSourceInterface;
+use Kazaminosuke\ModManager\Enums\ProjectType;
+use Kazaminosuke\ModManager\Services\VersionLookupCoordinator;
+use Kazaminosuke\ModManager\Support\LatestVersionLookupRequest;
+use Kazaminosuke\ModManager\Support\LatestVersionLookupResult;
+use Kazaminosuke\ModManager\Support\ProjectSourceRegistry;
 use Mockery;
 use PHPUnit\Framework\TestCase;
 
@@ -33,7 +33,7 @@ class VersionLookupCoordinatorTest extends TestCase
         $modrinth->shouldReceive('isConfigured')->once()->andReturnTrue();
         $modrinth->shouldReceive('lookupLatestVersions')
             ->once()
-            ->with([$modrinthRequest], $server, ModrinthProjectType::Mod)
+            ->with([$modrinthRequest], $server, ProjectType::Mod)
             ->andReturn(new LatestVersionLookupResult([
                 $modrinthRequest->key() => ['id' => 'new-alpha'],
             ]));
@@ -41,7 +41,7 @@ class VersionLookupCoordinatorTest extends TestCase
         $curseForge->shouldReceive('isConfigured')->once()->andReturnTrue();
         $curseForge->shouldReceive('lookupLatestVersions')
             ->once()
-            ->with([$curseForgeRequest], $server, ModrinthProjectType::Mod)
+            ->with([$curseForgeRequest], $server, ProjectType::Mod)
             ->andReturn(new LatestVersionLookupResult(
                 unresolvedKeys: [$curseForgeRequest->key()],
             ));
@@ -53,7 +53,7 @@ class VersionLookupCoordinatorTest extends TestCase
         $result = (new VersionLookupCoordinator($registry))->lookup(
             [$modrinthRequest, $curseForgeRequest],
             $server,
-            ModrinthProjectType::Mod,
+            ProjectType::Mod,
         );
 
         self::assertSame('new-alpha', $result->version($modrinthRequest->key())['id']);
@@ -79,7 +79,7 @@ class VersionLookupCoordinatorTest extends TestCase
         $result = (new VersionLookupCoordinator($registry))->lookup(
             [$availableRequest, $missingRequest],
             $server,
-            ModrinthProjectType::Mod,
+            ProjectType::Mod,
         );
 
         self::assertSame('latest', $result->version($availableRequest->key())['id']);

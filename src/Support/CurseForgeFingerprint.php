@@ -1,6 +1,6 @@
 <?php
 
-namespace Boy132\MinecraftModrinth\Support;
+namespace Kazaminosuke\ModManager\Support;
 
 /**
  * Computes CurseForge's file "fingerprint": a MurmurHash2 (32-bit, seed 1) over

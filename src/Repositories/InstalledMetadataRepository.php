@@ -1,13 +1,13 @@
 <?php
 
-namespace Boy132\MinecraftModrinth\Repositories;
+namespace Kazaminosuke\ModManager\Repositories;
 
 use App\Models\Server;
 use App\Repositories\Daemon\DaemonFileRepository;
-use Boy132\MinecraftModrinth\Support\CacheVersion;
-use Boy132\MinecraftModrinth\Support\InstalledMetadataDocument;
-use Boy132\MinecraftModrinth\Support\InstalledMetadataReadResult;
-use Boy132\MinecraftModrinth\Support\InstalledMetadataReadStatus;
+use Kazaminosuke\ModManager\Support\CacheVersion;
+use Kazaminosuke\ModManager\Support\InstalledMetadataDocument;
+use Kazaminosuke\ModManager\Support\InstalledMetadataReadResult;
+use Kazaminosuke\ModManager\Support\InstalledMetadataReadStatus;
 use Closure;
 use Exception;
 use Illuminate\Contracts\Filesystem\FileNotFoundException;

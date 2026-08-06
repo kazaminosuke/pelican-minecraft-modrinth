@@ -1,6 +1,6 @@
 <?php
 
-namespace Boy132\MinecraftModrinth\Enums;
+namespace Kazaminosuke\ModManager\Enums;
 
 use App\Models\Server;
 use Filament\Support\Contracts\HasIcon;

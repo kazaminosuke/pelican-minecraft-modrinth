@@ -1,12 +1,12 @@
 <?php
 
-namespace Boy132\MinecraftModrinth\Tests\Unit\Repositories;
+namespace Kazaminosuke\ModManager\Tests\Unit\Repositories;
 
 use App\Models\Server;
 use App\Repositories\Daemon\DaemonFileRepository;
-use Boy132\MinecraftModrinth\Repositories\InstalledMetadataRepository;
-use Boy132\MinecraftModrinth\Support\InstalledMetadataDocument;
-use Boy132\MinecraftModrinth\Support\InstalledMetadataReadStatus;
+use Kazaminosuke\ModManager\Repositories\InstalledMetadataRepository;
+use Kazaminosuke\ModManager\Support\InstalledMetadataDocument;
+use Kazaminosuke\ModManager\Support\InstalledMetadataReadStatus;
 use Illuminate\Contracts\Filesystem\FileNotFoundException;
 use Illuminate\Http\Client\Response;
 use Mockery;

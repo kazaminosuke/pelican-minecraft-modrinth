@@ -1,17 +1,17 @@
 <?php
 
-namespace Boy132\MinecraftModrinth;
+namespace Kazaminosuke\ModManager;
 
 use App\Contracts\Plugins\HasPluginSettings;
 use App\Models\Server;
 use App\Repositories\Daemon\DaemonFileRepository;
 use App\Traits\EnvironmentWriterTrait;
 use BladeUI\Icons\Factory as BladeIconsFactory;
-use Boy132\MinecraftModrinth\Enums\ModrinthProjectType;
-use Boy132\MinecraftModrinth\Filament\Server\Pages\MinecraftModrinthProjectPage;
-use Boy132\MinecraftModrinth\Services\InstalledOperationManager;
-use Boy132\MinecraftModrinth\Services\MinecraftModrinthService;
-use Boy132\MinecraftModrinth\Support\CacheVersion;
+use Kazaminosuke\ModManager\Enums\ProjectType;
+use Kazaminosuke\ModManager\Filament\Server\Pages\ModManagerPage;
+use Kazaminosuke\ModManager\Services\InstalledOperationManager;
+use Kazaminosuke\ModManager\Services\InstalledProjectService;
+use Kazaminosuke\ModManager\Support\CacheVersion;
 use Exception;
 use Filament\Actions\Action;
 use Filament\Contracts\Plugin;
@@ -24,7 +24,7 @@ use Filament\Tables\View\TablesRenderHook;
 use Filament\View\PanelsRenderHook;
 use Illuminate\Support\HtmlString;
 
-class MinecraftModrinthPlugin implements HasPluginSettings, Plugin
+class ModManagerPlugin implements HasPluginSettings, Plugin
 {
     use EnvironmentWriterTrait;
 
@@ -37,7 +37,7 @@ class MinecraftModrinthPlugin implements HasPluginSettings, Plugin
     {
         $id = str($panel->getId())->title();
 
-        $panel->discoverPages(plugin_path($this->getId(), "src/Filament/$id/Pages"), "Boy132\\MinecraftModrinth\\Filament\\$id\\Pages");
+        $panel->discoverPages(plugin_path($this->getId(), "src/Filament/$id/Pages"), "Kazaminosuke\\ModManager\\Filament\\$id\\Pages");
 
         app(BladeIconsFactory::class)->add('mcloader', [
             'path' => plugin_path($this->getId(), 'resources/icons/loaders'),
@@ -55,7 +55,7 @@ class MinecraftModrinthPlugin implements HasPluginSettings, Plugin
                 .'<option value="popularity">'.e(trans('pelican-minecraft-modrinth::strings.table.sort.popularity')).'</option>'
                 .'</select></div>',
             ),
-            MinecraftModrinthProjectPage::class,
+            ModManagerPage::class,
         );
         $panel->renderHook(
             PanelsRenderHook::HEAD_END,
@@ -186,12 +186,12 @@ class MinecraftModrinthPlugin implements HasPluginSettings, Plugin
         $panel->renderHook(
             PanelsRenderHook::BODY_END,
             fn () => view('pelican-minecraft-modrinth::components.table-layout'),
-            MinecraftModrinthProjectPage::class,
+            ModManagerPage::class,
         );
         $panel->renderHook(
             PanelsRenderHook::BODY_END,
             fn () => view('pelican-minecraft-modrinth::components.table-swr-cache'),
-            MinecraftModrinthProjectPage::class,
+            ModManagerPage::class,
         );
 
     }
@@ -269,7 +269,7 @@ class MinecraftModrinthPlugin implements HasPluginSettings, Plugin
                                 + Server::query()->orderBy('name')->pluck('name', 'id')->all()),
                     ])
                     ->action(function (array $data) {
-                        $service = app(MinecraftModrinthService::class);
+                        $service = app(InstalledProjectService::class);
                         $operations = app(InstalledOperationManager::class);
                         /** @var DaemonFileRepository $fileRepository */
                         $fileRepository = app(DaemonFileRepository::class);
@@ -311,7 +311,7 @@ class MinecraftModrinthPlugin implements HasPluginSettings, Plugin
      * real timeout. Re-scanning instead happens lazily, the normal way, the
      * next time each server's Installed tab is loaded.
      */
-    private static function clearAllServers(MinecraftModrinthService $service, DaemonFileRepository $fileRepository): void
+    private static function clearAllServers(InstalledProjectService $service, DaemonFileRepository $fileRepository): void
     {
         $serverCount = CacheVersion::bumpAllHydration();
         CacheVersion::bumpHangarHash();
@@ -322,14 +322,14 @@ class MinecraftModrinthPlugin implements HasPluginSettings, Plugin
         // this action runs.
         foreach (Server::query()->with('egg')->get() as $server) {
             try {
-                $type = ModrinthProjectType::fromServer($server);
+                $type = ProjectType::fromServer($server);
 
                 if ($type) {
                     $service->clearInstalledModsMetadata($server, $fileRepository, $type);
                 }
 
-                if (ModrinthProjectType::supportsDatapacks($server)) {
-                    $service->clearInstalledModsMetadata($server, $fileRepository, ModrinthProjectType::Datapack);
+                if (ProjectType::supportsDatapacks($server)) {
+                    $service->clearInstalledModsMetadata($server, $fileRepository, ProjectType::Datapack);
                 }
             } catch (Exception $exception) {
                 report($exception);
@@ -350,7 +350,7 @@ class MinecraftModrinthPlugin implements HasPluginSettings, Plugin
      * other server too, contradicting "just this one server".
      */
     private static function clearSingleServer(
-        MinecraftModrinthService $service,
+        InstalledProjectService $service,
         DaemonFileRepository $fileRepository,
         InstalledOperationManager $operations,
         int $serverId,
@@ -377,7 +377,7 @@ class MinecraftModrinthPlugin implements HasPluginSettings, Plugin
         }
 
         try {
-            $type = ModrinthProjectType::fromServer($server);
+            $type = ProjectType::fromServer($server);
 
             if ($type) {
                 $scanState = $operations->state($server, $type, InstalledOperationManager::OPERATION_SCAN);
@@ -390,11 +390,11 @@ class MinecraftModrinthPlugin implements HasPluginSettings, Plugin
                 }
             }
 
-            if (ModrinthProjectType::supportsDatapacks($server)) {
-                $datapackState = $operations->state($server, ModrinthProjectType::Datapack, InstalledOperationManager::OPERATION_SCAN);
+            if (ProjectType::supportsDatapacks($server)) {
+                $datapackState = $operations->state($server, ProjectType::Datapack, InstalledOperationManager::OPERATION_SCAN);
                 if (!$datapackState?->isActive()) {
-                    $service->clearInstalledModsMetadata($server, $fileRepository, ModrinthProjectType::Datapack);
-                    $dispatch = $operations->dispatchScan($server, ModrinthProjectType::Datapack, force: true);
+                    $service->clearInstalledModsMetadata($server, $fileRepository, ProjectType::Datapack);
+                    $dispatch = $operations->dispatchScan($server, ProjectType::Datapack, force: true);
                     if (!$dispatch['dispatched'] && $dispatch['reason'] !== 'already_active') {
                         throw new Exception('Failed to dispatch datapack scan.');
                     }

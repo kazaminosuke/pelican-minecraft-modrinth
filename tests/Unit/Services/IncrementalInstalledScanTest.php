@@ -1,16 +1,16 @@
 <?php
 
-namespace Boy132\MinecraftModrinth\Tests\Unit\Services;
+namespace Kazaminosuke\ModManager\Tests\Unit\Services;
 
-use Boy132\MinecraftModrinth\Services\MinecraftModrinthService;
-use Boy132\MinecraftModrinth\Support\InstalledMetadataDocument;
+use Kazaminosuke\ModManager\Services\InstalledProjectService;
+use Kazaminosuke\ModManager\Support\InstalledMetadataDocument;
 use PHPUnit\Framework\TestCase;
 
 class IncrementalInstalledScanTest extends TestCase
 {
     public function test_hashes_are_reused_only_when_size_modified_time_and_all_algorithms_match(): void
     {
-        $service = new TestableMinecraftModrinthService();
+        $service = new TestableInstalledProjectService();
         $signature = ['size' => 123, 'modified_at' => '2026-07-30T00:00:00Z'];
         $hashes = ['murmur2' => '1', 'sha512' => 'two', 'sha256' => 'three'];
         $entry = ['file_signature' => $signature, 'hashes' => $hashes];
@@ -25,7 +25,7 @@ class IncrementalInstalledScanTest extends TestCase
 
     public function test_scan_rebase_preserves_concurrent_updates_additions_and_removals(): void
     {
-        $service = new TestableMinecraftModrinthService();
+        $service = new TestableInstalledProjectService();
         $originalA = $this->entry('a', 'a.jar', '1');
         $originalB = $this->entry('b', 'b.jar', '1');
         $updatedB = $this->entry('b', 'b.jar', '2');
@@ -70,7 +70,7 @@ class IncrementalInstalledScanTest extends TestCase
     }
 }
 
-class TestableMinecraftModrinthService extends MinecraftModrinthService
+class TestableInstalledProjectService extends InstalledProjectService
 {
     public function __construct() {}
 

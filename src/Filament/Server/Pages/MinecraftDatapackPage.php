@@ -1,11 +1,11 @@
 <?php
 
-namespace Boy132\MinecraftModrinth\Filament\Server\Pages;
+namespace Kazaminosuke\ModManager\Filament\Server\Pages;
 
 use App\Models\Server;
-use Boy132\MinecraftModrinth\Enums\ModrinthProjectType;
+use Kazaminosuke\ModManager\Enums\ProjectType;
 
-class MinecraftDatapackPage extends MinecraftModrinthProjectPage
+class MinecraftDatapackPage extends ModManagerPage
 {
     protected static string|\BackedEnum|null $navigationIcon = 'tabler-file-zip';
 
@@ -21,12 +21,12 @@ class MinecraftDatapackPage extends MinecraftModrinthProjectPage
         return trans('pelican-minecraft-modrinth::strings.minecraft_datapacks');
     }
 
-    protected static function detectProjectType(Server $server): ?ModrinthProjectType
+    protected static function detectProjectType(Server $server): ?ProjectType
     {
-        if (!ModrinthProjectType::supportsDatapacks($server)) {
+        if (!ProjectType::supportsDatapacks($server)) {
             return null;
         }
 
-        return ModrinthProjectType::Datapack;
+        return ProjectType::Datapack;
     }
 }

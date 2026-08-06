@@ -1,9 +1,9 @@
 <?php
 
-namespace Boy132\MinecraftModrinth\Filament\Server\Pages;
+namespace Kazaminosuke\ModManager\Filament\Server\Pages;
 
 use App\Models\Server;
-use Boy132\MinecraftModrinth\Enums\ModrinthProjectType;
+use Kazaminosuke\ModManager\Enums\ProjectType;
 use Filament\Facades\Filament;
 use Filament\Pages\Page;
 use Filament\Schemas\Schema;
@@ -28,7 +28,7 @@ class MinecraftDatapackLegacyRedirectPage extends Page
         /** @var Server $server */
         $server = Filament::getTenant();
 
-        return parent::canAccess() && ModrinthProjectType::supportsDatapacks($server);
+        return parent::canAccess() && ProjectType::supportsDatapacks($server);
     }
 
     public function mount(): void

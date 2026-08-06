@@ -1,8 +1,8 @@
 <?php
 
-namespace Boy132\MinecraftModrinth\Support;
+namespace Kazaminosuke\ModManager\Support;
 
-use Boy132\MinecraftModrinth\Enums\ProjectSourceKey;
+use Kazaminosuke\ModManager\Enums\ProjectSourceKey;
 
 /**
  * In-memory representation of `.pelican-mod-manager.json`.

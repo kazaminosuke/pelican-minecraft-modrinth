@@ -1,6 +1,6 @@
 <?php
 
-namespace Boy132\MinecraftModrinth\Support;
+namespace Kazaminosuke\ModManager\Support;
 
 enum InstalledMetadataReadStatus: string
 {

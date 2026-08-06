@@ -1,14 +1,14 @@
 <?php
 
-namespace Boy132\MinecraftModrinth\Sources;
+namespace Kazaminosuke\ModManager\Sources;
 
 use App\Models\Server;
-use Boy132\MinecraftModrinth\Contracts\BatchLatestVersionSourceInterface;
-use Boy132\MinecraftModrinth\Contracts\ProjectSourceInterface;
-use Boy132\MinecraftModrinth\Enums\ModrinthProjectType;
-use Boy132\MinecraftModrinth\Enums\ProjectSourceKey;
-use Boy132\MinecraftModrinth\Support\LatestVersionLookupRequest;
-use Boy132\MinecraftModrinth\Support\LatestVersionLookupResult;
+use Kazaminosuke\ModManager\Contracts\BatchLatestVersionSourceInterface;
+use Kazaminosuke\ModManager\Contracts\ProjectSourceInterface;
+use Kazaminosuke\ModManager\Enums\ProjectType;
+use Kazaminosuke\ModManager\Enums\ProjectSourceKey;
+use Kazaminosuke\ModManager\Support\LatestVersionLookupRequest;
+use Kazaminosuke\ModManager\Support\LatestVersionLookupResult;
 use Exception;
 use Illuminate\Http\Client\Pool;
 use Illuminate\Http\Client\Response;
@@ -52,9 +52,9 @@ class GitHubReleasesSource implements BatchLatestVersionSourceInterface, Project
         return true;
     }
 
-    public function supportsProjectType(ModrinthProjectType $type): bool
+    public function supportsProjectType(ProjectType $type): bool
     {
-        return in_array($type, [ModrinthProjectType::Mod, ModrinthProjectType::Plugin], true);
+        return in_array($type, [ProjectType::Mod, ProjectType::Plugin], true);
     }
 
     public function supportsSearch(): bool
@@ -82,7 +82,7 @@ class GitHubReleasesSource implements BatchLatestVersionSourceInterface, Project
     }
 
     /** @return array{hits: array<int, array<string, mixed>>, total_hits: int} */
-    public function search(Server $server, ModrinthProjectType $type, int $page = 1, ?string $search = null, array $filters = []): array
+    public function search(Server $server, ProjectType $type, int $page = 1, ?string $search = null, array $filters = []): array
     {
         return ['hits' => [], 'total_hits' => 0];
     }
@@ -113,7 +113,7 @@ class GitHubReleasesSource implements BatchLatestVersionSourceInterface, Project
     }
 
     /** @return array<int, mixed> */
-    public function getVersions(string $projectId, Server $server, ModrinthProjectType $type): array
+    public function getVersions(string $projectId, Server $server, ProjectType $type): array
     {
         $repo = $this->parseIdentifier($projectId);
 
@@ -148,7 +148,7 @@ class GitHubReleasesSource implements BatchLatestVersionSourceInterface, Project
     public function lookupLatestVersions(
         array $requests,
         Server $server,
-        ModrinthProjectType $type,
+        ProjectType $type,
     ): LatestVersionLookupResult {
         $requests = array_values(array_filter(
             $requests,

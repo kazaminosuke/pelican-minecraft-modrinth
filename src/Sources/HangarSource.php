@@ -1,17 +1,17 @@
 <?php
 
-namespace Boy132\MinecraftModrinth\Sources;
+namespace Kazaminosuke\ModManager\Sources;
 
 use App\Models\Server;
-use Boy132\MinecraftModrinth\Contracts\BatchLatestVersionSourceInterface;
-use Boy132\MinecraftModrinth\Contracts\ProjectSourceInterface;
-use Boy132\MinecraftModrinth\Enums\MinecraftLoader;
-use Boy132\MinecraftModrinth\Enums\ModrinthProjectType;
-use Boy132\MinecraftModrinth\Enums\ProjectSourceKey;
-use Boy132\MinecraftModrinth\Support\CacheVersion;
-use Boy132\MinecraftModrinth\Support\LatestVersionLookupRequest;
-use Boy132\MinecraftModrinth\Support\LatestVersionLookupResult;
-use Boy132\MinecraftModrinth\Support\MinecraftVersionResolver;
+use Kazaminosuke\ModManager\Contracts\BatchLatestVersionSourceInterface;
+use Kazaminosuke\ModManager\Contracts\ProjectSourceInterface;
+use Kazaminosuke\ModManager\Enums\MinecraftLoader;
+use Kazaminosuke\ModManager\Enums\ProjectType;
+use Kazaminosuke\ModManager\Enums\ProjectSourceKey;
+use Kazaminosuke\ModManager\Support\CacheVersion;
+use Kazaminosuke\ModManager\Support\LatestVersionLookupRequest;
+use Kazaminosuke\ModManager\Support\LatestVersionLookupResult;
+use Kazaminosuke\ModManager\Support\MinecraftVersionResolver;
 use Exception;
 use Illuminate\Http\Client\Pool;
 use Illuminate\Http\Client\Response;
@@ -63,9 +63,9 @@ class HangarSource implements BatchLatestVersionSourceInterface, ProjectSourceIn
         return true;
     }
 
-    public function supportsProjectType(ModrinthProjectType $type): bool
+    public function supportsProjectType(ProjectType $type): bool
     {
-        return $type === ModrinthProjectType::Plugin;
+        return $type === ProjectType::Plugin;
     }
 
     public function supportsSearch(): bool
@@ -89,9 +89,9 @@ class HangarSource implements BatchLatestVersionSourceInterface, ProjectSourceIn
     }
 
     /** @return array{hits: array<int, array<string, mixed>>, total_hits: int} */
-    public function search(Server $server, ModrinthProjectType $type, int $page = 1, ?string $search = null, array $filters = []): array
+    public function search(Server $server, ProjectType $type, int $page = 1, ?string $search = null, array $filters = []): array
     {
-        if ($type !== ModrinthProjectType::Plugin) {
+        if ($type !== ProjectType::Plugin) {
             return ['hits' => [], 'total_hits' => 0];
         }
 
@@ -173,9 +173,9 @@ class HangarSource implements BatchLatestVersionSourceInterface, ProjectSourceIn
     }
 
     /** @return array<int, mixed> */
-    public function getVersions(string $projectId, Server $server, ModrinthProjectType $type): array
+    public function getVersions(string $projectId, Server $server, ProjectType $type): array
     {
-        if ($type !== ModrinthProjectType::Plugin) {
+        if ($type !== ProjectType::Plugin) {
             return [];
         }
 
@@ -209,7 +209,7 @@ class HangarSource implements BatchLatestVersionSourceInterface, ProjectSourceIn
     public function lookupLatestVersions(
         array $requests,
         Server $server,
-        ModrinthProjectType $type,
+        ProjectType $type,
     ): LatestVersionLookupResult {
         $requests = array_values(array_filter(
             $requests,
@@ -222,7 +222,7 @@ class HangarSource implements BatchLatestVersionSourceInterface, ProjectSourceIn
 
         $platform = $this->platformFor($server);
 
-        if ($type !== ModrinthProjectType::Plugin || $platform === null) {
+        if ($type !== ProjectType::Plugin || $platform === null) {
             return new LatestVersionLookupResult(unresolvedKeys: array_map(
                 fn (LatestVersionLookupRequest $request): string => $request->key(),
                 $requests,
@@ -450,7 +450,7 @@ class HangarSource implements BatchLatestVersionSourceInterface, ProjectSourceIn
             'author' => $namespace['owner'] ?? null,
             'downloads' => (int) ($project['stats']['downloads'] ?? 0),
             'date_modified' => $project['lastUpdated'] ?? null,
-            'project_type' => ModrinthProjectType::Plugin->value,
+            'project_type' => ProjectType::Plugin->value,
         ];
     }
 
