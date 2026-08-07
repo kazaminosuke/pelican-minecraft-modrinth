@@ -1,65 +1,145 @@
 # Minecraft Mod Manager
 
-A plugin for [Pelican Panel](https://pelican.dev) that lets you search, install, update, and manage Minecraft mods and plugins from [Modrinth](https://modrinth.com), CurseForge, Hangar, and GitHub Releases directly in the server panel.
+*[日本語](README.ja.md)*
 
-> This repository is a **fork** of
-> [H1ghSyst3m/plugins](https://github.com/H1ghSyst3m/plugins/tree/featcomplete-mod-plugin-management), which forks [pelican-dev/plugins](https://github.com/pelican-dev/plugins).
+A [Pelican Panel](https://pelican.dev) plugin that lets you search, install, update, and manage
+Minecraft mods, plugins, and datapacks from **Modrinth, CurseForge, Hangar, and GitHub Releases**
+directly in the server panel.
 
-## Features
+![Catalog tab](docs/images/catalog.png)
+![Installed tab](docs/images/installed.png)
 
-- Browse and search projects from supported sources inside the server panel
-- Install compatible mod/plugin versions with one click
-- Track installed files via `.modrinth-metadata.json`
-- Detect available updates for installed entries
-- Uninstall installed entries directly from the panel
-- **Fork-specific additions:**
-  - Scan existing `.jar` files and import found matches into metadata
-  - Show an untracked state for unknown files
-  - Rescan actions for mods/plugins update checks
-  - Bulk update action for all updatable mods/plugins
-  - Extended German/English notification and action texts
-  - Install Datapacks from Modrinth
+## Supported sources
 
-## Setup
+| Source | API key | Search | Hash matching | Project types |
+|---|---|---|---|---|
+| [Modrinth](https://modrinth.com) | Not required | ✅ | ✅ (`sha512`) | Mod, Plugin, Datapack |
+| [CurseForge](https://www.curseforge.com/minecraft) | **Required** | ✅ | ✅ (`murmur2`) | Mod, Plugin |
+| [Hangar](https://hangar.papermc.io) | Not required | ✅ | ✅ (`sha256`) | Plugin |
+| [GitHub Releases](https://github.com) | Optional, recommended | ❌ (tracks one `owner/repo` at a time) | ❌ | Mod, Plugin |
 
-Add `mod_manager` or `plugin_manager` to your egg **features**.
-Add `datapack_manager` if you want to manage datapacks as well.
-Also ensure the egg has the `minecraft` tag and a matching loader tag (for example `paper`, `fabric`, `forge`, or `neoforge`).
+Modrinth is always available. The other three are opt-in per egg - see [Egg configuration](#egg-configuration).
+GitHub Releases works without a token, but its unauthenticated rate limit (60 requests/hour) is
+scarce enough that background cache warming skips it entirely until one is configured.
+
+## Requirements
+
+- Pelican Panel (`main`, Filament 5.6+)
+- PHP 8.3 - 8.5
+- **An asynchronous queue worker.** Installed-file scans, bulk updates, and cache warming all run
+  as queued jobs so Livewire requests stay responsive. Configure a real driver (for example
+  `QUEUE_CONNECTION=database`) and keep a worker running:
+
+  ```sh
+  php artisan queue:work
+  ```
+
+  The `sync` and `null` drivers are intentionally rejected for scans/bulk updates - the plugin shows
+  a queue-configuration warning instead of blocking the browser request on them.
 
 ## Installation
 
-### Option 1: Direct URL
-
-Use this URL in the Pelican Panel plugin installer:
+**Option 1: Direct URL** - paste this into the Pelican Panel plugin installer:
 
 ```txt
 https://github.com/kazaminosuke/pelican-minecraft-modrinth/releases/latest/download/pelican-minecraft-modrinth.zip
 ```
 
-### Option 2: Upload ZIP
+**Option 2: Upload ZIP** - download the latest ZIP from the
+[Releases](https://github.com/kazaminosuke/pelican-minecraft-modrinth/releases) page and upload it
+in the plugin installer.
 
-1. Go to the [Releases](https://github.com/kazaminosuke/pelican-minecraft-modrinth/releases) page
-2. Download the latest plugin ZIP
-3. Open the Pelican Panel plugin installer
-4. Upload the ZIP file
+## Egg configuration
 
-### Queue worker
+Add one of these **features** to the egg so the plugin knows what to manage:
 
-Cold scans of installed files and bulk updates run as Laravel queue jobs so
-that Livewire requests stay responsive. Configure an asynchronous queue driver
-(for example `QUEUE_CONNECTION=database`) and keep a worker running:
+- `mod_manager` - manages `mods/`
+- `plugin_manager` - manages `plugins/`
+- `datapack_manager` - manages `world/datapacks/` (can be combined with either of the above)
 
-```sh
-php artisan queue:work
+Also add the `minecraft` **tag**, plus a loader tag so version/loader-specific filtering works:
+`paper`, `purpur`, `folia`, `spigot`, `bukkit`, `fabric`, `quilt`, `forge`, `neoforge`, `sponge`,
+`velocity`, `waterfall`, or `bungeecord`.
+
+To enable the extra catalog sources, add their feature flag too:
+
+```json
+{ "features": ["mod_manager", "curseforge", "hangar"], "tags": ["minecraft", "fabric"] }
 ```
 
-The `sync` and `null` drivers are intentionally rejected for these operations;
-the mod manager will show a queue configuration warning instead of blocking the browser request.
+`curseforge`, `hangar`, and `github_releases` each unlock their matching tab (subject to the project
+types they support - see the table above). Without one of these flags, that source's tab never
+appears for that egg, regardless of whether an API key is configured for it.
+
+## Settings
+
+The plugin settings screen (panel admin → Plugins) has four fields, each backed by a global `.env` key:
+
+| Field | `.env` key |
+|---|---|
+| Latest Minecraft version | `LATEST_MINECRAFT_VERSION` |
+| Navigation sort order | `MINECRAFT_MODRINTH_NAV_SORT` |
+| CurseForge API key | `CURSEFORGE_API_KEY` |
+| GitHub token | `GITHUB_TOKEN` |
+
+"Latest Minecraft version" is the fallback used when a server has no `MINECRAFT_VERSION`/`MC_VERSION`
+startup variable of its own.
+
+The same screen has a **Clear cache** action, which behaves differently by scope:
+
+- **All servers** - clears every server's tracked-mods metadata and the shared caches, but does
+  **not** force an immediate re-scan; each server re-scans lazily the next time its Installed tab
+  is opened.
+- **A single server** - clears that server's metadata and immediately queues a forced re-scan
+  (needs a working queue - see [Requirements](#requirements)).
+
+## How it works
+
+- **Local metadata index** (`.pelican-mod-manager.json` on each server, auto-migrated from the
+  older `.modrinth-metadata.json`) tracks which installed file maps to which upstream project.
+- **Incremental hash scanning** re-hashes a file only when its size/modified-time signature has
+  changed, instead of every file on every scan.
+- **Background jobs with status badges** handle scans and bulk updates without blocking the UI.
+- **A stale-while-revalidate cache** sits in front of every upstream API call, with a freshness
+  policy per data type, plus **scheduled warm jobs** that pre-populate it for the loader/Minecraft
+  version/project-type combinations actually in use, throttled separately from user traffic.
+- **Conditional deferred loading** skips the extra loading round trip entirely when a view's data
+  is already cached.
+
+See [`docs/architecture.md`](docs/architecture.md) for the full design behind each of these.
+
+## Troubleshooting
+
+- **"An asynchronous queue worker is required" warning** - see [Requirements](#requirements).
+- **A row shows "Not tracked"** - a file exists in the mod/plugin/datapack folder that isn't (yet)
+  recorded in the metadata index. Use the Rescan action.
+- **A source tab shows a `!` badge** - that source is enabled for the egg but not configured (for
+  example CurseForge without an API key). See [Settings](#settings).
+- **Catalog data looks stale** - use the settings screen's Clear cache action; see above for the
+  all-servers/single-server difference.
+
+## Roadmap
+
+- **Automatic egg detection.** Loader and Minecraft version are currently resolved from the egg's
+  `features`/`tags` and the server's `MINECRAFT_VERSION`/`MC_VERSION` variable. A planned follow-up
+  is to recognize the egg itself, so supported-egg detection and configuration need less manual
+  tagging.
 
 ## Repository
 
-https://github.com/kazaminosuke/pelican-minecraft-modrinth
+<https://github.com/kazaminosuke/pelican-minecraft-modrinth>
 
-## License
+## Fork lineage & license
 
-GNU General Public License v3.0 (GPL-3.0)
+This repository is a fork of
+[H1ghSyst3m/plugins](https://github.com/H1ghSyst3m/plugins/tree/featcomplete-mod-plugin-management),
+which forks [pelican-dev/plugins](https://github.com/pelican-dev/plugins).
+
+Licensed under the GNU General Public License v3.0 (GPL-3.0) - see [`LICENSE`](LICENSE).
+
+## For developers
+
+- [`docs/architecture.md`](docs/architecture.md) - cache layers, metadata format, and how to add a
+  new source.
+- [Issues](https://github.com/kazaminosuke/pelican-minecraft-modrinth/issues) /
+  [Pull requests](https://github.com/kazaminosuke/pelican-minecraft-modrinth/pulls)
