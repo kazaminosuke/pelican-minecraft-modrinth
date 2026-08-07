@@ -7,6 +7,8 @@ use Exception;
 use Kazaminosuke\ModManager\Contracts\ProjectSourceInterface;
 use Kazaminosuke\ModManager\Enums\ProjectSourceKey;
 use Kazaminosuke\ModManager\Enums\ProjectType;
+use Kazaminosuke\ModManager\Jobs\WarmProjectMetadata;
+use Kazaminosuke\ModManager\Services\InstalledOperationManager;
 use Kazaminosuke\ModManager\Sources\CurseForgeSource;
 use Kazaminosuke\ModManager\Sources\GitHubReleasesSource;
 use Kazaminosuke\ModManager\Sources\HangarSource;
@@ -22,6 +24,7 @@ class ProjectSourceRegistry
         CurseForgeSource $curseForge,
         HangarSource $hangar,
         GitHubReleasesSource $githubReleases,
+        protected readonly InstalledOperationManager $operations,
     ) {
         $this->sources = [
             ProjectSourceKey::Modrinth->value => $modrinth,
@@ -144,52 +147,93 @@ class ProjectSourceRegistry
      * tab's render path. Never performs an upstream fetch: a project whose
      * cache entry is a miss comes back with `enrichment_pending` true and
      * only the fields already known from the installed-mod metadata
-     * document filled in - the caller is expected to render a placeholder
-     * and let a queued background revalidation (see
-     * ProjectSourceInterface::peekProject()) fill it in on a later pass.
+     * document filled in.
+     *
+     * Rather than letting each miss queue its own individual
+     * ProjectSourceInterface::peekProject() revalidation, every source's
+     * misses for this render pass are collected and handed to one
+     * Jobs\WarmProjectMetadata dispatch per source - one batched (or, for
+     * a source with no bulk endpoint, looped-but-single-job) upstream call
+     * instead of up to one job per project. A large modpack's first cold
+     * view this way costs one extra queued job per source, not one per
+     * mod.
      *
      * @param array<int, array<string, mixed>> $installedMods
      * @return array<int, array<string, mixed>>
      */
     public function peekInstalled(array $installedMods, Server $server): array
     {
+        $bySource = [];
+        foreach ($installedMods as $mod) {
+            $bySource[$mod['source'] ?? ProjectSourceKey::Modrinth->value][] = $mod;
+        }
+
         $results = [];
 
-        foreach ($installedMods as $mod) {
-            $sourceKey = $mod['source'] ?? ProjectSourceKey::Modrinth->value;
+        foreach ($bySource as $sourceKey => $mods) {
             $source = $this->getByValue($sourceKey);
-            $projectId = $mod['project_id'] ?? null;
+            $peekedByProjectId = [];
+            $missingIds = [];
 
-            if ($source === null || !is_string($projectId) || $projectId === '') {
-                $results[] = $this->unavailableEntry($mod, $sourceKey);
+            foreach ($mods as $mod) {
+                $projectId = $mod['project_id'] ?? null;
 
-                continue;
-            }
-
-            try {
-                $peeked = $source->peekProject($projectId);
-            } catch (Exception $exception) {
-                report($exception);
-                $peeked = ['data' => null, 'pending' => false];
-            }
-
-            if ($peeked['data'] !== null) {
-                $project = $peeked['data'];
-                $project['project_id'] = $projectId;
-                $project['source'] = $sourceKey;
-
-                if (empty($project['author']) && !empty($mod['author'])) {
-                    $project['author'] = $mod['author'];
+                if ($source === null || !is_string($projectId) || $projectId === '') {
+                    continue;
                 }
 
-                $results[] = $project;
+                try {
+                    $peeked = $source->peekProject($projectId, dispatchOnMiss: false);
+                } catch (Exception $exception) {
+                    report($exception);
+                    $peeked = ['data' => null, 'pending' => true];
+                }
 
-                continue;
+                $peekedByProjectId[$projectId] = $peeked;
+
+                if ($peeked['data'] === null) {
+                    $missingIds[] = $projectId;
+                }
             }
 
-            $results[] = $peeked['pending']
-                ? $this->pendingEntry($mod, $sourceKey)
-                : $this->unavailableEntry($mod, $sourceKey);
+            // A sync/null queue driver would run this inline, blocking the
+            // very render path peekInstalled() exists to keep non-blocking
+            // - see SourceCache::revalidateAsync(), which individual
+            // peekProject() misses respect via the same check. Left
+            // unthrottled here (unlike Jobs\WarmCatalogSearch/
+            // WarmCatalogCacheCommand): this batch exists only because a
+            // user is actively looking at their Installed tab, not as
+            // speculative background warming.
+            if ($source !== null && $missingIds !== [] && $this->operations->supportsAsyncDispatch()) {
+                WarmProjectMetadata::dispatch($sourceKey, array_values(array_unique($missingIds)));
+            }
+
+            foreach ($mods as $mod) {
+                $projectId = $mod['project_id'] ?? null;
+                $peeked = is_string($projectId) ? ($peekedByProjectId[$projectId] ?? null) : null;
+
+                if ($source === null || $peeked === null) {
+                    $results[] = $this->unavailableEntry($mod, $sourceKey);
+
+                    continue;
+                }
+
+                if ($peeked['data'] !== null) {
+                    $project = $peeked['data'];
+                    $project['project_id'] = $projectId;
+                    $project['source'] = $sourceKey;
+
+                    if (empty($project['author']) && !empty($mod['author'])) {
+                        $project['author'] = $mod['author'];
+                    }
+
+                    $results[] = $project;
+
+                    continue;
+                }
+
+                $results[] = $this->pendingEntry($mod, $sourceKey);
+            }
         }
 
         return $results;

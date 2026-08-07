@@ -59,9 +59,28 @@ interface ProjectSourceInterface
      * instead of performing an inline fetch. Uses a per-project cache
      * entry, so one project's revalidation never invalidates another's.
      *
+     * $dispatchOnMiss controls only whether THIS call queues that refresh
+     * itself. Pass false when the caller is about to collect several
+     * misses and batch them into one upstream call (see
+     * ProjectSourceRegistry::peekInstalled() / Jobs\WarmProjectMetadata) -
+     * a miss still comes back with pending true either way.
+     *
      * @return array{data: array<string, mixed>|null, pending: bool}
      */
-    public function peekProject(string $projectId): array;
+    public function peekProject(string $projectId, bool $dispatchOnMiss = true): array;
+
+    /**
+     * Write already-fetched project data (typically from getProjectsByIds())
+     * into this source's normal per-project cache entries - the same ones
+     * getProject()/peekProject() read - without performing any fetch of
+     * its own. Used to prime many entries at once after one batched (or,
+     * for a source with no bulk endpoint, looped) upstream call, so a
+     * later peekProject() for any of these ids is a hit instead of
+     * queuing its own individual revalidation. See Jobs\WarmProjectMetadata.
+     *
+     * @param array<string, array<string, mixed>> $dataByProjectId
+     */
+    public function primeProjects(array $dataByProjectId): void;
 
     /**
      * @param array<int, string> $projectIds

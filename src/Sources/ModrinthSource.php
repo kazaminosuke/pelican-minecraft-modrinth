@@ -490,17 +490,39 @@ class ModrinthSource implements BatchLatestVersionSourceInterface, ProjectSource
     }
 
     /** @return array{data: array<string, mixed>|null, pending: bool} */
-    public function peekProject(string $projectId): array
+    public function peekProject(string $projectId, bool $dispatchOnMiss = true): array
     {
-        $peeked = $this->sourceCache->swrDeferred(
-            $this->spec(self::OPERATION_PROJECT, ['project_id' => $projectId]),
-            CacheProfile::ProjectMetadata,
-        );
+        $spec = $this->spec(self::OPERATION_PROJECT, ['project_id' => $projectId]);
+
+        if (!$dispatchOnMiss) {
+            $peeked = $this->sourceCache->peek($spec);
+
+            return [
+                'data' => is_array($peeked['data']) ? $peeked['data'] : null,
+                'pending' => !$peeked['hit'],
+            ];
+        }
+
+        $peeked = $this->sourceCache->swrDeferred($spec, CacheProfile::ProjectMetadata);
 
         return [
             'data' => is_array($peeked['data']) ? $peeked['data'] : null,
             'pending' => $peeked['pending'],
         ];
+    }
+
+    public function primeProjects(array $dataByProjectId): void
+    {
+        $entries = [];
+
+        foreach ($dataByProjectId as $projectId => $data) {
+            $entries[] = [
+                'spec' => $this->spec(self::OPERATION_PROJECT, ['project_id' => (string) $projectId]),
+                'data' => $data,
+            ];
+        }
+
+        $this->sourceCache->primeMany($entries, CacheProfile::ProjectMetadata);
     }
 
     /** @return array<string, mixed>|null */

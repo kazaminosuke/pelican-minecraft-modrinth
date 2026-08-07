@@ -38,6 +38,7 @@ use Kazaminosuke\ModManager\Enums\MinecraftLoader;
 use Kazaminosuke\ModManager\Enums\ProjectSourceKey;
 use Kazaminosuke\ModManager\Enums\ProjectType;
 use Kazaminosuke\ModManager\Facades\ModManager;
+use Kazaminosuke\ModManager\Jobs\WarmCatalogSearch;
 use Kazaminosuke\ModManager\Services\InstalledOperationManager;
 use Kazaminosuke\ModManager\Services\VersionLookupCoordinator;
 use Kazaminosuke\ModManager\Support\CacheVersion;
@@ -253,6 +254,77 @@ class ModManagerPage extends Page implements HasTable
         $this->loadDefaultActiveTab();
         $this->refreshInstalledScanDataReady();
         $this->refreshInstalledOperationState();
+
+        $this->dispatchCatalogWarm();
+    }
+
+    /**
+     * Warm this visit's catalog page 1 (every available source) and the
+     * active source's page 2, so a later visitor sharing the same (source,
+     * project type, loader, Minecraft version, sort) combination gets a
+     * fresh-cache hit instead of a cold miss. Too late to help this
+     * request - records() has already run its own inline SourceCache
+     * fetch by the time this warm job's result would land - see
+     * WarmCatalogCacheCommand for what actually prevents a cold first
+     * visit.
+     */
+    protected function dispatchCatalogWarm(): void
+    {
+        if (!(bool) config('pelican-minecraft-modrinth.warm_catalog_enabled', true)) {
+            return;
+        }
+
+        // A sync/null queue driver would run this inline, during mount(),
+        // defeating the entire point (and potentially blocking this
+        // request on a throttled or slow upstream call).
+        if (!app(InstalledOperationManager::class)->supportsAsyncDispatch()) {
+            return;
+        }
+
+        /** @var Server $server */
+        $server = Filament::getTenant();
+        $type = static::detectProjectType($server);
+
+        if (!$type) {
+            return;
+        }
+
+        $loader = $type->getLoaderSlug($server);
+        $mcVersion = ModManager::getMinecraftVersion($server);
+
+        if (!$loader || !$mcVersion) {
+            return;
+        }
+
+        $activeSourceKey = $this->getCurrentSource()?->getKey()->value;
+
+        foreach ($this->getAvailableSources() as $source) {
+            if (!$source->isConfigured() || !$source->supportsSearch()) {
+                continue;
+            }
+
+            WarmCatalogSearch::dispatch(
+                $server->id,
+                $source->getKey()->value,
+                $type->value,
+                1,
+                $loader,
+                $mcVersion,
+                $this->catalogSort,
+            );
+
+            if ($source->getKey()->value === $activeSourceKey) {
+                WarmCatalogSearch::dispatch(
+                    $server->id,
+                    $source->getKey()->value,
+                    $type->value,
+                    2,
+                    $loader,
+                    $mcVersion,
+                    $this->catalogSort,
+                );
+            }
+        }
     }
 
     /**

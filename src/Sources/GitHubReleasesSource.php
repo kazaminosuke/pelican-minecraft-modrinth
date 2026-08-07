@@ -134,7 +134,7 @@ class GitHubReleasesSource implements BatchLatestVersionSourceInterface, Project
     }
 
     /** @return array{data: array<string, mixed>|null, pending: bool} */
-    public function peekProject(string $projectId): array
+    public function peekProject(string $projectId, bool $dispatchOnMiss = true): array
     {
         $repo = $this->parseIdentifier($projectId);
 
@@ -147,12 +147,43 @@ class GitHubReleasesSource implements BatchLatestVersionSourceInterface, Project
             'name' => $name,
             'owner' => $owner,
         ]);
+
+        if (!$dispatchOnMiss) {
+            $peeked = $this->sourceCache->peek($spec);
+
+            return [
+                'data' => is_array($peeked['data']) ? $peeked['data'] : null,
+                'pending' => !$peeked['hit'],
+            ];
+        }
+
         $peeked = $this->sourceCache->swrDeferred($spec, CacheProfile::ProjectMetadata);
 
         return [
             'data' => is_array($peeked['data']) ? $peeked['data'] : null,
             'pending' => $peeked['pending'],
         ];
+    }
+
+    public function primeProjects(array $dataByProjectId): void
+    {
+        $entries = [];
+
+        foreach ($dataByProjectId as $projectId => $data) {
+            $repo = $this->parseIdentifier((string) $projectId);
+
+            if ($repo === null) {
+                continue;
+            }
+
+            [$owner, $name] = array_map('strtolower', $repo);
+            $entries[] = [
+                'spec' => $this->spec(self::OPERATION_PROJECT, ['name' => $name, 'owner' => $owner]),
+                'data' => $data,
+            ];
+        }
+
+        $this->sourceCache->primeMany($entries, CacheProfile::ProjectMetadata);
     }
 
     /**

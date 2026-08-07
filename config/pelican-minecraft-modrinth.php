@@ -5,4 +5,38 @@ return [
     'curseforge_api_key' => env('CURSEFORGE_API_KEY'),
     'github_token' => env('GITHUB_TOKEN'),
     'debug_timing' => env('MOD_MANAGER_DEBUG_TIMING', false),
+
+    // Operator kill switch for the catalog warm system (Stage 5): the
+    // per-visit dispatch from ModManagerPage::mount() and the scheduled
+    // mod-manager:warm-catalog command both check this before dispatching
+    // anything.
+    'warm_catalog_enabled' => env('MOD_MANAGER_WARM_CATALOG_ENABLED', true),
+
+    // Upper bound on how many (loader, Minecraft version, project type)
+    // combinations mod-manager:warm-catalog acts on per scheduled run,
+    // prioritized by how many servers actually use each combination.
+    'warm_max_targets' => env('MOD_MANAGER_WARM_MAX_TARGETS', 50),
+
+    // Self-imposed per-minute request ceilings applied only to warm-job-
+    // originated upstream requests (see Support\WarmRequestThrottle). A
+    // source key mapping to null/omitted here falls back to
+    // WarmRequestThrottle's own conservative defaults.
+    //
+    // Modrinth's 300 req/min public limit is officially documented; this
+    // plugin self-limits warm traffic to 70% of it (210), the same margin
+    // GDLauncher-Carbon uses for its background cache loop. GitHub's is
+    // also officially documented (5,000 req/hr authenticated - warming is
+    // skipped entirely for GitHub Releases when no token is configured,
+    // since the unauthenticated 60 req/hr limit is too scarce to spend on
+    // background warming), scaled the same way (~83/min x 70% = 55/min).
+    // CurseForge and Hangar publish no rate limit as of this writing, so
+    // those two are a conservative guess rather than a measured figure -
+    // raise them here if warm traffic turns out to be unnecessarily slow
+    // in practice.
+    'warm_rate_limit' => [
+        'modrinth' => env('MOD_MANAGER_WARM_RATE_LIMIT_MODRINTH', 210),
+        'curseforge' => env('MOD_MANAGER_WARM_RATE_LIMIT_CURSEFORGE', 60),
+        'hangar' => env('MOD_MANAGER_WARM_RATE_LIMIT_HANGAR', 30),
+        'github_releases' => env('MOD_MANAGER_WARM_RATE_LIMIT_GITHUB_RELEASES', 55),
+    ],
 ];

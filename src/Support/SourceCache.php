@@ -197,6 +197,30 @@ final class SourceCache
         float $timeoutSeconds,
     ): mixed {
         $data = $this->executor->fetch($spec, $timeoutSeconds);
+        $this->storeEntry($spec, $data, $profile);
+
+        return $data;
+    }
+
+    /**
+     * Write already-fetched data under the same fresh/stale semantics
+     * fetchAndStore() applies, without performing a fetch. Used to prime
+     * many per-entity cache entries at once from a single batched upstream
+     * call (see Jobs\WarmProjectMetadata) - the batch call itself still
+     * goes through the executor directly rather than through swr(), so it
+     * is never cached as one combined entry keyed by the whole batch.
+     *
+     * @param array<int, array{spec: SourceFetchSpec, data: mixed}> $entries
+     */
+    public function primeMany(array $entries, CacheProfile $profile): void
+    {
+        foreach ($entries as $entry) {
+            $this->storeEntry($entry['spec'], $entry['data'], $profile);
+        }
+    }
+
+    private function storeEntry(SourceFetchSpec $spec, mixed $data, CacheProfile $profile): void
+    {
         $entry = [
             'v' => self::SCHEMA_VERSION,
             'data' => $data,
@@ -211,8 +235,6 @@ final class SourceCache
         }
 
         $this->cache->forget($this->failureMarkerKey($spec));
-
-        return $data;
     }
 
     private function emptyResult(SourceFetchSpec $spec): mixed

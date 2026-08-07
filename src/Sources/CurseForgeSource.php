@@ -222,22 +222,51 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
     }
 
     /** @return array{data: array<string, mixed>|null, pending: bool} */
-    public function peekProject(string $projectId): array
+    public function peekProject(string $projectId, bool $dispatchOnMiss = true): array
     {
         if (!$this->isConfigured()) {
             return ['data' => null, 'pending' => false];
         }
 
-        $peeked = $this->cache()->swrDeferred(new SourceFetchSpec(
+        $spec = new SourceFetchSpec(
             sourceKey: $this->getKey()->value,
             operation: 'project',
             arguments: ['project_id' => $projectId],
-        ), CacheProfile::ProjectMetadata);
+        );
+
+        if (!$dispatchOnMiss) {
+            $peeked = $this->cache()->peek($spec);
+
+            return [
+                'data' => is_array($peeked['data']) ? $peeked['data'] : null,
+                'pending' => !$peeked['hit'],
+            ];
+        }
+
+        $peeked = $this->cache()->swrDeferred($spec, CacheProfile::ProjectMetadata);
 
         return [
             'data' => is_array($peeked['data']) ? $peeked['data'] : null,
             'pending' => $peeked['pending'],
         ];
+    }
+
+    public function primeProjects(array $dataByProjectId): void
+    {
+        $entries = [];
+
+        foreach ($dataByProjectId as $projectId => $data) {
+            $entries[] = [
+                'spec' => new SourceFetchSpec(
+                    sourceKey: $this->getKey()->value,
+                    operation: 'project',
+                    arguments: ['project_id' => (string) $projectId],
+                ),
+                'data' => $data,
+            ];
+        }
+
+        $this->cache()->primeMany($entries, CacheProfile::ProjectMetadata);
     }
 
     /**

@@ -2,8 +2,10 @@
 
 namespace Kazaminosuke\ModManager\Providers;
 
+use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\ServiceProvider;
+use Kazaminosuke\ModManager\Console\Commands\WarmCatalogCacheCommand;
 use Kazaminosuke\ModManager\Contracts\SourceFetchExecutorInterface;
 use Kazaminosuke\ModManager\Services\InstalledOperationManager;
 use Kazaminosuke\ModManager\Services\InstalledProjectService;
@@ -16,6 +18,7 @@ use Kazaminosuke\ModManager\Support\MinecraftVersionResolver;
 use Kazaminosuke\ModManager\Support\ProjectSourceRegistry;
 use Kazaminosuke\ModManager\Support\SourceCache;
 use Kazaminosuke\ModManager\Support\SourceFetchExecutor;
+use Kazaminosuke\ModManager\Support\WarmRequestThrottle;
 
 class ModManagerServiceProvider extends ServiceProvider
 {
@@ -33,8 +36,13 @@ class ModManagerServiceProvider extends ServiceProvider
             VersionLookupCoordinator::class,
             InstalledProjectService::class,
             InstalledOperationManager::class,
+            WarmRequestThrottle::class,
         ] as $service) {
             $this->app->singleton($service);
+        }
+
+        if ($this->app->runningInConsole()) {
+            $this->commands([WarmCatalogCacheCommand::class]);
         }
     }
 
@@ -46,6 +54,22 @@ class ModManagerServiceProvider extends ServiceProvider
             if ($this->app->resolved(InstalledProjectService::class)) {
                 $this->app->make(InstalledProjectService::class)->clearRuntimeCaches();
             }
+        });
+
+        // Hooks into the panel's own scheduler (Pelican already depends on
+        // `php artisan schedule:run` being cron'd every minute for its own
+        // per-server scheduled-task feature - see
+        // App\Console\Commands\Schedule\ProcessRunnableCommand - so every
+        // functioning install already has this covered). Every 10 minutes
+        // matches CacheProfile::Search's fresh TTL: running more often
+        // than that can't keep an entry any fresher, and running less
+        // often lets it go stale between warms.
+        $this->app->booted(function (): void {
+            $schedule = $this->app->make(Schedule::class);
+            $schedule->command(WarmCatalogCacheCommand::class)
+                ->everyTenMinutes()
+                ->withoutOverlapping()
+                ->name('mod-manager:warm-catalog');
         });
     }
 }
