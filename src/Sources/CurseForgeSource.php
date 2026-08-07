@@ -107,13 +107,36 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
     /** @return array{hits: array<int, array<string, mixed>>, total_hits: int} */
     public function search(Server $server, ProjectType $type, int $page = 1, ?string $search = null, array $filters = []): array
     {
-        if (!$this->isConfigured()) {
+        $spec = $this->buildSearchSpec($server, $type, $page, $search, $filters);
+
+        if ($spec === null) {
             return ['hits' => [], 'total_hits' => 0];
+        }
+
+        $result = $this->cache()->swr($spec, CacheProfile::Search);
+
+        return is_array($result)
+            ? $result
+            : ['hits' => [], 'total_hits' => 0];
+    }
+
+    public function hasCachedSearch(Server $server, ProjectType $type, int $page, ?string $search = null, array $filters = []): bool
+    {
+        $spec = $this->buildSearchSpec($server, $type, $page, $search, $filters);
+
+        return $spec === null || $this->cache()->peek($spec)['hit'];
+    }
+
+    /** @param array<string, mixed> $filters */
+    private function buildSearchSpec(Server $server, ProjectType $type, int $page, ?string $search, array $filters): ?SourceFetchSpec
+    {
+        if (!$this->isConfigured()) {
+            return null;
         }
 
         $classId = $this->classIdFor($type);
         if (!$classId) {
-            return ['hits' => [], 'total_hits' => 0];
+            return null;
         }
 
         $params = [
@@ -133,7 +156,7 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
         if ($classId === self::CLASS_ID_MOD) {
             $modLoaderType = $this->modLoaderTypeFor($server);
             if ($modLoaderType === null) {
-                return ['hits' => [], 'total_hits' => 0];
+                return null;
             }
             $params['modLoaderType'] = $modLoaderType;
         }
@@ -145,18 +168,14 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
             $params['searchFilter'] = $search;
         }
 
-        $result = $this->cache()->swr(new SourceFetchSpec(
+        return new SourceFetchSpec(
             sourceKey: $this->getKey()->value,
             operation: 'search',
             arguments: [
                 'params' => $params,
                 'project_type' => $type->value,
             ],
-        ), CacheProfile::Search);
-
-        return is_array($result)
-            ? $result
-            : ['hits' => [], 'total_hits' => 0];
+        );
     }
 
     /**

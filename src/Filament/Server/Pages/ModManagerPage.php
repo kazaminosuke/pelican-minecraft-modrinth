@@ -1119,6 +1119,64 @@ class ModManagerPage extends Page implements HasTable
     }
 
     /**
+     * Whether ->records()'s current (activeTab, page, search, filters,
+     * sort) already has real data available with no upstream I/O required,
+     * so ->deferLoading() can be skipped and this response can go out with
+     * real records already in place instead of paying for the second
+     * Livewire round trip (wire:init="loadTable") a deferred table always
+     * costs.
+     *
+     * Deliberately always false for the Installed tab: unlike the catalog
+     * tab, records()'s installed branch can call InstalledOperationManager
+     * ::dispatchScan() when no scan result/state is cached yet, which runs
+     * the Wings hash scan synchronously whenever no async queue is
+     * configured. hasWarmRecordsCache() can only see the (longer-lived)
+     * metadata display cache, not that separate, shorter-lived scan-result
+     * cache - so a "warm" verdict here would not actually guarantee the
+     * fast path for that call, and could turn what is currently an
+     * always-deferred, always-hidden-behind-a-shell block into one that
+     * blocks the very first response instead. Keeping the Installed tab
+     * unconditionally deferred avoids that regression entirely; every
+     * render on that tab is already non-blocking within the deferred
+     * round trip itself (see peekVisibleLatestVersions()/peekInstalled()
+     * and pollEnrichment()), so there is no separate win being left on the
+     * table by excluding it here.
+     */
+    protected function hasWarmRecordsCache(): bool
+    {
+        if ($this->activeTab === 'installed') {
+            return false;
+        }
+
+        /** @var Server $server */
+        $server = Filament::getTenant();
+        $type = static::detectProjectType($server);
+        $currentSource = $this->getCurrentSource();
+
+        if (!$type || !$currentSource || !$currentSource->isConfigured() || !$currentSource->supportsSearch()) {
+            // records() resolves this to an empty paginator with no cache
+            // lookup at all - nothing a deferred round trip would hide.
+            return true;
+        }
+
+        $filterState = $this->tableFilters ?? [];
+        $category = $filterState['catalog_category']['value'] ?? null;
+        $environment = $filterState['catalog_environment']['value'] ?? null;
+
+        return $currentSource->hasCachedSearch(
+            $server,
+            $type,
+            (int) $this->getTablePage(),
+            $this->getTableSearch(),
+            [
+                'sort' => $this->catalogSort,
+                'category' => $category,
+                'environment' => $currentSource->getKey() === ProjectSourceKey::Modrinth ? $environment : null,
+            ],
+        );
+    }
+
+    /**
      * @throws Exception
      */
     public function table(Table $table): Table
@@ -1279,10 +1337,13 @@ class ModManagerPage extends Page implements HasTable
 
                 return new LengthAwarePaginator($hits, $response['total_hits'], 20, $page);
             })
-            // Render the page shell immediately. The first catalog request may
-            // be an uncached external API call, so let Filament issue it after
-            // the initial Livewire response has reached the browser.
-            ->deferLoading()
+            // Render the page shell immediately, unless the current request's
+            // records are already cached (fresh or stale) with no upstream
+            // fetch required - in which case skip the deferred round trip
+            // entirely and render real records synchronously. See
+            // hasWarmRecordsCache() for what "warm" means per tab, and why
+            // the Installed tab is deliberately excluded from this check.
+            ->deferLoading(fn (): bool => !$this->hasWarmRecordsCache())
             ->paginated([20])
             // Category labels can be long (for example, "Armor, Tools, and
             // Weapons"), so retain a wider filters panel for the two real filters.

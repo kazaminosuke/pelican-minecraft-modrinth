@@ -49,6 +49,18 @@ interface ProjectSourceInterface
     /** @return array{hits: array<int, array<string, mixed>>, total_hits: int} */
     public function search(Server $server, ProjectType $type, int $page, ?string $search = null, array $filters = []): array;
 
+    /**
+     * Whether search()'s cache entry for this exact (page, search, filters)
+     * already exists - fresh or stale - without fetching or dispatching.
+     *
+     * Used by ModManagerPage::hasWarmRecordsCache() to decide whether the
+     * catalog tab's deferred load can be skipped for the current request.
+     * A request search() would resolve instantly with no cache lookup at
+     * all (unsupported loader, unconfigured source, ...) counts as true
+     * here too: there is nothing a deferred round trip would be hiding.
+     */
+    public function hasCachedSearch(Server $server, ProjectType $type, int $page, ?string $search = null, array $filters = []): bool;
+
     /** @return array<string, mixed>|null normalized project data */
     public function getProject(string $projectId): ?array;
 

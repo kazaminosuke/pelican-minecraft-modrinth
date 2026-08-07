@@ -124,6 +124,27 @@ class ModrinthSource implements BatchLatestVersionSourceInterface, ProjectSource
      */
     public function search(Server $server, ProjectType $type, int $page = 1, ?string $search = null, array $filters = []): array
     {
+        $spec = $this->buildSearchSpec($server, $type, $page, $search, $filters);
+
+        if ($spec === null) {
+            return ['hits' => [], 'total_hits' => 0];
+        }
+
+        $result = $this->sourceCache->swr($spec, CacheProfile::Search);
+
+        return is_array($result) ? $result : ['hits' => [], 'total_hits' => 0];
+    }
+
+    public function hasCachedSearch(Server $server, ProjectType $type, int $page, ?string $search = null, array $filters = []): bool
+    {
+        $spec = $this->buildSearchSpec($server, $type, $page, $search, $filters);
+
+        return $spec === null || $this->sourceCache->peek($spec)['hit'];
+    }
+
+    /** @param array<string, mixed> $filters */
+    private function buildSearchSpec(Server $server, ProjectType $type, int $page, ?string $search, array $filters): ?SourceFetchSpec
+    {
         $minecraftLoader = $type->getLoaderSlug($server);
         $projectType = $type->value;
         $minecraftVersion = MinecraftVersionResolver::resolve($server);
@@ -132,7 +153,7 @@ class ModrinthSource implements BatchLatestVersionSourceInterface, ProjectSource
             $facetGroups = [["versions:$minecraftVersion"], ["project_type:{$projectType}"]];
         } else {
             if (!$minecraftLoader) {
-                return ['hits' => [], 'total_hits' => 0];
+                return null;
             }
 
             $facetGroups = [["categories:$minecraftLoader"], ["versions:$minecraftVersion"], ["project_type:{$projectType}"]];
@@ -162,12 +183,7 @@ class ModrinthSource implements BatchLatestVersionSourceInterface, ProjectSource
             $data['query'] = $search;
         }
 
-        $result = $this->sourceCache->swr(
-            $this->spec(self::OPERATION_SEARCH, ['query' => $data]),
-            CacheProfile::Search,
-        );
-
-        return is_array($result) ? $result : ['hits' => [], 'total_hits' => 0];
+        return $this->spec(self::OPERATION_SEARCH, ['query' => $data]);
     }
 
     /**

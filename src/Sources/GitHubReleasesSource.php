@@ -127,6 +127,14 @@ class GitHubReleasesSource implements BatchLatestVersionSourceInterface, Project
         return ['hits' => [], 'total_hits' => 0];
     }
 
+    // search() never touches the cache (see supportsSearch(), which is
+    // always false for this source) - so it always resolves instantly with
+    // no I/O, and there is nothing a deferred round trip would be hiding.
+    public function hasCachedSearch(Server $server, ProjectType $type, int $page, ?string $search = null, array $filters = []): bool
+    {
+        return true;
+    }
+
     /** @return array<string, mixed>|null */
     public function getProject(string $projectId): ?array
     {
