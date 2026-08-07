@@ -207,6 +207,83 @@ class SourceCacheTest extends TestCase
         self::assertSame(['new'], $cache->get($spec->cacheKey())['data']);
     }
 
+    public function test_deferred_fresh_hit_returns_data_without_fetching_or_dispatching(): void
+    {
+        $cache = $this->cache();
+        $spec = $this->spec();
+        $data = ['hits' => [['project_id' => 'one']], 'total_hits' => 1];
+        $cache->put($spec->cacheKey(), $this->entry($data, time() + 60), 300);
+        $executor = Mockery::mock(SourceFetchExecutorInterface::class);
+        $executor->shouldNotReceive('fetch');
+        $executor->shouldNotReceive('emptyResult');
+
+        $result = $this->sourceCache($cache, 'database', $executor)
+            ->swrDeferred($spec, CacheProfile::Search);
+
+        self::assertSame($data, $result['data']);
+        self::assertFalse($result['pending']);
+    }
+
+    public function test_deferred_stale_hit_returns_data_immediately_and_queues_one_revalidation(): void
+    {
+        $cache = $this->cache();
+        $spec = $this->spec();
+        $stale = ['hits' => [['project_id' => 'stale']], 'total_hits' => 1];
+        $cache->put($spec->cacheKey(), $this->entry($stale, time() - 1), 300);
+        $executor = Mockery::mock(SourceFetchExecutorInterface::class);
+        $executor->shouldNotReceive('fetch');
+        $executor->shouldNotReceive('emptyResult');
+        $dispatcher = $this->prepareDispatchContainer($cache);
+        $dispatcher->shouldReceive('dispatch')
+            ->once()
+            ->withArgs(fn (RevalidateSourceCache $job): bool => $job->uniqueId() === $spec->cacheKey())
+            ->andReturnNull();
+
+        $result = $this->sourceCache($cache, 'database', $executor)
+            ->swrDeferred($spec, CacheProfile::Search);
+
+        self::assertSame($stale, $result['data']);
+        self::assertFalse($result['pending']);
+    }
+
+    public function test_deferred_miss_never_fetches_inline_and_queues_one_revalidation(): void
+    {
+        $cache = $this->cache();
+        $spec = $this->spec();
+        $empty = ['hits' => [], 'total_hits' => 0];
+        $executor = Mockery::mock(SourceFetchExecutorInterface::class);
+        $executor->shouldNotReceive('fetch');
+        $executor->shouldReceive('emptyResult')->once()->with($spec)->andReturn($empty);
+        $dispatcher = $this->prepareDispatchContainer($cache);
+        $dispatcher->shouldReceive('dispatch')
+            ->once()
+            ->withArgs(fn (RevalidateSourceCache $job): bool => $job->uniqueId() === $spec->cacheKey())
+            ->andReturnNull();
+
+        $result = $this->sourceCache($cache, 'database', $executor)
+            ->swrDeferred($spec, CacheProfile::Search);
+
+        self::assertSame($empty, $result['data']);
+        self::assertTrue($result['pending']);
+    }
+
+    public function test_deferred_miss_on_sync_queue_never_fetches_inline_and_does_not_dispatch(): void
+    {
+        $cache = $this->cache();
+        $spec = $this->spec();
+        $empty = ['hits' => [], 'total_hits' => 0];
+        $executor = Mockery::mock(SourceFetchExecutorInterface::class);
+        $executor->shouldNotReceive('fetch');
+        $executor->shouldReceive('emptyResult')->once()->with($spec)->andReturn($empty);
+
+        $result = $this->sourceCache($cache, 'sync', $executor)
+            ->swrDeferred($spec, CacheProfile::Search);
+
+        self::assertSame($empty, $result['data']);
+        self::assertTrue($result['pending']);
+        self::assertNull($cache->get($spec->cacheKey()));
+    }
+
     public function test_revalidation_failure_preserves_existing_stale_entry(): void
     {
         $cache = $this->cache();

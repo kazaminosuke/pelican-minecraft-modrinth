@@ -141,6 +141,37 @@ final class SourceCache
         return $this->dispatchRevalidation($spec, $profile);
     }
 
+    /**
+     * Non-blocking counterpart to swr(): never performs an inline fetch.
+     *
+     * A fresh hit returns immediately. A stale hit also returns
+     * immediately, and queues a background revalidation exactly like
+     * swr() does. A miss queues a background fetch (when the queue
+     * supports it - see revalidateAsync()) and returns the operation's
+     * empty result instead of waiting for one, so a render path can show
+     * a placeholder rather than block on a cold cache. Callers that need
+     * to tell "genuinely empty" apart from "not checked yet" should use
+     * the pending flag rather than inspecting the returned data.
+     *
+     * @return array{data: mixed, pending: bool}
+     */
+    public function swrDeferred(SourceFetchSpec $spec, CacheProfile $profile): array
+    {
+        $peeked = $this->peek($spec);
+
+        if ($peeked['hit']) {
+            if (!$peeked['fresh']) {
+                $this->revalidateAsync($spec, $profile);
+            }
+
+            return ['data' => $peeked['data'], 'pending' => false];
+        }
+
+        $this->revalidateAsync($spec, $profile);
+
+        return ['data' => $this->emptyResult($spec), 'pending' => true];
+    }
+
     /** @return array{v: int, data: mixed, fresh_until: int}|null */
     private function readEntry(SourceFetchSpec $spec): ?array
     {

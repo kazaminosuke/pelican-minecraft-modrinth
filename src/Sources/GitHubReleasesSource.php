@@ -133,6 +133,28 @@ class GitHubReleasesSource implements BatchLatestVersionSourceInterface, Project
         return $this->resolveProjectByIdentifier($projectId);
     }
 
+    /** @return array{data: array<string, mixed>|null, pending: bool} */
+    public function peekProject(string $projectId): array
+    {
+        $repo = $this->parseIdentifier($projectId);
+
+        if ($repo === null) {
+            return ['data' => null, 'pending' => false];
+        }
+
+        [$owner, $name] = array_map('strtolower', $repo);
+        $spec = $this->spec(self::OPERATION_PROJECT, [
+            'name' => $name,
+            'owner' => $owner,
+        ]);
+        $peeked = $this->sourceCache->swrDeferred($spec, CacheProfile::ProjectMetadata);
+
+        return [
+            'data' => is_array($peeked['data']) ? $peeked['data'] : null,
+            'pending' => $peeked['pending'],
+        ];
+    }
+
     /**
      * @param array<int, string> $projectIds
      * @return array<string, mixed>
@@ -214,10 +236,96 @@ class GitHubReleasesSource implements BatchLatestVersionSourceInterface, Project
             ));
         }
 
+        [$requestsByRepository, $repositories, $unresolved] = $this->groupRequestsByRepository($requests);
         $versions = [];
-        $unresolved = [];
+
+        if ($repositories !== []) {
+            ksort($repositories);
+            $payload = $this->sourceCache->swr(
+                $this->spec(self::OPERATION_LATEST, [
+                    'repositories' => array_values($repositories),
+                ]),
+                CacheProfile::InstalledLatest,
+            );
+            $result = $this->distributeLatestPayload($requestsByRepository, $payload);
+            $versions = $result->versions();
+            $unresolved = array_merge($unresolved, $result->unresolvedKeys());
+        }
+
+        return new LatestVersionLookupResult(
+            versionsByKey: $versions,
+            unresolvedKeys: $unresolved,
+        );
+    }
+
+    /**
+     * Non-blocking counterpart to lookupLatestVersions(). See
+     * BatchLatestVersionSourceInterface::peekLatestVersions().
+     *
+     * @param array<int, LatestVersionLookupRequest> $requests
+     */
+    public function peekLatestVersions(
+        array $requests,
+        Server $server,
+        ProjectType $type,
+    ): LatestVersionLookupResult {
+        $requests = array_values(array_filter(
+            $requests,
+            fn ($request): bool => $request instanceof LatestVersionLookupRequest,
+        ));
+
+        if ($requests === []) {
+            return LatestVersionLookupResult::empty();
+        }
+
+        if (!$this->supportsProjectType($type)) {
+            return new LatestVersionLookupResult(unresolvedKeys: array_map(
+                fn (LatestVersionLookupRequest $request): string => $request->key(),
+                $requests,
+            ));
+        }
+
+        [$requestsByRepository, $repositories, $unresolved] = $this->groupRequestsByRepository($requests);
+
+        if ($repositories === []) {
+            return new LatestVersionLookupResult(unresolvedKeys: $unresolved);
+        }
+
+        ksort($repositories);
+        $spec = $this->spec(self::OPERATION_LATEST, [
+            'repositories' => array_values($repositories),
+        ]);
+        $peeked = $this->sourceCache->swrDeferred($spec, CacheProfile::InstalledLatest);
+
+        if ($peeked['pending']) {
+            $pendingKeys = array_map(
+                fn (LatestVersionLookupRequest $request): string => $request->key(),
+                array_merge(...array_values($requestsByRepository)),
+            );
+
+            return new LatestVersionLookupResult(unresolvedKeys: $unresolved, pendingKeys: $pendingKeys);
+        }
+
+        $result = $this->distributeLatestPayload($requestsByRepository, $peeked['data']);
+
+        return $unresolved !== []
+            ? $result->merge(new LatestVersionLookupResult(unresolvedKeys: $unresolved))
+            : $result;
+    }
+
+    /**
+     * @param array<int, LatestVersionLookupRequest> $requests
+     * @return array{
+     *     0: array<string, array<int, LatestVersionLookupRequest>>,
+     *     1: array<string, array{key: string, owner: string, name: string}>,
+     *     2: array<int, string>
+     * }
+     */
+    private function groupRequestsByRepository(array $requests): array
+    {
         $requestsByRepository = [];
         $repositories = [];
+        $unresolved = [];
 
         foreach ($requests as $request) {
             $parsed = $this->parseIdentifier($request->projectId);
@@ -238,36 +346,34 @@ class GitHubReleasesSource implements BatchLatestVersionSourceInterface, Project
             ];
         }
 
-        if ($repositories !== []) {
-            ksort($repositories);
-            $payload = $this->sourceCache->swr(
-                $this->spec(self::OPERATION_LATEST, [
-                    'repositories' => array_values($repositories),
-                ]),
-                CacheProfile::InstalledLatest,
-            );
-            $versionsByRepository = is_array($payload) && is_array($payload['versions'] ?? null)
-                ? $payload['versions']
-                : [];
-            $unresolvedRepositories = is_array($payload) && is_array($payload['unresolved'] ?? null)
-                ? array_fill_keys($payload['unresolved'], true)
-                : [];
+        return [$requestsByRepository, $repositories, $unresolved];
+    }
 
-            foreach ($requestsByRepository as $repositoryKey => $repositoryRequests) {
-                foreach ($repositoryRequests as $request) {
-                    if (is_array($versionsByRepository[$repositoryKey] ?? null)) {
-                        $versions[$request->key()] = $versionsByRepository[$repositoryKey];
-                    } elseif (isset($unresolvedRepositories[$repositoryKey]) || !isset($versionsByRepository[$repositoryKey])) {
-                        $unresolved[] = $request->key();
-                    }
+    /**
+     * @param array<string, array<int, LatestVersionLookupRequest>> $requestsByRepository
+     */
+    private function distributeLatestPayload(array $requestsByRepository, mixed $payload): LatestVersionLookupResult
+    {
+        $versionsByRepository = is_array($payload) && is_array($payload['versions'] ?? null)
+            ? $payload['versions']
+            : [];
+        $unresolvedRepositories = is_array($payload) && is_array($payload['unresolved'] ?? null)
+            ? array_fill_keys($payload['unresolved'], true)
+            : [];
+        $versions = [];
+        $unresolved = [];
+
+        foreach ($requestsByRepository as $repositoryKey => $repositoryRequests) {
+            foreach ($repositoryRequests as $request) {
+                if (is_array($versionsByRepository[$repositoryKey] ?? null)) {
+                    $versions[$request->key()] = $versionsByRepository[$repositoryKey];
+                } elseif (isset($unresolvedRepositories[$repositoryKey]) || !isset($versionsByRepository[$repositoryKey])) {
+                    $unresolved[] = $request->key();
                 }
             }
         }
 
-        return new LatestVersionLookupResult(
-            versionsByKey: $versions,
-            unresolvedKeys: $unresolved,
-        );
+        return new LatestVersionLookupResult(versionsByKey: $versions, unresolvedKeys: $unresolved);
     }
 
     /**

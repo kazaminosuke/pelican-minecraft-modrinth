@@ -78,6 +78,17 @@ class ModManagerPage extends Page implements HasTable
     /** @var array<string, array<string, mixed>|null> Latest compatible version by "source:project_id" */
     protected array $latestVersionsCache = [];
 
+    /**
+     * Keys ("source:project_id") whose latest-version lookup was a cold
+     * cache miss on the Installed tab's non-blocking peek path - a
+     * background revalidation was queued rather than fetched inline. Set
+     * only by peekVisibleLatestVersions(); the catalog tab's blocking
+     * warmVisibleLatestVersions() never leaves an entry pending.
+     *
+     * @var array<string, true>
+     */
+    protected array $pendingLatestVersionKeys = [];
+
     /** @var array<int, ProjectSourceInterface>|null */
     protected ?array $availableSources = null;
 
@@ -104,6 +115,15 @@ class ModManagerPage extends Page implements HasTable
 
     /** Enable polling only while an Installed operation needs observation. */
     public bool $pollInstalledOperations = false;
+
+    /**
+     * Enable a coarser, independent poll only while the Installed tab has
+     * rows still waiting on a background enrichment fetch (icon/downloads/
+     * date_modified or the latest-version/update badge). Deliberately kept
+     * separate from pollInstalledOperations, which tracks scan/bulk-update
+     * job state rather than passive cache-fill progress.
+     */
+    public bool $pollEnrichment = false;
 
     /**
      * Whether a still-valid scan result already exists, independent of any
@@ -554,11 +574,19 @@ class ModManagerPage extends Page implements HasTable
                 $this->installedModsMetadata = $metadataResult->document->installedMods();
                 $metadataStatus = $metadataResult->status->value;
 
-                // Never turn a transient Wings/metadata read failure into five
-                // minutes of an apparently empty Installed tab. A valid empty
+                // Never turn a transient Wings/metadata read failure into an
+                // hour of an apparently empty Installed tab. A valid empty
                 // current/legacy document remains authoritative and cacheable.
+                //
+                // The generation stamp in $cacheKey already invalidates this
+                // entry on every write (install/update/uninstall/scan - see
+                // InstalledMetadataRepository::write()), so this TTL is only
+                // a safety net for edits made outside the plugin (e.g. via
+                // the file manager). "Rescan" (scan_mods, below) writes the
+                // metadata document unconditionally and so doubles as a
+                // manual refresh for that case.
                 if ($metadataResult->isAuthoritative()) {
-                    Cache::put($cacheKey, $this->installedModsMetadata, now()->addMinutes(5));
+                    Cache::put($cacheKey, $this->installedModsMetadata, now()->addHour());
                 }
             }
 
@@ -686,6 +714,91 @@ class ModManagerPage extends Page implements HasTable
         }
 
         return $this->latestVersionsCache[$cacheIndex];
+    }
+
+    /**
+     * Whether the given project's latest-version lookup is still waiting on
+     * a background revalidation queued by peekVisibleLatestVersions(). Only
+     * ever true on the Installed tab; the catalog tab's warm path never
+     * leaves an entry pending.
+     */
+    protected function isLatestVersionPending(string $projectId, string $sourceKey): bool
+    {
+        return isset($this->pendingLatestVersionKeys["$sourceKey:$projectId"]);
+    }
+
+    /**
+     * Non-blocking counterpart to warmVisibleLatestVersions(), used by the
+     * Installed tab's render path so a cold cache never blocks the
+     * response. A cache hit (fresh or stale) is used immediately, same as
+     * the blocking path; a miss queues a background revalidation and
+     * leaves the entry out of latestVersionsCache entirely (see
+     * isLatestVersionPending()) so it isn't mistaken for a confirmed
+     * no-update result.
+     *
+     * @param array<int, array<string, mixed>> $records
+     * @return bool Whether any of the given records is still pending.
+     */
+    protected function peekVisibleLatestVersions(array $records, Server $server, ProjectType $type): bool
+    {
+        $installedMods = [];
+
+        foreach ($records as $record) {
+            $projectId = $record['project_id'] ?? null;
+            $sourceKey = $record['source'] ?? null;
+
+            if (!is_string($projectId) || $projectId === '' || !is_string($sourceKey) || $sourceKey === '') {
+                continue;
+            }
+
+            $cacheIndex = "$sourceKey:$projectId";
+            if (array_key_exists($cacheIndex, $this->latestVersionsCache) && !isset($this->pendingLatestVersionKeys[$cacheIndex])) {
+                continue;
+            }
+
+            $installedMod = $this->getInstalledMod($projectId, $sourceKey);
+            if ($installedMod !== null) {
+                $installedMods[$cacheIndex] = $installedMod;
+            }
+        }
+
+        if ($installedMods === []) {
+            return $this->pendingLatestVersionKeys !== [];
+        }
+
+        $startedAt = $this->isModManagerTimingEnabled() ? microtime(true) : 0.0;
+        $result = app(VersionLookupCoordinator::class)->peekInstalled(array_values($installedMods), $server, $type);
+
+        foreach (array_keys($installedMods) as $cacheIndex) {
+            if ($result->isPending($cacheIndex)) {
+                $this->pendingLatestVersionKeys[$cacheIndex] = true;
+
+                continue;
+            }
+
+            unset($this->pendingLatestVersionKeys[$cacheIndex]);
+            $this->latestVersionsCache[$cacheIndex] = $result->version($cacheIndex);
+        }
+
+        if ($this->isModManagerTimingEnabled()) {
+            $durationMs = (int) round((microtime(true) - $startedAt) * 1000);
+
+            Log::info('Mod manager timing', [
+                'stage' => 'record_version_lookup_peek',
+                'request_id' => $this->modManagerTimingRequestId,
+                'source' => 'coordinator',
+                'started_after_ms' => $this->getModManagerTimingElapsedMs($startedAt),
+                'finished_after_ms' => $this->getModManagerTimingElapsedMs(),
+                'duration_ms' => $durationMs,
+                'project_count' => count($installedMods),
+                'resolved_count' => count($result->versions()),
+                'unresolved_count' => count($result->unresolvedKeys()),
+                'failed_count' => count($result->failures()),
+                'pending_count' => count($result->pendingKeys()),
+            ]);
+        }
+
+        return $this->pendingLatestVersionKeys !== [];
     }
 
     /** @param array<int, array<string, mixed>> $records */
@@ -994,9 +1107,10 @@ class ModManagerPage extends Page implements HasTable
                         $unknownFiles = array_values(array_filter($unknownFiles, fn (string $filename) => str_contains(strtolower($filename), $searchLower)));
                     }
 
-                    // hydrateInstalled() groups records by source. Reproduce that
-                    // ordering before pagination, then hydrate only this page's
-                    // records instead of every installed project on every request.
+                    // hydrateInstalled()/peekInstalled() group records by source.
+                    // Reproduce that ordering before pagination, then hydrate only
+                    // this page's records instead of every installed project on
+                    // every request.
                     $installedBySource = [];
                     foreach ($installedMods as $installedMod) {
                         $sourceKey = $installedMod['source'] ?? ProjectSourceKey::Modrinth->value;
@@ -1010,13 +1124,31 @@ class ModManagerPage extends Page implements HasTable
                     $offset = ($page - 1) * $perPage;
                     $pagedInstalledMods = array_slice($orderedInstalledMods, $offset, $perPage);
 
+                    // Neither call below performs an upstream fetch: both are
+                    // cache-only reads that queue a background revalidation on a
+                    // miss instead of blocking the response (see SourceCache::
+                    // swrDeferred()). pollEnrichment drives a self-terminating
+                    // poll (see getHeaderActions()/EmbeddedTable wrapper) that
+                    // reloads the table once the background fills land.
+                    $enrichmentPending = false;
+
                     if ($pagedInstalledMods !== [] && $type !== null) {
-                        $this->warmVisibleLatestVersions($pagedInstalledMods, $server, $type);
+                        $enrichmentPending = $this->peekVisibleLatestVersions($pagedInstalledMods, $server, $type);
                     }
 
                     $projects = $pagedInstalledMods
-                        ? app(ProjectSourceRegistry::class)->hydrateInstalled($pagedInstalledMods, $server)
+                        ? app(ProjectSourceRegistry::class)->peekInstalled($pagedInstalledMods, $server)
                         : [];
+
+                    foreach ($projects as $project) {
+                        if ($project['enrichment_pending'] ?? false) {
+                            $enrichmentPending = true;
+
+                            break;
+                        }
+                    }
+
+                    $this->pollEnrichment = $enrichmentPending;
 
                     $unknownOffset = max(0, $offset - count($orderedInstalledMods));
                     $remainingSlots = $perPage - count($pagedInstalledMods);
@@ -1414,6 +1546,14 @@ class ModManagerPage extends Page implements HasTable
                             return false;
                         }
 
+                        // The update badge is still being resolved in the
+                        // background (see peekVisibleLatestVersions()). Default
+                        // to "installed" (see that action's visible()) rather
+                        // than claiming no update is available.
+                        if ($this->isLatestVersionPending($record['project_id'], $sourceKey)) {
+                            return false;
+                        }
+
                         $latestVersion = $this->getCachedLatestVersion($record['project_id'], $sourceKey);
 
                         if ($latestVersion === null) {
@@ -1520,6 +1660,16 @@ class ModManagerPage extends Page implements HasTable
 
                         if (is_null($installedMod)) {
                             return false;
+                        }
+
+                        // Default to "installed" while the update badge is
+                        // still resolving in the background - see the
+                        // update action's visible(). No update is shown as
+                        // available until it's actually confirmed, and the
+                        // row corrects itself once pollEnrichment reloads
+                        // the table.
+                        if ($this->isLatestVersionPending($record['project_id'], $sourceKey)) {
+                            return true;
                         }
 
                         $latestVersion = $this->getCachedLatestVersion($record['project_id'], $sourceKey);
@@ -1870,7 +2020,7 @@ class ModManagerPage extends Page implements HasTable
                     ->visible(fn () => $this->activeTab === 'installed' && $this->shouldShowInstalledOperationStatus()),
                 Group::make([
                     EmbeddedTable::make(),
-                ])->extraAttributes([
+                ])->extraAttributes(fn () => array_merge([
                     'class' => 'mmr-table-scroll-ctn',
                     'data-mmr-swr-scope' => json_encode([
                         'user_id' => (string) user()->getKey(),
@@ -1887,7 +2037,15 @@ class ModManagerPage extends Page implements HasTable
                     // per update is what previously coupled the layout to
                     // render timing. A ResizeObserver covers the cases that
                     // do change it.
-                ]),
+                ], $this->activeTab === 'installed' && $this->pollEnrichment
+                    // Independent of pollInstalledOperations: this fires only
+                    // while a background icon/downloads/date_modified or
+                    // update-badge fetch is still outstanding (see
+                    // peekVisibleLatestVersions()/ProjectSourceRegistry::
+                    // peekInstalled()), and stops on its own once records()
+                    // finds nothing left pending.
+                    ? ['wire:poll.5s' => 'pollEnrichment']
+                    : [])),
             ]);
     }
 
@@ -1934,6 +2092,27 @@ class ModManagerPage extends Page implements HasTable
             );
         }
 
+        $this->js('queueMicrotask(() => $wire.loadTable())');
+    }
+
+    /**
+     * Reload the table so a background enrichment fill (project metadata or
+     * a latest-version lookup queued by SourceCache::swrDeferred()) that
+     * landed since the last render becomes visible. records() recomputes
+     * pollEnrichment on every call, so this poll stops on its own once
+     * nothing is left pending - unlike pollInstalledOperation(), there is
+     * no operation state to track here.
+     */
+    public function pollEnrichment(): void
+    {
+        if ($this->activeTab !== 'installed') {
+            $this->pollEnrichment = false;
+
+            return;
+        }
+
+        $this->isTableLoaded = false;
+        $this->resetTable();
         $this->js('queueMicrotask(() => $wire.loadTable())');
     }
 

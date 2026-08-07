@@ -93,12 +93,12 @@ class ProjectSourceRegistry
     /**
      * Hydrates installed-mod metadata entries (each tagged with a `source`,
      * per Phase 3) with live display data from each entry's actual source.
-     * Entries are grouped by source and each source's lookup is batched
-     * (chunks of 100 project ids, cached by the source cache)
-     * so a large modpack with mods from several sources doesn't issue one
-     * request per mod. An entry whose source has no live match (removed
-     * upstream, or an unimplemented/unrecognized source) falls back to an
-     * "unavailable" placeholder built from the stored metadata.
+     * Blocks on whatever each source's getProject() takes to resolve, so
+     * this is for synchronous/authoritative callers only - a render path
+     * should use peekInstalled() instead. An entry whose source has no
+     * live match (removed upstream, or an unimplemented/unrecognized
+     * source) falls back to an "unavailable" placeholder built from the
+     * stored metadata.
      *
      * @param array<int, array<string, mixed>> $installedMods
      * @return array<int, array<string, mixed>>
@@ -140,24 +140,87 @@ class ProjectSourceRegistry
     }
 
     /**
+     * Non-blocking counterpart to hydrateInstalled(), for the Installed
+     * tab's render path. Never performs an upstream fetch: a project whose
+     * cache entry is a miss comes back with `enrichment_pending` true and
+     * only the fields already known from the installed-mod metadata
+     * document filled in - the caller is expected to render a placeholder
+     * and let a queued background revalidation (see
+     * ProjectSourceInterface::peekProject()) fill it in on a later pass.
+     *
+     * @param array<int, array<string, mixed>> $installedMods
+     * @return array<int, array<string, mixed>>
+     */
+    public function peekInstalled(array $installedMods, Server $server): array
+    {
+        $results = [];
+
+        foreach ($installedMods as $mod) {
+            $sourceKey = $mod['source'] ?? ProjectSourceKey::Modrinth->value;
+            $source = $this->getByValue($sourceKey);
+            $projectId = $mod['project_id'] ?? null;
+
+            if ($source === null || !is_string($projectId) || $projectId === '') {
+                $results[] = $this->unavailableEntry($mod, $sourceKey);
+
+                continue;
+            }
+
+            try {
+                $peeked = $source->peekProject($projectId);
+            } catch (Exception $exception) {
+                report($exception);
+                $peeked = ['data' => null, 'pending' => false];
+            }
+
+            if ($peeked['data'] !== null) {
+                $project = $peeked['data'];
+                $project['project_id'] = $projectId;
+                $project['source'] = $sourceKey;
+
+                if (empty($project['author']) && !empty($mod['author'])) {
+                    $project['author'] = $mod['author'];
+                }
+
+                $results[] = $project;
+
+                continue;
+            }
+
+            $results[] = $peeked['pending']
+                ? $this->pendingEntry($mod, $sourceKey)
+                : $this->unavailableEntry($mod, $sourceKey);
+        }
+
+        return $results;
+    }
+
+    /**
      * @param array<int, array<string, mixed>> $mods
      * @return array<string, mixed>
      */
     protected function fetchProjectsMap(ProjectSourceInterface $source, array $mods): array
     {
+        // One cache entry per project id (see ProjectSourceInterface::getProject())
+        // rather than the previous 100-id chunked entry: installing or
+        // updating one mod no longer invalidates every other project's
+        // cached metadata by shifting which ids happen to share a chunk.
+        // The trade-off is a request-per-miss instead of one bulk request
+        // for a fully cold cache; nothing currently calls this method from
+        // a latency-sensitive render path (see peekInstalled() for that).
         $projectIds = array_values(array_unique(array_column($mods, 'project_id')));
         $projectsMap = [];
 
-        foreach (array_chunk($projectIds, 100) as $chunk) {
+        foreach ($projectIds as $projectId) {
             try {
-                $chunkMap = $source->getProjectsByIds($chunk);
+                $project = $source->getProject($projectId);
             } catch (Exception $exception) {
                 report($exception);
-                $chunkMap = [];
+                $project = null;
             }
 
-            if (is_array($chunkMap)) {
-                $projectsMap += $chunkMap;
+            if ($project !== null) {
+                $projectsMap[$projectId] = $project;
             }
         }
 
@@ -179,6 +242,32 @@ class ProjectSourceRegistry
             'project_type' => '',
             'source' => $sourceKey,
             'unavailable' => true,
+        ];
+    }
+
+    /**
+     * A metadata-document-only row for peekInstalled(): everything the
+     * installed-mod metadata document already knows is real, but the
+     * source-provided display fields (icon/downloads/date_modified) are
+     * still being fetched in the background - distinct from
+     * unavailableEntry(), which means the source has no live match at all.
+     *
+     * @param array<string, mixed> $mod
+     */
+    protected function pendingEntry(array $mod, string $sourceKey): array
+    {
+        return [
+            'project_id' => $mod['project_id'] ?? '',
+            'slug' => $mod['project_slug'] ?? '',
+            'title' => $mod['project_title'] ?? '',
+            'description' => null,
+            'icon_url' => null,
+            'author' => $mod['author'] ?? '',
+            'downloads' => null,
+            'date_modified' => null,
+            'project_type' => '',
+            'source' => $sourceKey,
+            'enrichment_pending' => true,
         ];
     }
 }

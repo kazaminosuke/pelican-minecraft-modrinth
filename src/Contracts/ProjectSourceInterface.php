@@ -53,6 +53,17 @@ interface ProjectSourceInterface
     public function getProject(string $projectId): ?array;
 
     /**
+     * Non-blocking counterpart to getProject(): a fresh or stale cache hit
+     * returns its data immediately; a miss queues a background refresh
+     * (when the queue supports it) and comes back with pending true
+     * instead of performing an inline fetch. Uses a per-project cache
+     * entry, so one project's revalidation never invalidates another's.
+     *
+     * @return array{data: array<string, mixed>|null, pending: bool}
+     */
+    public function peekProject(string $projectId): array;
+
+    /**
      * @param array<int, string> $projectIds
      * @return array<string, mixed> [projectId => normalized project data]
      *

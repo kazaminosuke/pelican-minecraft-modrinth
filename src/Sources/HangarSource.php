@@ -189,6 +189,18 @@ class HangarSource implements BatchLatestVersionSourceInterface, ProjectSourceIn
         return is_array($project) ? $project : null;
     }
 
+    /** @return array{data: array<string, mixed>|null, pending: bool} */
+    public function peekProject(string $projectId): array
+    {
+        $spec = $this->spec(self::OPERATION_PROJECT, ['project_id' => $projectId]);
+        $peeked = $this->sourceCache->swrDeferred($spec, CacheProfile::ProjectMetadata);
+
+        return [
+            'data' => is_array($peeked['data']) ? $peeked['data'] : null,
+            'pending' => $peeked['pending'],
+        ];
+    }
+
     /**
      * Hangar has no bulk project-lookup endpoint, so this loops getProject()
      * per id; each call already degrades gracefully on its own.
@@ -295,14 +307,80 @@ class HangarSource implements BatchLatestVersionSourceInterface, ProjectSourceIn
 
         $projectIds = array_keys($requestsByProject);
         sort($projectIds, SORT_STRING);
-        $payload = $this->sourceCache->swr(
-            $this->spec(self::OPERATION_LATEST, [
-                'project_ids' => $projectIds,
-                'platform' => $platform,
-                'params' => $params,
-            ]),
-            CacheProfile::InstalledLatest,
-        );
+        $spec = $this->spec(self::OPERATION_LATEST, [
+            'project_ids' => $projectIds,
+            'platform' => $platform,
+            'params' => $params,
+        ]);
+        $payload = $this->sourceCache->swr($spec, CacheProfile::InstalledLatest);
+
+        return $this->distributeLatestPayload($requestsByProject, $payload);
+    }
+
+    /**
+     * Non-blocking counterpart to lookupLatestVersions(). See
+     * BatchLatestVersionSourceInterface::peekLatestVersions().
+     *
+     * @param array<int, LatestVersionLookupRequest> $requests
+     */
+    public function peekLatestVersions(
+        array $requests,
+        Server $server,
+        ProjectType $type,
+    ): LatestVersionLookupResult {
+        $requests = array_values(array_filter(
+            $requests,
+            fn ($request): bool => $request instanceof LatestVersionLookupRequest,
+        ));
+
+        if ($requests === []) {
+            return LatestVersionLookupResult::empty();
+        }
+
+        $platform = $this->platformFor($server);
+
+        if ($type !== ProjectType::Plugin || $platform === null) {
+            return new LatestVersionLookupResult(unresolvedKeys: array_map(
+                fn (LatestVersionLookupRequest $request): string => $request->key(),
+                $requests,
+            ));
+        }
+
+        $params = [
+            'platform' => $platform,
+            'platformVersion' => MinecraftVersionResolver::resolve($server),
+            'limit' => self::PAGE_SIZE,
+        ];
+        $requestsByProject = [];
+
+        foreach ($requests as $request) {
+            $requestsByProject[$request->projectId][] = $request;
+        }
+
+        $projectIds = array_keys($requestsByProject);
+        sort($projectIds, SORT_STRING);
+        $spec = $this->spec(self::OPERATION_LATEST, [
+            'project_ids' => $projectIds,
+            'platform' => $platform,
+            'params' => $params,
+        ]);
+        $peeked = $this->sourceCache->swrDeferred($spec, CacheProfile::InstalledLatest);
+
+        if ($peeked['pending']) {
+            return new LatestVersionLookupResult(pendingKeys: array_map(
+                fn (LatestVersionLookupRequest $request): string => $request->key(),
+                $requests,
+            ));
+        }
+
+        return $this->distributeLatestPayload($requestsByProject, $peeked['data']);
+    }
+
+    /**
+     * @param array<string, array<int, LatestVersionLookupRequest>> $requestsByProject
+     */
+    private function distributeLatestPayload(array $requestsByProject, mixed $payload): LatestVersionLookupResult
+    {
         $resolved = is_array($payload) && is_array($payload['versions'] ?? null)
             ? $payload['versions']
             : [];

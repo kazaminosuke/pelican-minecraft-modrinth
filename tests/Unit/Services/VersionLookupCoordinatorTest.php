@@ -87,6 +87,66 @@ class VersionLookupCoordinatorTest extends TestCase
         self::assertArrayNotHasKey($availableRequest->key(), $result->failures());
     }
 
+    public function test_peek_delegates_to_peek_latest_versions_per_source(): void
+    {
+        $server = $this->server();
+        $modrinthRequest = new LatestVersionLookupRequest('modrinth', 'alpha');
+        $curseForgeRequest = new LatestVersionLookupRequest('curseforge', '42');
+        $modrinth = $this->source();
+        $curseForge = $this->source();
+
+        $modrinth->shouldReceive('isConfigured')->once()->andReturnTrue();
+        $modrinth->shouldReceive('peekLatestVersions')
+            ->once()
+            ->with([$modrinthRequest], $server, ProjectType::Mod)
+            ->andReturn(new LatestVersionLookupResult([
+                $modrinthRequest->key() => ['id' => 'cached-alpha'],
+            ]));
+        $modrinth->shouldNotReceive('lookupLatestVersions');
+
+        $curseForge->shouldReceive('isConfigured')->once()->andReturnTrue();
+        $curseForge->shouldReceive('peekLatestVersions')
+            ->once()
+            ->with([$curseForgeRequest], $server, ProjectType::Mod)
+            ->andReturn(new LatestVersionLookupResult(pendingKeys: [$curseForgeRequest->key()]));
+
+        $registry = Mockery::mock(ProjectSourceRegistry::class);
+        $registry->shouldReceive('getByValue')->once()->with('modrinth')->andReturn($modrinth);
+        $registry->shouldReceive('getByValue')->once()->with('curseforge')->andReturn($curseForge);
+
+        $result = (new VersionLookupCoordinator($registry))->peek(
+            [$modrinthRequest, $curseForgeRequest],
+            $server,
+            ProjectType::Mod,
+        );
+
+        self::assertSame('cached-alpha', $result->version($modrinthRequest->key())['id']);
+        self::assertTrue($result->isPending($curseForgeRequest->key()));
+    }
+
+    public function test_peek_installed_builds_requests_from_installed_mod_metadata(): void
+    {
+        $server = $this->server();
+        $source = $this->source();
+        $source->shouldReceive('isConfigured')->once()->andReturnTrue();
+        $source->shouldReceive('peekLatestVersions')
+            ->once()
+            ->withArgs(fn (array $requests): bool => count($requests) === 1
+                && $requests[0]->key() === 'modrinth:abc')
+            ->andReturn(new LatestVersionLookupResult(pendingKeys: ['modrinth:abc']));
+
+        $registry = Mockery::mock(ProjectSourceRegistry::class);
+        $registry->shouldReceive('getByValue')->once()->with('modrinth')->andReturn($source);
+
+        $result = (new VersionLookupCoordinator($registry))->peekInstalled(
+            [['source' => 'modrinth', 'project_id' => 'abc', 'version_id' => 'v1']],
+            $server,
+            ProjectType::Mod,
+        );
+
+        self::assertTrue($result->isPending('modrinth:abc'));
+    }
+
     protected function source(): ProjectSourceInterface&BatchLatestVersionSourceInterface
     {
         return Mockery::mock(ProjectSourceInterface::class, BatchLatestVersionSourceInterface::class);

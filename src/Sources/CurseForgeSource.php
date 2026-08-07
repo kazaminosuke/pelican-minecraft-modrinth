@@ -221,6 +221,25 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
         return is_array($project) ? $project : null;
     }
 
+    /** @return array{data: array<string, mixed>|null, pending: bool} */
+    public function peekProject(string $projectId): array
+    {
+        if (!$this->isConfigured()) {
+            return ['data' => null, 'pending' => false];
+        }
+
+        $peeked = $this->cache()->swrDeferred(new SourceFetchSpec(
+            sourceKey: $this->getKey()->value,
+            operation: 'project',
+            arguments: ['project_id' => $projectId],
+        ), CacheProfile::ProjectMetadata);
+
+        return [
+            'data' => is_array($peeked['data']) ? $peeked['data'] : null,
+            'pending' => $peeked['pending'],
+        ];
+    }
+
     /**
      * @param array<int, string> $projectIds
      * @return array<string, mixed>
@@ -479,6 +498,54 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
 
         return $result instanceof LatestVersionLookupResult
             ? $result
+            : LatestVersionLookupResult::empty();
+    }
+
+    /**
+     * @param array<int, LatestVersionLookupRequest> $requests
+     */
+    public function peekLatestVersions(
+        array $requests,
+        Server $server,
+        ProjectType $type,
+    ): LatestVersionLookupResult {
+        $validRequests = array_values(array_filter(
+            $requests,
+            fn ($request) => $request instanceof LatestVersionLookupRequest,
+        ));
+        $serializedRequests = $this->serializeLatestRequests($validRequests);
+
+        if ($serializedRequests === []) {
+            return LatestVersionLookupResult::empty();
+        }
+
+        $params = $this->getVersionRequestParams($server, $type);
+        if ($params === null) {
+            return LatestVersionLookupResult::failed(
+                $validRequests,
+                'No compatible CurseForge loader is configured.',
+            );
+        }
+
+        $spec = new SourceFetchSpec(
+            sourceKey: $this->getKey()->value,
+            operation: 'latest',
+            arguments: [
+                'params' => $params,
+                'requests' => $serializedRequests,
+            ],
+        );
+        $peeked = $this->cache()->swrDeferred($spec, CacheProfile::InstalledLatest);
+
+        if ($peeked['pending']) {
+            return new LatestVersionLookupResult(pendingKeys: array_map(
+                fn (LatestVersionLookupRequest $request): string => $request->key(),
+                $validRequests,
+            ));
+        }
+
+        return $peeked['data'] instanceof LatestVersionLookupResult
+            ? $peeked['data']
             : LatestVersionLookupResult::empty();
     }
 

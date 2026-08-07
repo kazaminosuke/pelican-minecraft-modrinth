@@ -298,41 +298,20 @@ class ModrinthSource implements BatchLatestVersionSourceInterface, ProjectSource
         }
 
         $minecraftVersion = MinecraftVersionResolver::resolve($server);
-        $hashesByKey = [];
-        $unresolvedRequests = [];
-
-        foreach ($validRequests as $request) {
-            $sha512 = $request->hash('sha512');
-
-            if ($sha512 === null) {
-                $unresolvedRequests[] = $request->key();
-
-                continue;
-            }
-
-            $hashesByKey[$request->key()] = $sha512;
-        }
-
-        ksort($hashesByKey);
+        [$hashesByKey, $unresolvedRequests] = $this->prepareLatestHashRequests($validRequests);
 
         if ($hashesByKey === []) {
             $result = new LatestVersionLookupResult(unresolvedKeys: $unresolvedRequests);
         } else {
-            $cachedResult = $this->sourceCache->swr(
-                $this->spec(self::OPERATION_LATEST, [
-                    'hashes_by_key' => $hashesByKey,
-                    'game_version' => $minecraftVersion,
-                    'loader' => $minecraftLoader,
-                ]),
-                CacheProfile::InstalledLatest,
-            );
+            $spec = $this->spec(self::OPERATION_LATEST, [
+                'hashes_by_key' => $hashesByKey,
+                'game_version' => $minecraftVersion,
+                'loader' => $minecraftLoader,
+            ]);
+            $cachedResult = $this->sourceCache->swr($spec, CacheProfile::InstalledLatest);
             $result = $cachedResult instanceof LatestVersionLookupResult
                 ? $cachedResult
-                : $this->emptyLatestVersionResult($this->spec(self::OPERATION_LATEST, [
-                    'hashes_by_key' => $hashesByKey,
-                    'game_version' => $minecraftVersion,
-                    'loader' => $minecraftLoader,
-                ]));
+                : $this->emptyLatestVersionResult($spec);
 
             if ($unresolvedRequests !== []) {
                 $result = $result->merge(new LatestVersionLookupResult(unresolvedKeys: $unresolvedRequests));
@@ -354,6 +333,79 @@ class ModrinthSource implements BatchLatestVersionSourceInterface, ProjectSource
         }
 
         return $result;
+    }
+
+    /**
+     * @param array<int, LatestVersionLookupRequest> $requests
+     */
+    public function peekLatestVersions(
+        array $requests,
+        Server $server,
+        ProjectType $type,
+    ): LatestVersionLookupResult {
+        $validRequests = array_values(array_filter(
+            $requests,
+            fn ($request) => $request instanceof LatestVersionLookupRequest,
+        ));
+
+        if ($validRequests === []) {
+            return LatestVersionLookupResult::empty();
+        }
+
+        $minecraftLoader = $type->getLoaderSlug($server);
+        if (!$minecraftLoader) {
+            return LatestVersionLookupResult::failed($validRequests, 'No compatible Modrinth loader is configured.');
+        }
+
+        $minecraftVersion = MinecraftVersionResolver::resolve($server);
+        [$hashesByKey, $unresolvedRequests] = $this->prepareLatestHashRequests($validRequests);
+
+        if ($hashesByKey === []) {
+            return new LatestVersionLookupResult(unresolvedKeys: $unresolvedRequests);
+        }
+
+        $spec = $this->spec(self::OPERATION_LATEST, [
+            'hashes_by_key' => $hashesByKey,
+            'game_version' => $minecraftVersion,
+            'loader' => $minecraftLoader,
+        ]);
+        $peeked = $this->sourceCache->swrDeferred($spec, CacheProfile::InstalledLatest);
+
+        $result = $peeked['pending']
+            ? new LatestVersionLookupResult(pendingKeys: array_keys($hashesByKey))
+            : ($peeked['data'] instanceof LatestVersionLookupResult ? $peeked['data'] : $this->emptyLatestVersionResult($spec));
+
+        if ($unresolvedRequests !== []) {
+            $result = $result->merge(new LatestVersionLookupResult(unresolvedKeys: $unresolvedRequests));
+        }
+
+        return $result;
+    }
+
+    /**
+     * @param array<int, LatestVersionLookupRequest> $validRequests
+     * @return array{0: array<string, string>, 1: array<int, string>} [hashesByKey, unresolvedRequestKeys]
+     */
+    private function prepareLatestHashRequests(array $validRequests): array
+    {
+        $hashesByKey = [];
+        $unresolvedRequests = [];
+
+        foreach ($validRequests as $request) {
+            $sha512 = $request->hash('sha512');
+
+            if ($sha512 === null) {
+                $unresolvedRequests[] = $request->key();
+
+                continue;
+            }
+
+            $hashesByKey[$request->key()] = $sha512;
+        }
+
+        ksort($hashesByKey);
+
+        return [$hashesByKey, $unresolvedRequests];
     }
 
     /**
@@ -435,6 +487,20 @@ class ModrinthSource implements BatchLatestVersionSourceInterface, ProjectSource
         );
 
         return is_array($project) ? $project : null;
+    }
+
+    /** @return array{data: array<string, mixed>|null, pending: bool} */
+    public function peekProject(string $projectId): array
+    {
+        $peeked = $this->sourceCache->swrDeferred(
+            $this->spec(self::OPERATION_PROJECT, ['project_id' => $projectId]),
+            CacheProfile::ProjectMetadata,
+        );
+
+        return [
+            'data' => is_array($peeked['data']) ? $peeked['data'] : null,
+            'pending' => $peeked['pending'],
+        ];
     }
 
     /** @return array<string, mixed>|null */
