@@ -205,68 +205,6 @@ class ModrinthSource implements BatchLatestVersionSourceInterface, ProjectSource
         ];
     }
 
-    /**
-     * @param array<int, array{project_id: string, project_slug: string, project_title: string, version_id: string, version_number: string, filename: string, installed_at: string, author?: string}> $installedMods
-     * @return array<int, array<string, mixed>>
-     */
-    public function getInstalledModsFromModrinth(array $installedMods, int $page = 1): array
-    {
-        if (empty($installedMods)) {
-            return [];
-        }
-
-        $projectIds = collect($installedMods)->pluck('project_id')->unique()->values()->all();
-
-        $perPage = 20;
-        $offset = ($page - 1) * $perPage;
-        $pageIds = array_slice($projectIds, $offset, $perPage);
-
-        if (empty($pageIds)) {
-            return [];
-        }
-
-        $modrinthMap = $this->getProjectsByIds($pageIds);
-
-        $results = [];
-        foreach ($pageIds as $projectId) {
-            $installedMod = null;
-            foreach ($installedMods as $mod) {
-                if ($mod['project_id'] === $projectId) {
-                    $installedMod = $mod;
-                    break;
-                }
-            }
-
-            if (!$installedMod) {
-                continue;
-            }
-
-            if (isset($modrinthMap[$projectId])) {
-                $project = $modrinthMap[$projectId];
-                $project['project_id'] = (string) ($project['project_id'] ?? $projectId);
-                if (isset($installedMod['author']) && !isset($project['author'])) {
-                    $project['author'] = $installedMod['author'];
-                }
-                $results[] = $project;
-            } else {
-                $results[] = [
-                    'project_id' => $installedMod['project_id'],
-                    'slug' => $installedMod['project_slug'],
-                    'title' => $installedMod['project_title'],
-                    'description' => trans('pelican-minecraft-modrinth::strings.page.mod_unavailable'),
-                    'icon_url' => null,
-                    'author' => $installedMod['author'] ?? '',
-                    'downloads' => 0,
-                    'date_modified' => $installedMod['installed_at'],
-                    'project_type' => '',
-                    'unavailable' => true,
-                ];
-            }
-        }
-
-        return $results;
-    }
-
     /** @return array<int, mixed> */
     public function getVersions(string $projectId, Server $server, ProjectType $type): array
     {

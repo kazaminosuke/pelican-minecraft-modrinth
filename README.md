@@ -71,9 +71,18 @@ To enable the extra catalog sources, add their feature flag too:
 types they support - see the table above). Without one of these flags, that source's tab never
 appears for that egg, regardless of whether an API key is configured for it.
 
+**Automatic egg detection** (see [How it works](#how-it-works)) means most official Minecraft eggs
+don't need any of the above set manually - explicit `features`/`tags` still always win when present.
+One consequence: datapack management now **defaults to on** for any recognized Java server egg
+(mod/plugin/hybrid/vanilla/modpack), even without a `datapack_manager` feature. Add
+`datapack_manager_disabled` to an egg's features to opt back out, or set
+`MOD_MANAGER_EGG_AUTODETECT=false` to fully restore the pre-autodetect behaviour where
+`datapack_manager` must be explicit.
+
 ## Settings
 
-The plugin settings screen (panel admin → Plugins) has four fields, each backed by a global `.env` key:
+The plugin settings screen (panel admin → Plugins) has these fields, each backed by a global `.env`
+key unless noted otherwise:
 
 | Field | `.env` key |
 |---|---|
@@ -81,9 +90,16 @@ The plugin settings screen (panel admin → Plugins) has four fields, each backe
 | Navigation sort order | `MINECRAFT_MODRINTH_NAV_SORT` |
 | CurseForge API key | `CURSEFORGE_API_KEY` |
 | GitHub token | `GITHUB_TOKEN` |
+| Allow non-admins to edit egg profiles | `MOD_MANAGER_ALLOW_USER_EGG_PROFILE_EDIT` (default off) |
 
 "Latest Minecraft version" is the fallback used when a server has no `MINECRAFT_VERSION`/`MC_VERSION`
-startup variable of its own.
+startup variable of its own. "Allow non-admins to edit egg profiles" only extends editing to users who
+can already manage the server in question (owners, admins, or subusers with the `startup.update`
+permission) - it never opens the form to every user; see
+[`docs/architecture.md`](docs/architecture.md) for the full permission logic.
+
+The same screen also has an **Egg profiles** action for manually setting a project type, loader, MC
+version, and datapack support on eggs that automatic detection couldn't resolve.
 
 The same screen has a **Clear cache** action, which behaves differently by scope:
 

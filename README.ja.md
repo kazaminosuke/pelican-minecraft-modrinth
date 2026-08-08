@@ -69,10 +69,17 @@ https://github.com/kazaminosuke/pelican-minecraft-modrinth/releases/latest/downl
 プロジェクト種別の範囲内)。このフラグがないeggでは、該当ソースのAPIキーを設定していても
 そのタブ自体が表示されません。
 
+**eggの自動認識**([内部の仕組み](#内部の仕組み)参照)により、公式のMinecraft eggの大半は上記を
+手動設定する必要がありません(明示的な`features`/`tags`が設定されていれば常にそちらが優先されます)。
+これに伴う変更点として、認識されたJava系egg(mod/plugin/hybrid/vanilla/modpack)ではdatapack管理が
+`datapack_manager` featureなしでも**既定で有効**になります。無効化するにはeggのfeatureに
+`datapack_manager_disabled`を追加するか、`MOD_MANAGER_EGG_AUTODETECT=false`を設定して
+自動認識導入前の挙動(`datapack_manager`の明示指定が必須)に完全に戻してください。
+
 ## 設定
 
-プラグイン設定画面(パネル管理者 → Plugins)には4つの項目があり、それぞれグローバルな`.env`
-キーに対応しています。
+プラグイン設定画面(パネル管理者 → Plugins)には以下の項目があり、特記のない限りそれぞれ
+グローバルな`.env`キーに対応しています。
 
 | 項目 | `.env`キー |
 |---|---|
@@ -80,9 +87,16 @@ https://github.com/kazaminosuke/pelican-minecraft-modrinth/releases/latest/downl
 | ナビゲーションの並び順 | `MINECRAFT_MODRINTH_NAV_SORT` |
 | CurseForge APIキー | `CURSEFORGE_API_KEY` |
 | GitHubトークン | `GITHUB_TOKEN` |
+| 一般ユーザーにもegg プロファイルの編集を許可 | `MOD_MANAGER_ALLOW_USER_EGG_PROFILE_EDIT`(既定OFF) |
 
 「最新Minecraftバージョン」は、サーバー自身に`MINECRAFT_VERSION`/`MC_VERSION`起動時変数が
-設定されていない場合のフォールバック値です。
+設定されていない場合のフォールバック値です。「一般ユーザーにもeggプロファイルの編集を許可」は、
+そのサーバーを既に管理できるユーザー(所有者・管理者・`startup.update`権限を持つサブユーザー)に
+編集を広げるだけで、全ユーザーに開放するものではありません。判定ロジックの詳細は
+[`docs/architecture.md`](docs/architecture.md)(英語)を参照してください。
+
+同じ画面には、自動認識で解決できなかったeggに対して対応種別・ローダー・MCバージョン・
+datapack対応を手動設定する**Egg profiles**アクションもあります。
 
 同じ画面には**キャッシュをクリア**アクションもあり、対象範囲によって挙動が異なります。
 
