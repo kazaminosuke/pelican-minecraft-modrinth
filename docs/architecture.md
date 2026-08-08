@@ -209,6 +209,11 @@ pre-auto-detection behavior. `egg_profiles_extra_path` (env `MOD_MANAGER_EGG_PRO
 in an operator-supplied JSON file in the same shape as `resources/egg-profiles.json`, for a
 private/community egg this plugin doesn't ship a profile for.
 
+> **No automated test coverage yet.** `canEditEggProfile()`'s four permission outcomes (toggle off,
+> toggle on with `startup.update`, toggle on without it, toggle on as the server owner) are only
+> verified manually today - there is no unit/feature test exercising them. Verify by hand after any
+> change near this method, and see [Known issues](#known-issues) below.
+
 ## Cache key reference
 
 | Prefix | Built by | Scope |
@@ -224,6 +229,22 @@ private/community egg this plugin doesn't ship a profile for.
 (file, database) have no wildcard/pattern delete - bumping a stamp baked into a key makes a whole
 family of entries unreachable at once without needing to enumerate them; the orphaned entries just
 expire on their own TTL later.
+
+## Known issues
+
+- **Install/uninstall/bulk-update have no permission checks.** Every other file-mutating action in
+  Pelican Panel gates itself with a `SubuserPermission` (e.g. core's `ListFiles` requires
+  `FileUpdate`/`FileDelete`), but this plugin's install, uninstall, and bulk-update actions in
+  `Filament\Server\Pages\ModManagerPage` do not - any subuser who can merely *view* the server can
+  install, remove, or bulk-update mods/plugins/datapacks regardless of their file permissions. This
+  predates Stage 8 and was deliberately kept out of its scope (Stage 8 only added a permission check
+  for editing egg profiles, a narrower and newer surface). It needs its own change - adding
+  `SubuserPermission::FileUpdate`/`FileDelete` checks to those actions - tracked here so it isn't
+  lost; see `stage8-egg-autodetect-design.md` §10-2 for the fuller writeup.
+- **`canEditEggProfile()`'s permission toggle has no automated tests** - see the note in
+  [Manually configuring an egg](#manually-configuring-an-egg) above. Its logic (config-gated
+  admin-only vs. `SubuserPermission::StartupUpdate`) has been read-reviewed but only manually
+  exercised, not covered by `tests/`.
 
 ## Adding a new source
 

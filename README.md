@@ -96,7 +96,9 @@ key unless noted otherwise:
 startup variable of its own. "Allow non-admins to edit egg profiles" only extends editing to users who
 can already manage the server in question (owners, admins, or subusers with the `startup.update`
 permission) - it never opens the form to every user; see
-[`docs/architecture.md`](docs/architecture.md) for the full permission logic.
+[`docs/architecture.md`](docs/architecture.md) for the full permission logic. **Note:** this
+permission logic currently has no automated test coverage - it has been verified by manual testing
+only; re-verify by hand after touching it.
 
 The same screen also has an **Egg profiles** action for manually setting a project type, loader, MC
 version, and datapack support on eggs that automatic detection couldn't resolve.

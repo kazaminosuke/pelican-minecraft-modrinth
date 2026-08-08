@@ -93,7 +93,9 @@ https://github.com/kazaminosuke/pelican-minecraft-modrinth/releases/latest/downl
 設定されていない場合のフォールバック値です。「一般ユーザーにもeggプロファイルの編集を許可」は、
 そのサーバーを既に管理できるユーザー(所有者・管理者・`startup.update`権限を持つサブユーザー)に
 編集を広げるだけで、全ユーザーに開放するものではありません。判定ロジックの詳細は
-[`docs/architecture.md`](docs/architecture.md)(英語)を参照してください。
+[`docs/architecture.md`](docs/architecture.md)(英語)を参照してください。**注意:** この権限判定
+ロジックには現時点で自動テストが整備されておらず、手動確認のみで検証されています。変更する際は
+手動での再確認をお願いします。
 
 同じ画面には、自動認識で解決できなかったeggに対して対応種別・ローダー・MCバージョン・
 datapack対応を手動設定する**Egg profiles**アクションもあります。
