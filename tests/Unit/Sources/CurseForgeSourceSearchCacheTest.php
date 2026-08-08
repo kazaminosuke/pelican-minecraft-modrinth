@@ -71,7 +71,12 @@ class CurseForgeSourceSearchCacheTest extends TestCase
     {
         $container = new Container();
         $container->instance('config', new LaravelConfigRepository([
-            'pelican-minecraft-modrinth' => ['curseforge_api_key' => $key],
+            // egg_autodetect_enabled: false - this test is about search
+            // caching, not egg auto-detection (Stage 8); without this,
+            // MinecraftVersionResolver::resolve() (called from search())
+            // would also invoke EggProfileResolver::resolve() against the
+            // bare Server mock below, which stubs none of that.
+            'pelican-minecraft-modrinth' => ['curseforge_api_key' => $key, 'egg_autodetect_enabled' => false],
         ]));
         Container::setInstance($container);
     }
@@ -93,8 +98,8 @@ class CurseForgeSourceSearchCacheTest extends TestCase
     private function server(): Server
     {
         $variables = Mockery::mock(HasMany::class);
-        $variables->shouldReceive('where')->andReturnSelf();
-        $variables->shouldReceive('first')->andReturn((object) ['server_value' => '1.21.1']);
+        $variables->shouldReceive('whereIn')->with('env_variable', ['MINECRAFT_VERSION', 'MC_VERSION'])->andReturnSelf();
+        $variables->shouldReceive('pluck')->with('server_value', 'env_variable')->andReturn(collect(['MINECRAFT_VERSION' => '1.21.1']));
 
         $server = Mockery::mock(Server::class);
         $server->shouldReceive('getKey')->andReturn(1);

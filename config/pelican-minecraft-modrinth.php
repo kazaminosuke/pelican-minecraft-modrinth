@@ -39,4 +39,29 @@ return [
         'hangar' => env('MOD_MANAGER_WARM_RATE_LIMIT_HANGAR', 30),
         'github_releases' => env('MOD_MANAGER_WARM_RATE_LIMIT_GITHUB_RELEASES', 55),
     ],
+
+    // Stage 8: overall kill switch for egg auto-detection (Support\
+    // EggProfileResolver). False reverts every one of the five wired
+    // methods (ProjectType::fromServer()/supportsDatapacks(),
+    // MinecraftLoader::fromServer(), MinecraftVersionResolver::resolve())
+    // to exactly their pre-Stage-8 behavior - explicit egg features/tags/
+    // variables only, no profile database, no manual-profile fallback.
+    'egg_autodetect_enabled' => env('MOD_MANAGER_EGG_AUTODETECT', true),
+
+    // Optional path to an operator-supplied JSON file in the same shape as
+    // resources/egg-profiles.json (see Support\EggProfileRegistry), merged
+    // in after the bundled profiles - for a private/community egg this
+    // plugin doesn't ship a profile for.
+    'egg_profiles_extra_path' => env('MOD_MANAGER_EGG_PROFILES_PATH'),
+
+    // Stage 8's GUI fallback (a manual egg profile form shown when
+    // auto-detection can't place an egg) is admin-only by default. Setting
+    // this true also allows it for any user who holds
+    // SubuserPermission::StartupUpdate on a server using that egg - the
+    // same permission that already lets them edit that server's
+    // MINECRAFT_VERSION/MC_VERSION startup variable, which is what egg
+    // profile fields conceptually sit alongside. Saved profiles are keyed
+    // by egg, not by server, so a save here can affect every other server
+    // sharing that egg - the form warns about this when the toggle is on.
+    'allow_user_egg_profile_edit' => env('MOD_MANAGER_ALLOW_USER_EGG_PROFILE_EDIT', false),
 ];

@@ -6,6 +6,7 @@ use App\Models\Server;
 use Illuminate\Cache\ArrayStore;
 use Illuminate\Cache\Repository as LaravelCacheRepository;
 use Illuminate\Config\Repository as LaravelConfigRepository;
+use Illuminate\Container\Container;
 use Illuminate\Contracts\Bus\Dispatcher;
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -29,8 +30,29 @@ use PHPUnit\Framework\TestCase;
  */
 class ModrinthSourceSearchCacheTest extends TestCase
 {
+    private ?Container $previousContainer = null;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $this->previousContainer = Container::getInstance();
+
+        // egg_autodetect_enabled: false - this test is about search caching
+        // (Stage 6), not egg auto-detection (Stage 8); without this,
+        // MinecraftVersionResolver::resolve() (called from search()) would
+        // also invoke EggProfileResolver::resolve() against the bare Server
+        // mock below, which stubs none of that.
+        $container = new Container();
+        $container->instance('config', new LaravelConfigRepository([
+            'pelican-minecraft-modrinth' => ['egg_autodetect_enabled' => false],
+        ]));
+        Container::setInstance($container);
+    }
+
     protected function tearDown(): void
     {
+        Container::setInstance($this->previousContainer);
         MinecraftVersionResolver::clear();
         Mockery::close();
 
@@ -90,8 +112,8 @@ class ModrinthSourceSearchCacheTest extends TestCase
     private function server(): Server
     {
         $variables = Mockery::mock(HasMany::class);
-        $variables->shouldReceive('where')->andReturnSelf();
-        $variables->shouldReceive('first')->andReturn((object) ['server_value' => '1.21.1']);
+        $variables->shouldReceive('whereIn')->with('env_variable', ['MINECRAFT_VERSION', 'MC_VERSION'])->andReturnSelf();
+        $variables->shouldReceive('pluck')->with('server_value', 'env_variable')->andReturn(collect(['MINECRAFT_VERSION' => '1.21.1']));
 
         $server = Mockery::mock(Server::class);
         $server->shouldReceive('getKey')->andReturn(1);

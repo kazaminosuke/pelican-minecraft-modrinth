@@ -29,4 +29,16 @@ class MinecraftDatapackPage extends ModManagerPage
 
         return ProjectType::Datapack;
     }
+
+    /**
+     * The Stage 8 manual-setup prompt (see ModManagerPage::canAccess())
+     * appears only on the base mod/plugin manager page, never duplicated
+     * here - resolving a manual profile there (or via auto-detection) is
+     * what makes supportsDatapacks() above start returning true, which is
+     * this page's own, sufficient trigger to appear.
+     */
+    protected static function needsManualEggSetup(Server $server): bool
+    {
+        return false;
+    }
 }

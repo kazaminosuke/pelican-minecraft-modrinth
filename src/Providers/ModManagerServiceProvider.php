@@ -14,6 +14,7 @@ use Kazaminosuke\ModManager\Sources\CurseForgeSource;
 use Kazaminosuke\ModManager\Sources\GitHubReleasesSource;
 use Kazaminosuke\ModManager\Sources\HangarSource;
 use Kazaminosuke\ModManager\Sources\ModrinthSource;
+use Kazaminosuke\ModManager\Support\EggProfileResolver;
 use Kazaminosuke\ModManager\Support\MinecraftVersionResolver;
 use Kazaminosuke\ModManager\Support\ProjectSourceRegistry;
 use Kazaminosuke\ModManager\Support\SourceCache;
@@ -50,6 +51,15 @@ class ModManagerServiceProvider extends ServiceProvider
     {
         Queue::looping(function (): void {
             MinecraftVersionResolver::clear();
+            // EggProfileResolver::resolve() is memoized the same way and by
+            // the same reasoning (ProjectType::fromServer() alone runs 30+
+            // times in one render) - a long-lived queue worker needs the
+            // same per-job reset, or a stale resolution from job N would
+            // leak into job N+1. EggProfileRegistry (the parsed JSON/DB
+            // content itself, not per-server results) is left alone: it
+            // doesn't vary per job, so re-parsing it every job would be
+            // pure waste.
+            EggProfileResolver::clear();
 
             if ($this->app->resolved(InstalledProjectService::class)) {
                 $this->app->make(InstalledProjectService::class)->clearRuntimeCaches();

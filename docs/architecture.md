@@ -130,6 +130,85 @@ the slack, and the paginator is pinned as the last item in that column regardles
 the current page has. This is what keeps the paginator from jumping around between a loading
 placeholder, a short results page, and a full one.
 
+## Automatic egg detection
+
+None of the Minecraft eggs the panel's own installer offers carry this plugin's `mod_manager`/
+`plugin_manager`/`datapack_manager` feature or a loader tag out of the box - every one of them used
+to need manual egg editing before this plugin would do anything with it. `Support\
+EggProfileResolver` recognizes them (and their Pterodactyl-ecosystem equivalents) automatically,
+falling back through a strictly-ordered cascade, most to least certain:
+
+1. **Explicit** - the egg's own `features`/`tags` (unchanged pre-auto-detection behavior; always
+   checked first by `ProjectType::fromServer()`/`supportsDatapacks()` and `MinecraftLoader::
+   fromServer()` themselves, so an egg already tagged this way never even reaches the resolver).
+2. **uuid match** against `resources/egg-profiles.json`'s bundled profile database.
+3. **update_url match** (covers a uuid that has since changed - both Paper's and Forge Minecraft's
+   have, historically).
+4. **Normalized name + variable signature match, both together.** This is what safely resolves a
+   Pterodactyl-ecosystem egg (no uuid, no update_url at all): Pterodactyl's Paper and Folia eggs
+   happen to share an identical variable-name signature, so signature alone would misidentify one
+   as the other - the name is what disambiguates them.
+5. **Normalized name alone**, only when it uniquely identifies one profile.
+6. **Variable signature alone**, only when that exact signature isn't shared by more than one
+   profile (a "renamed egg" rescue path - collisions, computed once across the whole profile set at
+   load time, are never treated as safe to guess from, no matter how the lookup got there).
+7. **Heuristic** - project type only (never a loader guess), and only when the egg's `tags` include
+   `minecraft` or a mod-loader-specific variable name (`FABRIC_VERSION`, `FORGE_VERSION`, ...) is
+   present.
+8. **A manually saved profile** (`Models\ModManagerEggProfile`, one row per egg - not per server,
+   since loader/project type/datapack support are properties of the egg itself).
+9. **Manual setup prompt.** An egg nothing above could place, but that still looks plausibly
+   Minecraft-related (a `minecraft` tag, or a matched-but-unresolvable profile - mostly modpack
+   eggs, which only ever expose a `MODPACK_VERSION`-style variable with no loader/game-version
+   information at all), shows a short in-page notice instead of disappearing. Configuring it there
+   saves a row via step 8, and every server sharing that egg resolves from it afterwards.
+10. **Nothing.** An egg with no Minecraft signal at all (Bedrock eggs, non-Java implementations,
+    ...) is excluded outright (`resources/egg-profiles.json`'s `status: "none"` entries) and never
+    reaches step 9.
+
+Resolution only ever reads the `Egg` row, its variables' *names* (never their values, except for
+the Minecraft-version lookup below), and the local `mod_manager_egg_profiles` table - never an
+upstream API call, never Wings - and is memoized per `(server, egg)` for the life of the request/
+queue job, the same as `Support\MinecraftVersionResolver`, since `ProjectType::fromServer()` alone
+is called 30+ times in a single render.
+
+**Never writes back to the `Egg` model.** `EggImporterService::fillFromParsed()` overwrites
+`features`/`tags` on every egg update pulled from its `update_url`, so anything written there would
+be silently lost on the next sync.
+
+### Minecraft version resolution
+
+`MinecraftVersionResolver::resolve()` checks, in order: a manually saved profile's explicit version
+override; then the resolved profile's own variable name(s) (e.g. Spigot's `DL_VERSION`, Vanilla's
+`VANILLA_VERSION` - egg families that never define `MINECRAFT_VERSION`/`MC_VERSION` at all, so the
+next step used to silently fall through to the global default for them); then the generic
+`MINECRAFT_VERSION`/`MC_VERSION` variable names; then the plugin's own configured default. Most egg
+families resolve via the generic names either way, so this is a no-op change for them.
+
+### Datapack support default
+
+A resolved Java-server-family profile (mod/plugin/hybrid/vanilla/modpack, but not a proxy) now
+defaults `supportsDatapacks()` to `true` - a Minecraft Java world can always accept a datapack, so
+requiring the separate `datapack_manager` feature mostly added friction. Add
+`datapack_manager_disabled` to an egg's `features` for the old, opt-in-only behavior on that one
+egg; `datapack_manager` still force-enables it explicitly, taking priority over everything.
+
+### Manually configuring an egg
+
+The plugin settings screen has an **Egg profiles** action (always admin-only) that saves/clears a
+row in `mod_manager_egg_profiles` for any egg. A server whose egg needs one also shows a form
+directly on its own page - gated by the **"Allow users to configure egg profiles"** toggle in the
+same settings screen (off by default): off, only an administrator sees it there too; on, any user
+holding `SubuserPermission::StartupUpdate` on that server can save one, the same permission that
+already lets them edit its Minecraft-version startup variable. A save applies to every server
+sharing that egg, not just the one it was made from.
+
+`config('pelican-minecraft-modrinth.egg_autodetect_enabled')` (env `MOD_MANAGER_EGG_AUTODETECT`,
+default `true`) is the overall kill switch - `false` reverts every wired method to exactly its
+pre-auto-detection behavior. `egg_profiles_extra_path` (env `MOD_MANAGER_EGG_PROFILES_PATH`) merges
+in an operator-supplied JSON file in the same shape as `resources/egg-profiles.json`, for a
+private/community egg this plugin doesn't ship a profile for.
+
 ## Cache key reference
 
 | Prefix | Built by | Scope |

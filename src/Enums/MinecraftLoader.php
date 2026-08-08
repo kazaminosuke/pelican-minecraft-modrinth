@@ -5,6 +5,7 @@ namespace Kazaminosuke\ModManager\Enums;
 use App\Models\Server;
 use Filament\Support\Contracts\HasIcon;
 use Filament\Support\Contracts\HasLabel;
+use Kazaminosuke\ModManager\Support\EggProfileResolver;
 
 enum MinecraftLoader: string implements HasIcon, HasLabel
 {
@@ -46,13 +47,34 @@ enum MinecraftLoader: string implements HasIcon, HasLabel
         };
     }
 
+    /**
+     * Explicit tag first (fromTags() is unchanged - still a pure function of
+     * the egg's tags alone). Only when no loader tag is present does this
+     * fall back to EggProfileResolver, which the 0/54-official-eggs-carry-a-
+     * loader-tag finding in Stage 8's design doc is what makes necessary in
+     * the first place. The resolver only ever returns a loader here from an
+     * *exact* match (uuid/update_url/name+signature) or the non-colliding-
+     * signature tier - never from the heuristic tier, which by design
+     * (Stage 8 依頼B) never guesses a loader, only a project type.
+     */
     public static function fromServer(Server $server): ?MinecraftLoader
     {
         $server->loadMissing('egg');
 
         $tags = $server->egg->tags ?? [];
+        $explicit = self::fromTags($tags);
 
-        return self::fromTags($tags);
+        if ($explicit !== null) {
+            return $explicit;
+        }
+
+        if (!(bool) config('pelican-minecraft-modrinth.egg_autodetect_enabled', true)) {
+            return null;
+        }
+
+        $loader = EggProfileResolver::resolve($server)->loader;
+
+        return $loader !== null ? self::tryFrom($loader) : null;
     }
 
     /** @param string[] $tags */

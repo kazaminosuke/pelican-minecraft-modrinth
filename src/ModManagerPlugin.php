@@ -3,6 +3,7 @@
 namespace Kazaminosuke\ModManager;
 
 use App\Contracts\Plugins\HasPluginSettings;
+use App\Models\Egg;
 use App\Models\Server;
 use App\Repositories\Daemon\DaemonFileRepository;
 use App\Traits\EnvironmentWriterTrait;
@@ -12,17 +13,22 @@ use Filament\Actions\Action;
 use Filament\Contracts\Plugin;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
+use Filament\Forms\Components\Toggle;
 use Filament\Notifications\Notification;
 use Filament\Panel;
 use Filament\Schemas\Components\Actions;
+use Filament\Schemas\Components\Utilities\Set;
 use Filament\Tables\View\TablesRenderHook;
 use Filament\View\PanelsRenderHook;
 use Illuminate\Support\HtmlString;
+use Kazaminosuke\ModManager\Enums\MinecraftLoader;
 use Kazaminosuke\ModManager\Enums\ProjectType;
 use Kazaminosuke\ModManager\Filament\Server\Pages\ModManagerPage;
+use Kazaminosuke\ModManager\Models\ModManagerEggProfile;
 use Kazaminosuke\ModManager\Services\InstalledOperationManager;
 use Kazaminosuke\ModManager\Services\InstalledProjectService;
 use Kazaminosuke\ModManager\Support\CacheVersion;
+use Kazaminosuke\ModManager\Support\EggProfileResolver;
 
 class ModManagerPlugin implements HasPluginSettings, Plugin
 {
@@ -210,6 +216,7 @@ class ModManagerPlugin implements HasPluginSettings, Plugin
             'nav_sort' => env('MINECRAFT_MODRINTH_NAV_SORT', 11),
             'curseforge_api_key' => config('pelican-minecraft-modrinth.curseforge_api_key'),
             'github_token' => config('pelican-minecraft-modrinth.github_token'),
+            'allow_user_egg_profile_edit' => (bool) config('pelican-minecraft-modrinth.allow_user_egg_profile_edit', false),
         ];
     }
 
@@ -237,6 +244,14 @@ class ModManagerPlugin implements HasPluginSettings, Plugin
                 ->password()
                 ->revealable()
                 ->default(fn () => config('pelican-minecraft-modrinth.github_token')),
+            // Stage 8: off by default (admin-only egg profile editing). See
+            // ModManagerPage's manual-profile form for where this is
+            // actually consulted, and EggProfileResolver's docblock for the
+            // full auto-detection cascade this only ever supplements.
+            Toggle::make('allow_user_egg_profile_edit')
+                ->label(trans('pelican-minecraft-modrinth::strings.settings.allow_user_egg_profile_edit'))
+                ->helperText(trans('pelican-minecraft-modrinth::strings.settings.allow_user_egg_profile_edit_helper'))
+                ->default(fn () => (bool) config('pelican-minecraft-modrinth.allow_user_egg_profile_edit', false)),
             // A standalone action embedded in the settings form's schema
             // (rather than a plugin-settings form field) - it runs
             // independently of the "Save" submission that PluginResource
@@ -283,6 +298,24 @@ class ModManagerPlugin implements HasPluginSettings, Plugin
                         self::clearSingleServer($service, $fileRepository, $operations, (int) $data['server_id']);
                     }),
             ])->belowContent(trans('pelican-minecraft-modrinth::strings.settings.clear_cache_helper')),
+            // Stage 8's admin-facing half of the GUI fallback: always
+            // available regardless of the allow_user_egg_profile_edit
+            // toggle above (this action is on the plugin settings screen,
+            // which PluginResource already restricts to
+            // user()?->can('update', $plugin) - no separate permission
+            // check is needed here). Saves/clears one row in
+            // Models\ModManagerEggProfile, keyed by egg - see that model's
+            // docblock for why per-egg rather than per-server.
+            Actions::make([
+                Action::make('egg_profiles')
+                    ->label(trans('pelican-minecraft-modrinth::strings.settings.egg_profiles'))
+                    ->color('gray')
+                    ->icon('tabler-egg')
+                    ->modalHeading(trans('pelican-minecraft-modrinth::strings.settings.egg_profiles_confirmation_heading'))
+                    ->modalDescription(trans('pelican-minecraft-modrinth::strings.settings.egg_profiles_confirmation_description'))
+                    ->schema(self::eggProfileFormSchema())
+                    ->action(fn (array $data) => self::saveEggProfile($data)),
+            ])->belowContent(trans('pelican-minecraft-modrinth::strings.settings.egg_profiles_helper')),
         ];
     }
 
@@ -293,10 +326,154 @@ class ModManagerPlugin implements HasPluginSettings, Plugin
             'MINECRAFT_MODRINTH_NAV_SORT' => $data['nav_sort'],
             'CURSEFORGE_API_KEY' => $data['curseforge_api_key'] ?? '',
             'GITHUB_TOKEN' => $data['github_token'] ?? '',
+            'MOD_MANAGER_ALLOW_USER_EGG_PROFILE_EDIT' => ($data['allow_user_egg_profile_edit'] ?? false) ? 'true' : 'false',
         ]);
 
         Notification::make()
             ->title(trans('pelican-minecraft-modrinth::strings.settings.settings_saved'))
+            ->success()
+            ->send();
+    }
+
+    /**
+     * Shared between the admin settings action here and
+     * ModManagerPage::eggProfileFormSchema() (Stage 8's user-facing half,
+     * gated separately - see that method). The egg_id field itself is only
+     * meaningful here, where any egg can be picked; the server-side form
+     * fixes it to the current server's own egg instead.
+     *
+     * @return array<int, mixed>
+     */
+    public static function eggProfileFormSchema(bool $includeEggSelect = true): array
+    {
+        $loaderOptions = ['' => trans('pelican-minecraft-modrinth::strings.settings.egg_profiles_loader_none')]
+            + collect(MinecraftLoader::cases())->mapWithKeys(fn (MinecraftLoader $loader) => [$loader->value => $loader->getLabel()])->all();
+
+        $projectTypeOptions = [
+            'auto' => trans('pelican-minecraft-modrinth::strings.settings.egg_profiles_project_type_auto'),
+            ProjectType::Mod->value => ProjectType::Mod->getLabel(),
+            ProjectType::Plugin->value => ProjectType::Plugin->getLabel(),
+            ProjectType::Datapack->value => ProjectType::Datapack->getLabel(),
+        ];
+
+        $fields = [];
+
+        if ($includeEggSelect) {
+            $fields[] = Select::make('egg_id')
+                ->label(trans('pelican-minecraft-modrinth::strings.settings.egg_profiles_egg_label'))
+                ->native(false)
+                ->required()
+                ->searchable()
+                ->live()
+                ->options(fn () => Egg::query()->orderBy('name')->pluck('name', 'id'))
+                ->afterStateUpdated(function (?string $state, Set $set): void {
+                    self::fillEggProfileDefaults($state ? Egg::query()->find($state) : null, $set);
+                });
+        }
+
+        $fields[] = Select::make('project_type')
+            ->label(trans('pelican-minecraft-modrinth::strings.settings.egg_profiles_project_type_label'))
+            ->native(false)
+            ->required()
+            ->options($projectTypeOptions)
+            ->default('auto');
+        $fields[] = Select::make('loader')
+            ->label(trans('pelican-minecraft-modrinth::strings.settings.egg_profiles_loader_label'))
+            ->native(false)
+            ->options($loaderOptions)
+            ->default('');
+        $fields[] = TextInput::make('minecraft_version')
+            ->label(trans('pelican-minecraft-modrinth::strings.settings.egg_profiles_minecraft_version_label'))
+            ->helperText(trans('pelican-minecraft-modrinth::strings.settings.egg_profiles_minecraft_version_helper'));
+        $fields[] = Toggle::make('supports_datapacks')
+            ->label(trans('pelican-minecraft-modrinth::strings.settings.egg_profiles_supports_datapacks_label'));
+
+        return $fields;
+    }
+
+    /** Prefills the form with an existing manual profile, or - failing that - the plugin's own current best-effort guess for the egg, purely as a convenience default. */
+    public static function fillEggProfileDefaults(?Egg $egg, Set $set): void
+    {
+        foreach (self::eggProfileDefaults($egg) as $field => $value) {
+            $set($field, $value);
+        }
+    }
+
+    /**
+     * The plain-array counterpart to fillEggProfileDefaults(): Filament's
+     * Set utility only exists inside a live form's reactive context (an
+     * ->afterStateUpdated() callback), whereas an Action's ->fillForm()
+     * closure just returns the array of initial values directly - this is
+     * what ModManagerPage's server-scoped form (fixed to one egg, so it
+     * never needs the reactive egg_id-changed case fillEggProfileDefaults()
+     * exists for) uses instead.
+     *
+     * @return array{project_type: string, loader: string, minecraft_version: ?string, supports_datapacks: bool}
+     */
+    public static function eggProfileDefaults(?Egg $egg): array
+    {
+        if (!$egg) {
+            return ['project_type' => 'auto', 'loader' => '', 'minecraft_version' => null, 'supports_datapacks' => false];
+        }
+
+        $manual = ModManagerEggProfile::query()->where('egg_id', $egg->getKey())->first();
+
+        if ($manual) {
+            return [
+                'project_type' => $manual->project_type ?? 'auto',
+                'loader' => $manual->loader ?? '',
+                'minecraft_version' => $manual->minecraft_version,
+                'supports_datapacks' => (bool) $manual->supports_datapacks,
+            ];
+        }
+
+        $resolved = EggProfileResolver::resolveForEgg($egg);
+
+        return [
+            'project_type' => $resolved->status === 'resolved' && $resolved->projectType !== null ? $resolved->projectType : 'auto',
+            'loader' => $resolved->loader ?? '',
+            'minecraft_version' => null,
+            'supports_datapacks' => $resolved->supportsDatapacks,
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     *
+     * @throws Exception
+     */
+    public static function saveEggProfile(array $data): void
+    {
+        $egg = Egg::query()->find($data['egg_id'] ?? null);
+
+        if (!$egg) {
+            throw new Exception('Egg not found.');
+        }
+
+        if (($data['project_type'] ?? 'auto') === 'auto') {
+            ModManagerEggProfile::query()->where('egg_id', $egg->getKey())->delete();
+
+            Notification::make()
+                ->title(trans('pelican-minecraft-modrinth::strings.settings.egg_profiles_removed', ['egg' => $egg->name]))
+                ->success()
+                ->send();
+
+            return;
+        }
+
+        ModManagerEggProfile::query()->updateOrCreate(
+            ['egg_id' => $egg->getKey()],
+            [
+                'egg_uuid' => $egg->uuid,
+                'project_type' => $data['project_type'],
+                'loader' => ($data['loader'] ?? '') !== '' ? $data['loader'] : null,
+                'minecraft_version' => ($data['minecraft_version'] ?? '') !== '' ? $data['minecraft_version'] : null,
+                'supports_datapacks' => (bool) ($data['supports_datapacks'] ?? false),
+            ],
+        );
+
+        Notification::make()
+            ->title(trans('pelican-minecraft-modrinth::strings.settings.egg_profiles_saved', ['egg' => $egg->name]))
             ->success()
             ->send();
     }

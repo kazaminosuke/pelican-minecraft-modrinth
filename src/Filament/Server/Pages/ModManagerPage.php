@@ -2,6 +2,8 @@
 
 namespace Kazaminosuke\ModManager\Filament\Server\Pages;
 
+use App\Enums\SubuserPermission;
+use App\Filament\Admin\Resources\Plugins\PluginResource;
 use App\Filament\Server\Resources\Files\Pages\ListFiles;
 use App\Models\Server;
 use App\Repositories\Daemon\DaemonFileRepository;
@@ -14,6 +16,7 @@ use Filament\Infolists\Components\TextEntry;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Filament\Resources\Concerns\HasTabs;
+use Filament\Schemas\Components\Actions;
 use Filament\Schemas\Components\EmbeddedTable;
 use Filament\Schemas\Components\Grid;
 use Filament\Schemas\Components\Group;
@@ -39,9 +42,11 @@ use Kazaminosuke\ModManager\Enums\ProjectSourceKey;
 use Kazaminosuke\ModManager\Enums\ProjectType;
 use Kazaminosuke\ModManager\Facades\ModManager;
 use Kazaminosuke\ModManager\Jobs\WarmCatalogSearch;
+use Kazaminosuke\ModManager\ModManagerPlugin;
 use Kazaminosuke\ModManager\Services\InstalledOperationManager;
 use Kazaminosuke\ModManager\Services\VersionLookupCoordinator;
 use Kazaminosuke\ModManager\Support\CacheVersion;
+use Kazaminosuke\ModManager\Support\EggProfileResolver;
 use Kazaminosuke\ModManager\Support\InstalledOperationState;
 use Kazaminosuke\ModManager\Support\InstalledScanResult;
 use Kazaminosuke\ModManager\Support\ProjectSourceRegistry;
@@ -164,12 +169,34 @@ class ModManagerPage extends Page implements HasTable
         return ProjectType::fromServer($server);
     }
 
+    /**
+     * Stage 8: an egg profile the auto-detection cascade recognizes as
+     * plausibly Minecraft-related, but can't place automatically (a
+     * modpack egg, or one this plugin has simply never seen before), still
+     * makes this page accessible - content() then renders the manual-setup
+     * notice/form instead of the normal catalog, rather than hiding the
+     * page entirely the way an egg with nothing at all to do with
+     * Minecraft correctly still does.
+     *
+     * MinecraftDatapackPage overrides needsManualEggSetup() back to always
+     * false: the manual-setup prompt only ever appears once, on this page,
+     * not duplicated on the datapack page too - see that class.
+     */
     public static function canAccess(): bool
     {
         /** @var Server $server */
         $server = Filament::getTenant();
 
-        return parent::canAccess() && static::detectProjectType($server);
+        return parent::canAccess() && (static::detectProjectType($server) !== null || static::needsManualEggSetup($server));
+    }
+
+    protected static function needsManualEggSetup(Server $server): bool
+    {
+        if (!(bool) config('pelican-minecraft-modrinth.egg_autodetect_enabled', true)) {
+            return false;
+        }
+
+        return EggProfileResolver::resolve($server)->needsManualSetup();
     }
 
     public static function getNavigationLabel(): string
@@ -2067,6 +2094,12 @@ class ModManagerPage extends Page implements HasTable
 
         $type = static::detectProjectType($server);
 
+        if ($type === null) {
+            // Only reachable via needsManualEggSetup() - canAccess() already
+            // guarantees that when detectProjectType() is null.
+            return $this->eggManualSetupContent($schema, $server);
+        }
+
         return $schema
             ->components([
                 Grid::make($type === ProjectType::Datapack ? 4 : 3)
@@ -2096,11 +2129,24 @@ class ModManagerPage extends Page implements HasTable
 
                                 return file_exists($path) ? 'mcloader-' . $name : null;
                             })
+                            // Stage 8 diagnostic (依頼 I): says which detection
+                            // tier actually decided the type/loader shown
+                            // here, so a wrong result can be traced back to
+                            // "the egg's own explicit tags" vs "a profile
+                            // database match" vs "a manual override" without
+                            // reading logs.
+                            ->tooltip(fn () => trans('pelican-minecraft-modrinth::strings.page.resolved_by', ['source' => $this->eggResolutionSourceLabel($server)]))
                             ->badge()
                             ->size(TextSize::Large)
                             ->extraAttributes(['class' => 'mcloader-badge']),
                         TextEntry::make('installed')
-                            ->label(fn () => trans('pelican-minecraft-modrinth::strings.page.installed', ['type' => $type?->getLabel() ?? 'Modrinth']))
+                            // $type is non-null for the rest of this method
+                            // (see the early return above), so unlike
+                            // getNavigationLabel()'s/getExternalProjectUrl()'s
+                            // own $type?-> uses, this one is provably dead
+                            // defensiveness - confirmed by PHPStan flagging
+                            // it once that guard was added.
+                            ->label(fn () => trans('pelican-minecraft-modrinth::strings.page.installed', ['type' => $type->getLabel()]))
                             ->state(fn () => match (true) {
                                 $this->installedFilesCount === null => '…',
                                 $this->installedFilesCount < 0 => trans('pelican-minecraft-modrinth::strings.page.unknown'),
@@ -2158,7 +2204,9 @@ class ModManagerPage extends Page implements HasTable
                     'data-mmr-swr-scope' => json_encode([
                         'user_id' => (string) user()->getKey(),
                         'server_id' => (string) $server->getKey(),
-                        'project_type' => $type?->value,
+                        // Same as the 'installed' TextEntry's label above:
+                        // $type is non-null for the rest of this method.
+                        'project_type' => $type->value,
                     ], JSON_THROW_ON_ERROR),
                     // This class is what the injected stylesheet's flex layout
                     // and the table-layout partial both hang off, so the table
@@ -2180,6 +2228,124 @@ class ModManagerPage extends Page implements HasTable
                     ? ['wire:poll.5s' => 'pollEnrichment']
                     : [])),
             ]);
+    }
+
+    /**
+     * Stage 8's GUI fallback: rendered instead of the normal catalog/
+     * Installed content when EggProfileResolver could not place this
+     * server's egg automatically but judged it plausibly Minecraft-related
+     * (see needsManualEggSetup()/canAccess()). Whoever can edit gets an
+     * inline form scoped to just this server's egg (egg_id is fixed, not
+     * user-selectable - contrast the admin settings screen's version of
+     * this same schema, which lets an admin pick any egg); everyone else
+     * sees a read-only notice, with a link to the settings screen for an
+     * admin whose edit check itself failed (see canEditEggProfile()).
+     */
+    protected function eggManualSetupContent(Schema $schema, Server $server): Schema
+    {
+        $canEdit = $this->canEditEggProfile($server);
+        $isAdmin = (bool) user()?->isAdmin();
+
+        $noticeEntries = [
+            TextEntry::make('egg_manual_setup_notice')
+                ->hiddenLabel()
+                ->state(trans('pelican-minecraft-modrinth::strings.page.egg_manual_setup_heading').' — '.trans('pelican-minecraft-modrinth::strings.page.egg_manual_setup_description'))
+                ->icon('tabler-alert-triangle')
+                ->color('warning'),
+        ];
+
+        if (!$canEdit && !$isAdmin) {
+            $noticeEntries[] = TextEntry::make('egg_manual_setup_readonly')
+                ->hiddenLabel()
+                ->state(trans('pelican-minecraft-modrinth::strings.page.egg_manual_setup_readonly'))
+                ->color('gray');
+        }
+
+        $actions = [];
+
+        if ($canEdit) {
+            $actions[] = Action::make('configure_egg_profile')
+                ->label(trans('pelican-minecraft-modrinth::strings.settings.egg_profiles'))
+                ->color('primary')
+                ->icon('tabler-egg')
+                ->modalHeading(trans('pelican-minecraft-modrinth::strings.settings.egg_profiles_confirmation_heading'))
+                ->modalDescription(trans('pelican-minecraft-modrinth::strings.page.egg_manual_setup_form_warning'))
+                ->schema(ModManagerPlugin::eggProfileFormSchema(includeEggSelect: false))
+                ->fillForm(function () use ($server): array {
+                    $server->loadMissing('egg');
+
+                    return ModManagerPlugin::eggProfileDefaults($server->egg);
+                })
+                ->action(function (array $data) use ($server): void {
+                    $server->loadMissing('egg');
+
+                    if ($server->egg === null) {
+                        return;
+                    }
+
+                    $data['egg_id'] = $server->egg->getKey();
+                    ModManagerPlugin::saveEggProfile($data);
+
+                    // The resolver memoizes per (server, egg) for the life
+                    // of this request - without clearing it, the very next
+                    // read (this same Livewire action's re-render) would
+                    // still see the pre-save result.
+                    EggProfileResolver::clear();
+                });
+        } elseif ($isAdmin) {
+            // canEdit failed for an admin only when the toggle is on and
+            // this specific server falls outside their node access (see
+            // canEditEggProfile()) - the settings screen's own version of
+            // this form isn't server-scoped, so it works regardless.
+            $actions[] = Action::make('goto_egg_settings')
+                ->label(trans('pelican-minecraft-modrinth::strings.page.egg_manual_setup_admin_action'))
+                ->color('gray')
+                ->icon('tabler-settings')
+                ->url(fn () => PluginResource::getUrl('index', panel: 'admin'));
+        }
+
+        return $schema->components([
+            Section::make()
+                ->schema([
+                    ...$noticeEntries,
+                    ...($actions ? [Actions::make($actions)] : []),
+                ]),
+        ]);
+    }
+
+    protected function canEditEggProfile(Server $server): bool
+    {
+        if ((bool) config('pelican-minecraft-modrinth.allow_user_egg_profile_edit', false)) {
+            return (bool) user()?->can(SubuserPermission::StartupUpdate, $server);
+        }
+
+        return (bool) user()?->isAdmin();
+    }
+
+    /**
+     * Stage 8 diagnostic (see the loader TextEntry's tooltip in content()).
+     * Checked independently of EggProfileResolver's own memoized result so
+     * this never triggers a profile-database/manual-table lookup for the
+     * (overwhelmingly common) case where the egg's own explicit features/
+     * tags already answered the question - matching ProjectType::
+     * fromServer()'s/MinecraftLoader::fromServer()'s own explicit-first
+     * short-circuit exactly.
+     */
+    protected function eggResolutionSourceLabel(Server $server): string
+    {
+        $server->loadMissing('egg');
+
+        if (ProjectType::fromServerExplicit($server) !== null || MinecraftLoader::fromTags($server->egg->tags ?? []) !== null) {
+            return trans('pelican-minecraft-modrinth::strings.page.resolved_by_explicit');
+        }
+
+        if (!(bool) config('pelican-minecraft-modrinth.egg_autodetect_enabled', true)) {
+            return trans('pelican-minecraft-modrinth::strings.page.resolved_by_none');
+        }
+
+        $source = EggProfileResolver::resolve($server)->source;
+
+        return trans('pelican-minecraft-modrinth::strings.page.resolved_by_'.$source);
     }
 
     public function pollInstalledOperation(): void

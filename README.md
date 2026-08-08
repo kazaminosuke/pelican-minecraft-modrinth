@@ -105,8 +105,13 @@ The same screen has a **Clear cache** action, which behaves differently by scope
   version/project-type combinations actually in use, throttled separately from user traffic.
 - **Conditional deferred loading** skips the extra loading round trip entirely when a view's data
   is already cached.
+- **Automatic egg detection** recognizes the panel's official Minecraft eggs (and their
+  Pterodactyl-ecosystem equivalents) without manual egg editing - explicit `features`/`tags` always
+  win over it, and an egg it can't fully place shows a short setup prompt instead of nothing. Set
+  `MOD_MANAGER_EGG_AUTODETECT=false` to disable it.
 
-See [`docs/architecture.md`](docs/architecture.md) for the full design behind each of these.
+See [`docs/architecture.md`](docs/architecture.md) for the full design behind each of these,
+including the detection order and how to configure an egg manually.
 
 ## Troubleshooting
 
@@ -117,13 +122,6 @@ See [`docs/architecture.md`](docs/architecture.md) for the full design behind ea
   example CurseForge without an API key). See [Settings](#settings).
 - **Catalog data looks stale** - use the settings screen's Clear cache action; see above for the
   all-servers/single-server difference.
-
-## Roadmap
-
-- **Automatic egg detection.** Loader and Minecraft version are currently resolved from the egg's
-  `features`/`tags` and the server's `MINECRAFT_VERSION`/`MC_VERSION` variable. A planned follow-up
-  is to recognize the egg itself, so supported-egg detection and configuration need less manual
-  tagging.
 
 ## Repository
 

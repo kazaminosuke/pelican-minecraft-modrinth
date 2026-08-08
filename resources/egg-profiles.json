@@ -1,0 +1,1514 @@
+{
+    "version": 1,
+    "profiles": [
+        {
+            "id": "always-auth",
+            "source_name": "Always Auth",
+            "match": {
+                "uuid": [
+                    "3885c37c-f1da-4979-860d-4c200a8ca564"
+                ],
+                "update_url_contains": [
+                    "egg-always-auth.json"
+                ],
+                "name_aliases": [
+                    "alwaysauth"
+                ],
+                "variable_signatures": [
+                    [
+                        "JARFILE",
+                        "VERSION"
+                    ]
+                ]
+            },
+            "status": "none",
+            "loader": null,
+            "project_type": null,
+            "is_proxy": false,
+            "minecraft_version_variables": []
+        },
+        {
+            "id": "attack-of-the-b-team",
+            "source_name": "Attack of the B-Team",
+            "match": {
+                "uuid": [
+                    "306019ab-6a62-4fa8-953c-c2ac499c6736"
+                ],
+                "update_url_contains": [
+                    "java/technic/attack-of-the-bteam/egg-attack-of-the-b--team.json"
+                ],
+                "name_aliases": [
+                    "attackofthebteam"
+                ],
+                "variable_signatures": [
+                    [
+                        "MODPACK_VERSION"
+                    ]
+                ]
+            },
+            "status": "manual_required",
+            "loader": null,
+            "project_type": null,
+            "is_proxy": false,
+            "minecraft_version_variables": []
+        },
+        {
+            "id": "blightfall",
+            "source_name": "Blightfall",
+            "match": {
+                "uuid": [
+                    "0474df64-2339-4aef-86ce-2507e91aca78"
+                ],
+                "update_url_contains": [
+                    "java/technic/blightfall/egg-blightfall.json"
+                ],
+                "name_aliases": [
+                    "blightfall"
+                ],
+                "variable_signatures": [
+                    [
+                        "MODPACK_VERSION"
+                    ]
+                ]
+            },
+            "status": "manual_required",
+            "loader": null,
+            "project_type": null,
+            "is_proxy": false,
+            "minecraft_version_variables": []
+        },
+        {
+            "id": "bungeecord",
+            "source_name": "Bungeecord",
+            "match": {
+                "uuid": [
+                    "9e6b409e-4028-4947-aea8-50a2c404c271"
+                ],
+                "update_url_contains": [
+                    "proxy/java/bungeecord/egg-bungeecord.yaml"
+                ],
+                "name_aliases": [
+                    "bungeecord"
+                ],
+                "variable_signatures": [
+                    [
+                        "BUNGEE_VERSION",
+                        "SERVER_JARFILE"
+                    ]
+                ]
+            },
+            "status": "resolved",
+            "loader": "bungeecord",
+            "project_type": "plugin",
+            "is_proxy": true,
+            "minecraft_version_variables": []
+        },
+        {
+            "id": "cuberite",
+            "source_name": "Cuberite",
+            "match": {
+                "uuid": [
+                    "fdcfdcb0-10ae-44e3-b027-a3b5562f89a8"
+                ],
+                "update_url_contains": [
+                    "java/cuberite/egg-cuberite.json"
+                ],
+                "name_aliases": [
+                    "cuberite"
+                ],
+                "variable_signatures": [
+                    [
+                        "ADMIN_PASS",
+                        "SERV_DESC",
+                        "WEB_PORT"
+                    ]
+                ]
+            },
+            "status": "none",
+            "loader": null,
+            "project_type": null,
+            "is_proxy": false,
+            "minecraft_version_variables": []
+        },
+        {
+            "id": "curseforge-generic",
+            "source_name": "CurseForge Generic",
+            "match": {
+                "uuid": [
+                    "019bbf16-a3f3-470a-9c0b-f3995b5e032a"
+                ],
+                "update_url_contains": [
+                    "java/curseforge/egg-curse-forge-generic.json"
+                ],
+                "name_aliases": [
+                    "curseforgegeneric"
+                ],
+                "variable_signatures": [
+                    [
+                        "API_KEY",
+                        "PROJECT_ID",
+                        "VERSION_ID"
+                    ]
+                ]
+            },
+            "status": "manual_required",
+            "loader": null,
+            "project_type": null,
+            "is_proxy": false,
+            "minecraft_version_variables": []
+        },
+        {
+            "id": "fabric",
+            "source_name": "Fabric",
+            "match": {
+                "uuid": [
+                    "78b02ebb-fec8-49c5-943c-ca4aa117b693"
+                ],
+                "update_url_contains": [
+                    "java/fabric/egg-fabric.yaml"
+                ],
+                "name_aliases": [
+                    "fabric"
+                ],
+                "variable_signatures": [
+                    [
+                        "FABRIC_VERSION",
+                        "LOADER_VERSION",
+                        "MC_VERSION",
+                        "SERVER_JARFILE"
+                    ]
+                ]
+            },
+            "status": "resolved",
+            "loader": "fabric",
+            "project_type": "mod",
+            "is_proxy": false,
+            "minecraft_version_variables": [
+                "MC_VERSION"
+            ]
+        },
+        {
+            "id": "feather",
+            "source_name": "Feather",
+            "match": {
+                "uuid": [
+                    "ca4cc8ae-0404-41d9-99b3-634895e91934"
+                ],
+                "update_url_contains": [
+                    "java/feather/egg-feather.json"
+                ],
+                "name_aliases": [
+                    "feather"
+                ],
+                "variable_signatures": [
+                    [
+                        "GEN_WORLD"
+                    ]
+                ]
+            },
+            "status": "none",
+            "loader": null,
+            "project_type": null,
+            "is_proxy": false,
+            "minecraft_version_variables": []
+        },
+        {
+            "id": "feed-the-beast",
+            "source_name": "Feed the Beast",
+            "match": {
+                "uuid": [
+                    "389b8f68-2fc4-4e5b-92ea-b8a0eadee0c4"
+                ],
+                "update_url_contains": [
+                    "java/ftb/outdated/egg-feed-the-beast.json"
+                ],
+                "name_aliases": [
+                    "feedthebeast"
+                ],
+                "variable_signatures": [
+                    [
+                        "LEVEL_NAME",
+                        "LEVEL_SEED",
+                        "MAX_PLAYERS",
+                        "MODPACK_URL",
+                        "MODPACK_VERSION",
+                        "MOTD"
+                    ]
+                ]
+            },
+            "status": "manual_required",
+            "loader": null,
+            "project_type": null,
+            "is_proxy": false,
+            "minecraft_version_variables": []
+        },
+        {
+            "id": "folia",
+            "source_name": "Folia",
+            "match": {
+                "uuid": [
+                    "09414ef6-cd47-496e-ba13-920a8215144c"
+                ],
+                "update_url_contains": [
+                    "java/folia/egg-folia.yaml"
+                ],
+                "name_aliases": [
+                    "folia"
+                ],
+                "variable_signatures": [
+                    [
+                        "BUILD_NUMBER",
+                        "DL_PATH",
+                        "MINECRAFT_VERSION",
+                        "PROJECT",
+                        "SERVER_JARFILE",
+                        "USER_AGENT"
+                    ],
+                    [
+                        "BUILD_NUMBER",
+                        "DL_PATH",
+                        "MINECRAFT_VERSION",
+                        "SERVER_JARFILE"
+                    ]
+                ]
+            },
+            "status": "resolved",
+            "loader": "folia",
+            "project_type": "plugin",
+            "is_proxy": false,
+            "minecraft_version_variables": [
+                "MINECRAFT_VERSION"
+            ]
+        },
+        {
+            "id": "forge",
+            "source_name": "Forge Minecraft",
+            "match": {
+                "uuid": [
+                    "ed072427-f209-4603-875c-f540c6dd5a65",
+                    "d6018085-eecc-42bf-bf8c-51ea45a69ace"
+                ],
+                "update_url_contains": [
+                    "java/forge/egg-forge-minecraft.yaml"
+                ],
+                "name_aliases": [
+                    "forgeminecraft",
+                    "forge",
+                    "forgeenhanced"
+                ],
+                "variable_signatures": [
+                    [
+                        "BUILD_TYPE",
+                        "FORGE_VERSION",
+                        "MC_VERSION",
+                        "SERVER_JARFILE"
+                    ]
+                ]
+            },
+            "status": "resolved",
+            "loader": "forge",
+            "project_type": "mod",
+            "is_proxy": false,
+            "minecraft_version_variables": [
+                "MC_VERSION"
+            ]
+        },
+        {
+            "id": "ftb-modpacks-ch",
+            "source_name": "FTB-modpacks.ch Server",
+            "match": {
+                "uuid": [
+                    "e60a9de8-a0b1-4d97-b4e2-6568f048668d"
+                ],
+                "update_url_contains": [
+                    "java/ftb/outdated/egg-f-t-b-modpacks-ch-server.json"
+                ],
+                "name_aliases": [
+                    "ftbmodpackschserver"
+                ],
+                "variable_signatures": [
+                    [
+                        "FTB_MODPACK_ID",
+                        "FTB_MODPACK_VERSION_ID",
+                        "FTB_SEARCH_TERM",
+                        "FTB_VERSION_STRING"
+                    ]
+                ]
+            },
+            "status": "manual_required",
+            "loader": null,
+            "project_type": null,
+            "is_proxy": false,
+            "minecraft_version_variables": []
+        },
+        {
+            "id": "ftb-revelation",
+            "source_name": "FTB Revelation",
+            "match": {
+                "uuid": [
+                    "2b6a3998-25d3-4c93-8f68-7a293fb39998"
+                ],
+                "update_url_contains": [
+                    "java/ftb/outdated/egg-f-t-b-revelation.json"
+                ],
+                "name_aliases": [
+                    "ftbrevelation"
+                ],
+                "variable_signatures": [
+                    [
+                        "MODPACK_VERSION"
+                    ]
+                ]
+            },
+            "status": "manual_required",
+            "loader": null,
+            "project_type": null,
+            "is_proxy": false,
+            "minecraft_version_variables": []
+        },
+        {
+            "id": "ftb-server",
+            "source_name": "FTB Server",
+            "match": {
+                "uuid": [
+                    "e60a9de8-a0b1-4d97-b4e2-6568f048668d"
+                ],
+                "update_url_contains": [
+                    "java/ftb/egg-f-t-b-server.json"
+                ],
+                "name_aliases": [
+                    "ftbserver"
+                ],
+                "variable_signatures": [
+                    [
+                        "FTB_MODPACK_ID",
+                        "FTB_MODPACK_VERSION_ID",
+                        "FTB_SEARCH_TERM",
+                        "FTB_VERSION_STRING"
+                    ]
+                ]
+            },
+            "status": "manual_required",
+            "loader": null,
+            "project_type": null,
+            "is_proxy": false,
+            "minecraft_version_variables": []
+        },
+        {
+            "id": "glowstone",
+            "source_name": "Glowstone",
+            "match": {
+                "uuid": [
+                    "0b0b94ea-aff2-49c0-80a0-736c1717f82e"
+                ],
+                "update_url_contains": [
+                    "java/glowstone/egg-glowstone.json"
+                ],
+                "name_aliases": [
+                    "glowstone"
+                ],
+                "variable_signatures": [
+                    [
+                        "GITHUB_OAUTH_TOKEN",
+                        "GITHUB_PACKAGE",
+                        "GITHUB_USER",
+                        "MATCH",
+                        "SERVER_JARFILE",
+                        "VERSION"
+                    ]
+                ]
+            },
+            "status": "resolved",
+            "loader": "bukkit",
+            "project_type": "plugin",
+            "is_proxy": false,
+            "minecraft_version_variables": [
+                "VERSION"
+            ]
+        },
+        {
+            "id": "gomint",
+            "source_name": "GoMint",
+            "match": {
+                "uuid": [
+                    "6ef2bba9-b43b-47a5-9ee6-0a811ce6e3ba"
+                ],
+                "update_url_contains": [
+                    "bedrock/gomint/egg-go-mint.json"
+                ],
+                "name_aliases": [
+                    "gomint"
+                ],
+                "variable_signatures": []
+            },
+            "status": "none",
+            "loader": null,
+            "project_type": null,
+            "is_proxy": false,
+            "minecraft_version_variables": []
+        },
+        {
+            "id": "hexxit",
+            "source_name": "Hexxit",
+            "match": {
+                "uuid": [
+                    "1224574b-36f5-497a-ae4e-fa3d3278033e"
+                ],
+                "update_url_contains": [
+                    "java/technic/hexxit/egg-hexxit.json"
+                ],
+                "name_aliases": [
+                    "hexxit"
+                ],
+                "variable_signatures": [
+                    [
+                        "MODPACK_VERSION"
+                    ]
+                ]
+            },
+            "status": "manual_required",
+            "loader": null,
+            "project_type": null,
+            "is_proxy": false,
+            "minecraft_version_variables": []
+        },
+        {
+            "id": "ketting",
+            "source_name": "Ketting",
+            "match": {
+                "uuid": [
+                    "3460601a-bb6e-41b8-8394-77e69c174dd1"
+                ],
+                "update_url_contains": [
+                    "java/ketting/egg-ketting.json"
+                ],
+                "name_aliases": [
+                    "ketting"
+                ],
+                "variable_signatures": [
+                    [
+                        "GAME_VERSION",
+                        "SERVER_JAR_FILE",
+                        "TAG_VERSION"
+                    ]
+                ]
+            },
+            "status": "manual_required",
+            "loader": null,
+            "project_type": null,
+            "is_proxy": false,
+            "minecraft_version_variables": [
+                "GAME_VERSION"
+            ]
+        },
+        {
+            "id": "krypton",
+            "source_name": "Krypton",
+            "match": {
+                "uuid": [
+                    "fa5489c3-4170-449f-a9cb-167530eacb20"
+                ],
+                "update_url_contains": [
+                    "java/krypton/egg-krypton.json"
+                ],
+                "name_aliases": [
+                    "krypton"
+                ],
+                "variable_signatures": [
+                    [
+                        "KRYPTON_VERSION",
+                        "SERVER_JAR"
+                    ]
+                ]
+            },
+            "status": "none",
+            "loader": null,
+            "project_type": null,
+            "is_proxy": false,
+            "minecraft_version_variables": []
+        },
+        {
+            "id": "limbo",
+            "source_name": "Limbo",
+            "match": {
+                "uuid": [
+                    "44f91767-0288-4352-a62f-945db51ab922"
+                ],
+                "update_url_contains": [
+                    "java/limbo/egg-limbo.json"
+                ],
+                "name_aliases": [
+                    "limbo"
+                ],
+                "variable_signatures": [
+                    [
+                        "SERVER_JARFILE"
+                    ]
+                ]
+            },
+            "status": "none",
+            "loader": null,
+            "project_type": null,
+            "is_proxy": false,
+            "minecraft_version_variables": []
+        },
+        {
+            "id": "liteloader-bedrock",
+            "source_name": "Liteloader Bedrock Dedicated Server",
+            "match": {
+                "uuid": [
+                    "d93b1b76-8435-4404-9a7b-309b6b069b9e"
+                ],
+                "update_url_contains": [
+                    "bedrock/LiteLoader-bedrock/egg-liteloader-bedrock-dedicated-server.json"
+                ],
+                "name_aliases": [
+                    "liteloaderbedrockdedicatedserver"
+                ],
+                "variable_signatures": [
+                    [
+                        "BDS_VERSION",
+                        "DIFFICULTY",
+                        "GAMEMODE",
+                        "LL_VERSION",
+                        "MAXPLAYERS",
+                        "SERVERNAME",
+                        "WINEDEBUG",
+                        "WORLDNAME"
+                    ]
+                ]
+            },
+            "status": "none",
+            "loader": null,
+            "project_type": null,
+            "is_proxy": false,
+            "minecraft_version_variables": []
+        },
+        {
+            "id": "magma",
+            "source_name": "Magma",
+            "match": {
+                "uuid": [
+                    "5a2d29b8-666c-4a84-8ef3-44b29ceebf24"
+                ],
+                "update_url_contains": [
+                    "java/magma/egg-magma.json"
+                ],
+                "name_aliases": [
+                    "magma"
+                ],
+                "variable_signatures": [
+                    [
+                        "MC_VERSION",
+                        "SERVER_JARFILE",
+                        "TAG_VERSION"
+                    ]
+                ]
+            },
+            "status": "manual_required",
+            "loader": null,
+            "project_type": null,
+            "is_proxy": false,
+            "minecraft_version_variables": [
+                "MC_VERSION"
+            ]
+        },
+        {
+            "id": "modrinth-generic",
+            "source_name": "Modrinth Generic",
+            "match": {
+                "uuid": [
+                    "04befa18-37cf-41e9-b04d-89b3578bba6d"
+                ],
+                "update_url_contains": [
+                    "java/modrinth/egg-modrinth-generic.json"
+                ],
+                "name_aliases": [
+                    "modrinthgeneric"
+                ],
+                "variable_signatures": [
+                    [
+                        "PROJECT_ID",
+                        "VERSION_ID"
+                    ]
+                ]
+            },
+            "status": "manual_required",
+            "loader": null,
+            "project_type": null,
+            "is_proxy": false,
+            "minecraft_version_variables": []
+        },
+        {
+            "id": "mohist",
+            "source_name": "MohistMC",
+            "match": {
+                "uuid": [
+                    "4f2bddcc-90ce-4cac-8ad7-fafa0d91381b"
+                ],
+                "update_url_contains": [
+                    "java/mohist/egg-mohist.yaml"
+                ],
+                "name_aliases": [
+                    "mohistmc",
+                    "mohist"
+                ],
+                "variable_signatures": [
+                    [
+                        "BUILD_NUMBER",
+                        "DL_PATH",
+                        "MC_VERSION",
+                        "PROJECT",
+                        "SERVER_JARFILE"
+                    ],
+                    [
+                        "BUILD_VERSION",
+                        "MC_VERSION",
+                        "SERVER_JARFILE"
+                    ]
+                ]
+            },
+            "status": "manual_required",
+            "loader": null,
+            "project_type": null,
+            "is_proxy": false,
+            "minecraft_version_variables": [
+                "MC_VERSION"
+            ]
+        },
+        {
+            "id": "nanolimbo",
+            "source_name": "NanoLimbo",
+            "match": {
+                "uuid": [
+                    "e12bdbe9-1c97-4198-bc6a-e67538ade8ab"
+                ],
+                "update_url_contains": [
+                    "java/nanolimbo/egg-nano-limbo.json"
+                ],
+                "name_aliases": [
+                    "nanolimbo"
+                ],
+                "variable_signatures": [
+                    [
+                        "DOWNLOAD_URL",
+                        "SERVER_JARFILE",
+                        "VERSION"
+                    ]
+                ]
+            },
+            "status": "none",
+            "loader": null,
+            "project_type": null,
+            "is_proxy": false,
+            "minecraft_version_variables": []
+        },
+        {
+            "id": "neoforge",
+            "source_name": "NeoForge",
+            "match": {
+                "uuid": [
+                    "e23e092f-b803-4f34-82cf-2d6518c6351a"
+                ],
+                "update_url_contains": [
+                    "java/neoforge/egg-neo-forge.json"
+                ],
+                "name_aliases": [
+                    "neoforge"
+                ],
+                "variable_signatures": [
+                    [
+                        "MC_VERSION",
+                        "NEOFORGE_VERSION"
+                    ]
+                ]
+            },
+            "status": "resolved",
+            "loader": "neoforge",
+            "project_type": "mod",
+            "is_proxy": false,
+            "minecraft_version_variables": [
+                "MC_VERSION"
+            ]
+        },
+        {
+            "id": "nukkit",
+            "source_name": "Nukkit",
+            "match": {
+                "uuid": [
+                    "5669130a-d4a2-4a80-88b6-9edd2d9484bc"
+                ],
+                "update_url_contains": [
+                    "bedrock/nukkit/egg-nukkit.json"
+                ],
+                "name_aliases": [
+                    "nukkit"
+                ],
+                "variable_signatures": [
+                    [
+                        "DL_PATH",
+                        "NUKKIT_VERSION",
+                        "SERVER_JARFILE"
+                    ]
+                ]
+            },
+            "status": "none",
+            "loader": null,
+            "project_type": null,
+            "is_proxy": false,
+            "minecraft_version_variables": []
+        },
+        {
+            "id": "paper",
+            "source_name": "Paper",
+            "match": {
+                "uuid": [
+                    "5da37ef6-58da-4169-90a6-e683e1721247",
+                    "150956be-4164-4086-9057-631ae95505e9"
+                ],
+                "update_url_contains": [
+                    "java/paper/egg-paper.yaml"
+                ],
+                "name_aliases": [
+                    "paper"
+                ],
+                "variable_signatures": [
+                    [
+                        "BUILD_NUMBER",
+                        "DL_PATH",
+                        "MINECRAFT_VERSION",
+                        "SERVER_JARFILE"
+                    ]
+                ]
+            },
+            "status": "resolved",
+            "loader": "paper",
+            "project_type": "plugin",
+            "is_proxy": false,
+            "minecraft_version_variables": [
+                "MINECRAFT_VERSION"
+            ]
+        },
+        {
+            "id": "pocketminemp",
+            "source_name": "PocketmineMP",
+            "match": {
+                "uuid": [
+                    "4c3baab1-67ad-48c7-8acd-eb3deaa0a462"
+                ],
+                "update_url_contains": [
+                    "bedrock/pocketmine_mp/egg-pocketmine-m-p.json"
+                ],
+                "name_aliases": [
+                    "pocketminemp"
+                ],
+                "variable_signatures": [
+                    [
+                        "VERSION"
+                    ]
+                ]
+            },
+            "status": "none",
+            "loader": null,
+            "project_type": null,
+            "is_proxy": false,
+            "minecraft_version_variables": []
+        },
+        {
+            "id": "powernukkitx",
+            "source_name": "PowerNukkitX",
+            "match": {
+                "uuid": [
+                    "27250406-1acf-4dce-b39f-3413cc290b64"
+                ],
+                "update_url_contains": [
+                    "bedrock/PowerNukkitX/egg-power-nukkit-x.json"
+                ],
+                "name_aliases": [
+                    "powernukkitx"
+                ],
+                "variable_signatures": [
+                    [
+                        "AUTOREBOOT",
+                        "VERSION"
+                    ]
+                ]
+            },
+            "status": "none",
+            "loader": null,
+            "project_type": null,
+            "is_proxy": false,
+            "minecraft_version_variables": []
+        },
+        {
+            "id": "purpur",
+            "source_name": "Purpur",
+            "match": {
+                "uuid": [
+                    "49adec15-ccfe-45c3-ac3f-2fc20582739d"
+                ],
+                "update_url_contains": [
+                    "java/purpur/egg-purpur.yaml"
+                ],
+                "name_aliases": [
+                    "purpur"
+                ],
+                "variable_signatures": [
+                    [
+                        "BUILD_NUMBER",
+                        "MINECRAFT_VERSION",
+                        "SERVER_JARFILE"
+                    ]
+                ]
+            },
+            "status": "resolved",
+            "loader": "purpur",
+            "project_type": "plugin",
+            "is_proxy": false,
+            "minecraft_version_variables": [
+                "MINECRAFT_VERSION"
+            ]
+        },
+        {
+            "id": "purpur-geyser-floodgate",
+            "source_name": "Purpur-Geyser-Floodgate",
+            "match": {
+                "uuid": [
+                    "92364e41-07ba-43fd-b33e-2f655cd7ef61"
+                ],
+                "update_url_contains": [
+                    "crossplay/purpur-geysermc-floodgate/egg-purpur--geyser--floodgate.json"
+                ],
+                "name_aliases": [
+                    "purpurgeyserfloodgate",
+                    "purpurgeysermcfloodgate"
+                ],
+                "variable_signatures": [
+                    [
+                        "BUILD_NUMBER",
+                        "MINECRAFT_VERSION",
+                        "SERVER_JARFILE"
+                    ]
+                ]
+            },
+            "status": "resolved",
+            "loader": "purpur",
+            "project_type": "plugin",
+            "is_proxy": false,
+            "minecraft_version_variables": [
+                "MINECRAFT_VERSION"
+            ]
+        },
+        {
+            "id": "quilt",
+            "source_name": "Quilt",
+            "match": {
+                "uuid": [
+                    "dff33655-6e6a-4430-accf-e5aea04c2912"
+                ],
+                "update_url_contains": [
+                    "java/quilt/egg-quilt.yaml"
+                ],
+                "name_aliases": [
+                    "quilt"
+                ],
+                "variable_signatures": [
+                    [
+                        "MC_VERSION",
+                        "SERVER_JARFILE"
+                    ]
+                ]
+            },
+            "status": "resolved",
+            "loader": "quilt",
+            "project_type": "mod",
+            "is_proxy": false,
+            "minecraft_version_variables": [
+                "MC_VERSION"
+            ]
+        },
+        {
+            "id": "spigot",
+            "source_name": "Spigot",
+            "match": {
+                "uuid": [
+                    "48808ad8-616f-4f13-91fb-29bfeca3afc7"
+                ],
+                "update_url_contains": [
+                    "java/spigot/egg-spigot.yaml"
+                ],
+                "name_aliases": [
+                    "spigot"
+                ],
+                "variable_signatures": [
+                    [
+                        "DL_PATH",
+                        "DL_VERSION",
+                        "SERVER_JARFILE"
+                    ]
+                ]
+            },
+            "status": "resolved",
+            "loader": "spigot",
+            "project_type": "plugin",
+            "is_proxy": false,
+            "minecraft_version_variables": [
+                "DL_VERSION"
+            ]
+        },
+        {
+            "id": "sponge",
+            "source_name": "Sponge",
+            "match": {
+                "uuid": [
+                    "f0d2f88f-1ff3-42a0-b03f-ac44c5571e6d"
+                ],
+                "update_url_contains": [
+                    "java/spongevanilla/egg-sponge.yaml"
+                ],
+                "name_aliases": [
+                    "sponge",
+                    "spongevanilla"
+                ],
+                "variable_signatures": [
+                    [
+                        "FORGE_VERSION",
+                        "MINECRAFT_VERSION",
+                        "SERVER_JARFILE",
+                        "SPONGE_TYPE"
+                    ],
+                    [
+                        "SERVER_JARFILE",
+                        "SV_VERSION"
+                    ]
+                ]
+            },
+            "status": "resolved",
+            "loader": "sponge",
+            "project_type": "plugin",
+            "is_proxy": false,
+            "minecraft_version_variables": [
+                "MINECRAFT_VERSION"
+            ]
+        },
+        {
+            "id": "spongeforge",
+            "source_name": "SpongeForge",
+            "match": {
+                "uuid": [
+                    "405f10e2-7950-4a35-9b66-48af0ec3aaa1"
+                ],
+                "update_url_contains": [
+                    "java/spongeforge/egg-sponge-forge.json"
+                ],
+                "name_aliases": [
+                    "spongeforge"
+                ],
+                "variable_signatures": [
+                    [
+                        "FORGE_VERSION",
+                        "SERVER_JARFILE",
+                        "SF_VERSION"
+                    ]
+                ]
+            },
+            "status": "manual_required",
+            "loader": null,
+            "project_type": null,
+            "is_proxy": false,
+            "minecraft_version_variables": []
+        },
+        {
+            "id": "tekkit",
+            "source_name": "Tekkit",
+            "match": {
+                "uuid": [
+                    "cbcfe400-b57a-4790-b56f-d3233113208c"
+                ],
+                "update_url_contains": [
+                    "java/technic/Tekkit/egg-tekkit.json"
+                ],
+                "name_aliases": [
+                    "tekkit"
+                ],
+                "variable_signatures": [
+                    [
+                        "MODPACK_VERSION"
+                    ]
+                ]
+            },
+            "status": "manual_required",
+            "loader": null,
+            "project_type": null,
+            "is_proxy": false,
+            "minecraft_version_variables": []
+        },
+        {
+            "id": "tekkit-2",
+            "source_name": "Tekkit 2",
+            "match": {
+                "uuid": [
+                    "81bf842b-5647-4c83-9254-523b6f8308fb"
+                ],
+                "update_url_contains": [
+                    "java/technic/Tekkit-2/egg-tekkit2.json"
+                ],
+                "name_aliases": [
+                    "tekkit2"
+                ],
+                "variable_signatures": [
+                    [
+                        "MODPACK_VERSION"
+                    ]
+                ]
+            },
+            "status": "manual_required",
+            "loader": null,
+            "project_type": null,
+            "is_proxy": false,
+            "minecraft_version_variables": []
+        },
+        {
+            "id": "tekkit-classic",
+            "source_name": "Tekkit Classic",
+            "match": {
+                "uuid": [
+                    "80be7c9e-a4a0-4d9c-889c-8702caae6557"
+                ],
+                "update_url_contains": [
+                    "java/technic/tekkit-classic/egg-tekkit-classic.json"
+                ],
+                "name_aliases": [
+                    "tekkitclassic"
+                ],
+                "variable_signatures": [
+                    [
+                        "MODPACK_VERSION"
+                    ]
+                ]
+            },
+            "status": "manual_required",
+            "loader": null,
+            "project_type": null,
+            "is_proxy": false,
+            "minecraft_version_variables": []
+        },
+        {
+            "id": "tekkit-legends",
+            "source_name": "Tekkit Legends",
+            "match": {
+                "uuid": [
+                    "12643d14-fca6-4f3e-93ed-048d82d711ce"
+                ],
+                "update_url_contains": [
+                    "java/technic/tekkit-legends/egg-tekkit-legends.json"
+                ],
+                "name_aliases": [
+                    "tekkitlegends"
+                ],
+                "variable_signatures": [
+                    [
+                        "MODPACK_VERSION"
+                    ]
+                ]
+            },
+            "status": "manual_required",
+            "loader": null,
+            "project_type": null,
+            "is_proxy": false,
+            "minecraft_version_variables": []
+        },
+        {
+            "id": "tekkit-smp",
+            "source_name": "Tekkit SMP",
+            "match": {
+                "uuid": [
+                    "c22ea4db-1541-490c-8ee6-296e61d97a1e"
+                ],
+                "update_url_contains": [
+                    "java/technic/tekkit-smp/egg-tekkit-smp.json"
+                ],
+                "name_aliases": [
+                    "tekkitsmp"
+                ],
+                "variable_signatures": [
+                    [
+                        "BUILD_TYPE",
+                        "MODPACK_VERSION"
+                    ]
+                ]
+            },
+            "status": "manual_required",
+            "loader": null,
+            "project_type": null,
+            "is_proxy": false,
+            "minecraft_version_variables": []
+        },
+        {
+            "id": "the-1-12-2-pack",
+            "source_name": "The 1.12.2 Pack",
+            "match": {
+                "uuid": [
+                    "2b61c1f4-7b41-486d-8dfa-5365aa38d0a6"
+                ],
+                "update_url_contains": [
+                    "java/technic/the-1-12-2-pack/egg-the1-12-2-pack.json"
+                ],
+                "name_aliases": [
+                    "the1122pack"
+                ],
+                "variable_signatures": [
+                    [
+                        "MODPACK_VERSION"
+                    ]
+                ]
+            },
+            "status": "manual_required",
+            "loader": null,
+            "project_type": null,
+            "is_proxy": false,
+            "minecraft_version_variables": []
+        },
+        {
+            "id": "the-1-7-10-pack",
+            "source_name": "The 1.7.10 Pack",
+            "match": {
+                "uuid": [
+                    "7e410751-0e25-457d-b09f-a19e640f2d69"
+                ],
+                "update_url_contains": [
+                    "java/technic/the-1-7-10-pack/egg-the1-7-10-pack.json"
+                ],
+                "name_aliases": [
+                    "the1710pack"
+                ],
+                "variable_signatures": [
+                    [
+                        "MODPACK_VERSION"
+                    ]
+                ]
+            },
+            "status": "manual_required",
+            "loader": null,
+            "project_type": null,
+            "is_proxy": false,
+            "minecraft_version_variables": []
+        },
+        {
+            "id": "travertine",
+            "source_name": "Travertine",
+            "match": {
+                "uuid": [
+                    "fce95d08-d726-438c-a1d3-28798071bd91"
+                ],
+                "update_url_contains": [
+                    "proxy/java/travertine/egg-travertine.json"
+                ],
+                "name_aliases": [
+                    "travertine"
+                ],
+                "variable_signatures": [
+                    [
+                        "BUILD_NUMBER",
+                        "DL_LINK",
+                        "MINECRAFT_VERSION",
+                        "SERVER_JARFILE"
+                    ]
+                ]
+            },
+            "status": "resolved",
+            "loader": "waterfall",
+            "project_type": "plugin",
+            "is_proxy": true,
+            "minecraft_version_variables": [
+                "MINECRAFT_VERSION"
+            ]
+        },
+        {
+            "id": "vanilla",
+            "source_name": "Vanilla Minecraft",
+            "match": {
+                "uuid": [
+                    "9ac39f3d-0c34-4d93-8174-c52ab9e6c57b"
+                ],
+                "update_url_contains": [
+                    "java/vanilla/egg-vanilla-minecraft.yaml"
+                ],
+                "name_aliases": [
+                    "vanillaminecraft",
+                    "vanilla"
+                ],
+                "variable_signatures": [
+                    [
+                        "SERVER_JARFILE",
+                        "VANILLA_VERSION"
+                    ]
+                ]
+            },
+            "status": "resolved",
+            "loader": null,
+            "project_type": "datapack",
+            "is_proxy": false,
+            "minecraft_version_variables": [
+                "VANILLA_VERSION"
+            ]
+        },
+        {
+            "id": "vanilla-bedrock",
+            "source_name": "Vanilla Bedrock",
+            "match": {
+                "uuid": [
+                    "a03036b8-8c1b-4c8a-80be-018baad3dcaf"
+                ],
+                "update_url_contains": [
+                    "bedrock/bedrock/egg-vanilla-bedrock.json"
+                ],
+                "name_aliases": [
+                    "vanillabedrock"
+                ],
+                "variable_signatures": [
+                    [
+                        "BEDROCK_VERSION",
+                        "CHEATS",
+                        "DIFFICULTY",
+                        "GAMEMODE",
+                        "LD_LIBRARY_PATH",
+                        "SERVERNAME",
+                        "WORLDNAME"
+                    ],
+                    [
+                        "BEDROCK_VERSION",
+                        "CHEATS",
+                        "DIFFICULTY",
+                        "GAMEMODE",
+                        "LD_LIBRARY_PATH",
+                        "SERVERNAME"
+                    ]
+                ]
+            },
+            "status": "none",
+            "loader": null,
+            "project_type": null,
+            "is_proxy": false,
+            "minecraft_version_variables": []
+        },
+        {
+            "id": "vanilla-bedrock-arm64",
+            "source_name": "Vanilla Bedrock ARM64",
+            "match": {
+                "uuid": [
+                    "121d13de-82d1-41c5-bd32-a6ef3663d616"
+                ],
+                "update_url_contains": [
+                    "bedrock/bedrock/egg-vanilla-bedrock-a-r-m64.json"
+                ],
+                "name_aliases": [
+                    "vanillabedrockarm64"
+                ],
+                "variable_signatures": [
+                    [
+                        "BEDROCK_VERSION",
+                        "CHEATS",
+                        "DIFFICULTY",
+                        "GAMEMODE",
+                        "LD_LIBRARY_PATH",
+                        "SERVERNAME"
+                    ]
+                ]
+            },
+            "status": "none",
+            "loader": null,
+            "project_type": null,
+            "is_proxy": false,
+            "minecraft_version_variables": []
+        },
+        {
+            "id": "vanillacord",
+            "source_name": "VanillaCord",
+            "match": {
+                "uuid": [
+                    "afa9c224-ffa4-4a12-ac65-028599a78113"
+                ],
+                "update_url_contains": [
+                    "java/vanillacord/egg-vanilla-cord.json"
+                ],
+                "name_aliases": [
+                    "vanillacord"
+                ],
+                "variable_signatures": [
+                    [
+                        "SERVER_JARFILE",
+                        "VANILLA_VERSION"
+                    ]
+                ]
+            },
+            "status": "none",
+            "loader": null,
+            "project_type": null,
+            "is_proxy": false,
+            "minecraft_version_variables": []
+        },
+        {
+            "id": "velocity",
+            "source_name": "Velocity",
+            "match": {
+                "uuid": [
+                    "44d20b6d-0a20-4144-a96c-71d214b3c850"
+                ],
+                "update_url_contains": [
+                    "proxy/java/velocity/egg-velocity.json"
+                ],
+                "name_aliases": [
+                    "velocity"
+                ],
+                "variable_signatures": [
+                    [
+                        "BUILD_NUMBER",
+                        "DL_PATH",
+                        "SERVER_JARFILE",
+                        "VELOCITY_VERSION"
+                    ]
+                ]
+            },
+            "status": "resolved",
+            "loader": "velocity",
+            "project_type": "plugin",
+            "is_proxy": true,
+            "minecraft_version_variables": []
+        },
+        {
+            "id": "viaaas",
+            "source_name": "VIAaaS",
+            "match": {
+                "uuid": [
+                    "0113f159-afd3-449d-a0cf-36d1ae827a3b"
+                ],
+                "update_url_contains": [
+                    "proxy/java/viaaas/egg-v-i-aaa-s.json"
+                ],
+                "name_aliases": [
+                    "viaaas"
+                ],
+                "variable_signatures": [
+                    [
+                        "SERVER_JARFILE",
+                        "WEBSERVER_PORT"
+                    ]
+                ]
+            },
+            "status": "none",
+            "loader": null,
+            "project_type": null,
+            "is_proxy": false,
+            "minecraft_version_variables": []
+        },
+        {
+            "id": "viaproxy",
+            "source_name": "ViaProxy",
+            "match": {
+                "uuid": [
+                    "39774149-12b1-4ef9-8945-bdb51bdfe442"
+                ],
+                "update_url_contains": [
+                    "proxy/java/viaproxy/egg-via-proxy.json"
+                ],
+                "name_aliases": [
+                    "viaproxy"
+                ],
+                "variable_signatures": [
+                    [
+                        "SERVER_JARFILE",
+                        "VERSION"
+                    ]
+                ]
+            },
+            "status": "none",
+            "loader": null,
+            "project_type": null,
+            "is_proxy": false,
+            "minecraft_version_variables": []
+        },
+        {
+            "id": "waterdog",
+            "source_name": "Waterdog",
+            "match": {
+                "uuid": [
+                    "81c981cb-b851-4085-91a6-abdb2c8c71a7"
+                ],
+                "update_url_contains": [
+                    "proxy/cross_platform/waterdog/egg-waterdog.json"
+                ],
+                "name_aliases": [
+                    "waterdog"
+                ],
+                "variable_signatures": [
+                    [
+                        "SERVER_JARFILE",
+                        "WATERDOG_VERSION"
+                    ]
+                ]
+            },
+            "status": "resolved",
+            "loader": "bungeecord",
+            "project_type": "plugin",
+            "is_proxy": true,
+            "minecraft_version_variables": []
+        },
+        {
+            "id": "waterdog-pe",
+            "source_name": "Waterdog PE",
+            "match": {
+                "uuid": [
+                    "793c40ea-b8df-4b88-90fe-b2b5a7103e43"
+                ],
+                "update_url_contains": [
+                    "proxy/bedrock/waterdog_pe/egg-waterdog-p-e.json"
+                ],
+                "name_aliases": [
+                    "waterdogpe"
+                ],
+                "variable_signatures": [
+                    [
+                        "SERVER_JARFILE",
+                        "WATERDOG_VERSION"
+                    ]
+                ]
+            },
+            "status": "none",
+            "loader": null,
+            "project_type": null,
+            "is_proxy": false,
+            "minecraft_version_variables": []
+        },
+        {
+            "id": "waterfall",
+            "source_name": "Waterfall",
+            "match": {
+                "uuid": [
+                    "7e22f851-3cf5-4ea8-8542-049e4f6939ba"
+                ],
+                "update_url_contains": [
+                    "proxy/java/waterfall/egg-waterfall.yaml"
+                ],
+                "name_aliases": [
+                    "waterfall"
+                ],
+                "variable_signatures": [
+                    [
+                        "BUILD_NUMBER",
+                        "DL_LINK",
+                        "MINECRAFT_VERSION",
+                        "SERVER_JARFILE"
+                    ]
+                ]
+            },
+            "status": "resolved",
+            "loader": "waterfall",
+            "project_type": "plugin",
+            "is_proxy": true,
+            "minecraft_version_variables": [
+                "MINECRAFT_VERSION"
+            ]
+        }
+    ]
+}

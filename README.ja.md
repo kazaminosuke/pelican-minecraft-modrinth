@@ -106,9 +106,13 @@ https://github.com/kazaminosuke/pelican-minecraft-modrinth/releases/latest/downl
   (ユーザー操作とは別枠でレート制限)を備えています。
 - **条件付きの遅延読み込み**により、表示するデータが既にキャッシュ済みの場合は追加の読み込み
   往復自体を省略します。
+- **eggの自動認識**により、パネル公式のMinecraft egg(およびPterodactylエコシステム側の
+  対応するegg)を、eggを手で編集することなく認識します。明示的な`features`/`tags`は常に
+  自動認識より優先され、自動では判定しきれないeggには(何も表示しない代わりに)簡単な設定案内が
+  表示されます。`MOD_MANAGER_EGG_AUTODETECT=false`でこの機能を無効化できます。
 
-各項目の詳細な設計については[`docs/architecture.md`](docs/architecture.md)(英語)を参照して
-ください。
+各項目の詳細な設計(検出順序や、eggを手動設定する方法を含む)については
+[`docs/architecture.md`](docs/architecture.md)(英語)を参照してください。
 
 ## トラブルシューティング
 
@@ -119,13 +123,6 @@ https://github.com/kazaminosuke/pelican-minecraft-modrinth/releases/latest/downl
   状態です(例: APIキー未設定のCurseForgeなど)。[設定](#設定)を参照してください。
 - **カタログのデータが古いと感じる** - 設定画面のキャッシュをクリアアクションを使用してください。
   全サーバー/単一サーバーでの挙動の違いは上記の通りです。
-
-## 今後の予定(Roadmap)
-
-- **eggの自動認識。** 現在はローダーとMinecraftバージョンを、eggの`features`/`tags`と
-  サーバーの`MINECRAFT_VERSION`/`MC_VERSION`変数から解決しています。今後の計画として、
-  egg自体を自動認識できるようにし、対応可否判定や設定の手動タグ付け依存をさらに減らす構想が
-  あります。
 
 ## リポジトリ
 
