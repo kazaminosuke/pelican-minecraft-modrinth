@@ -116,6 +116,9 @@ class ModManagerPage extends Page implements HasTable
     /** Prevent a completed operation from refreshing the deferred table more than once. */
     public ?string $handledInstalledOperation = null;
 
+    /** Prevent a scan-start toast from being emitted again by this Livewire component. */
+    public ?string $notifiedInstalledScanStart = null;
+
     /** Avoid repeating the operator-facing queue configuration warning in one component session. */
     public bool $operationQueueWarningShown = false;
 
@@ -131,15 +134,7 @@ class ModManagerPage extends Page implements HasTable
      */
     public bool $pollEnrichment = false;
 
-    /**
-     * Whether a still-valid scan result already exists, independent of any
-     * background-operation state. Once a completed operation's cache entry
-     * is forgotten (see pollInstalledOperation()), installedOperation goes
-     * back to null even though the data itself is fine - without this flag,
-     * installedOperationStatus() cannot tell that apart from "nothing has
-     * been checked yet" and gets stuck showing its "checking" fallback with
-     * polling already disabled, i.e. permanently.
-     */
+    /** Whether a still-valid scan result already exists, independent of background-operation state. */
     public bool $installedScanDataReady = false;
 
     /** Per-request timing state used only by temporary initial-load diagnostics. */
@@ -416,12 +411,18 @@ class ModManagerPage extends Page implements HasTable
             $this->pollInstalledOperations = $this->shouldPollInstalledOperation($state);
         }
 
-        // Do not show a per-visit toast for this automatic background work.
-        // The persistent inline state below is enough to explain an ellipsis
-        // badge while a scan is queued or running.
+        if ($dispatch['dispatched'] && $state !== null) {
+            $this->notifyInstalledScanStarted($state);
+        }
+
         if ($dispatch['reason'] === 'sync_queue') {
             $this->operationQueueWarningShown = true;
             $this->pollInstalledOperations = false;
+
+            Notification::make()
+                ->title(trans('pelican-minecraft-modrinth::strings.operations.queue_required'))
+                ->danger()
+                ->send();
         }
     }
 
@@ -2277,9 +2278,9 @@ class ModManagerPage extends Page implements HasTable
                                 ? ['class' => 'mmr-installed-operation-spinning']
                                 : []),
                     ])
-                    ->extraAttributes(fn () => $this->pollInstalledOperations
-                        ? ['wire:poll.2s' => 'pollInstalledOperation']
-                        : [])
+                    // Bulk-update progress remains useful in the page body.
+                    // Installed-file scan progress is intentionally delivered
+                    // through Filament notifications instead.
                     ->visible(fn () => $this->shouldShowInstalledOperationStatus()),
                 Group::make([
                     EmbeddedTable::make(),
@@ -2302,7 +2303,11 @@ class ModManagerPage extends Page implements HasTable
                     // per update is what previously coupled the layout to
                     // render timing. A ResizeObserver covers the cases that
                     // do change it.
-                ], $this->activeTab === 'installed' && $this->pollEnrichment
+                ], $this->pollInstalledOperations
+                    // Keep observing scan/bulk-update state even though scan
+                    // status no longer renders a page-body component.
+                    ? ['wire:poll.2s' => 'pollInstalledOperation']
+                    : [], $this->activeTab === 'installed' && $this->pollEnrichment
                     // Independent of pollInstalledOperations: this fires only
                     // while a background icon/downloads/date_modified or
                     // update-badge fetch is still outstanding (see
@@ -2537,19 +2542,10 @@ class ModManagerPage extends Page implements HasTable
         return $state;
     }
 
-    /**
-     * There is nothing worth showing once a background operation's cache
-     * entry has been forgotten (see pollInstalledOperation()) and a valid
-     * scan result already exists to take its place - installedOperation is
-     * null in that case, but not because anything is still being checked.
-     */
+    /** Scan states use notifications; only bulk-update progress remains inline. */
     protected function shouldShowInstalledOperationStatus(): bool
     {
-        if ($this->installedOperation !== null || $this->pollInstalledOperations || $this->operationQueueWarningShown) {
-            return true;
-        }
-
-        return !$this->installedScanDataReady;
+        return ($this->installedOperation['operation'] ?? null) === InstalledOperationManager::OPERATION_BULK_UPDATE;
     }
 
     /**
@@ -2572,12 +2568,10 @@ class ModManagerPage extends Page implements HasTable
     protected function shouldPollInstalledOperation(?InstalledOperationState $state): bool
     {
         if ($state === null) {
-            // A valid scan result already covers this case - see
-            // shouldShowInstalledOperationStatus() - so there is nothing to
-            // poll for. Without this, a caller like mount() that already
-            // knows installedScanDataReady is true would still enable
-            // polling here, and the badge would flash its "checking" state
-            // until the next request corrected it.
+            // A valid scan result already covers this case, so there is
+            // nothing to poll for. Without this, a caller like mount() that
+            // already knows installedScanDataReady is true would still enable
+            // polling here until the next request corrected it.
             return $this->activeTab === 'installed'
                 && !$this->operationQueueWarningShown
                 && !$this->installedScanDataReady;
@@ -2676,6 +2670,44 @@ class ModManagerPage extends Page implements HasTable
     }
 
     /**
+     * The queued state is created exactly when dispatchScan() accepts a new
+     * scan. Its immutable queuedAt value is therefore a stable operation ID
+     * across queued -> running -> completed poll transitions.
+     */
+    protected function notifyInstalledScanStarted(InstalledOperationState $state): void
+    {
+        if ($state->operation !== InstalledOperationManager::OPERATION_SCAN
+            || !$this->claimInstalledScanStartNotification($state)) {
+            return;
+        }
+
+        Notification::make()
+            ->title(trans('pelican-minecraft-modrinth::strings.operations.queued', [
+                'operation' => trans('pelican-minecraft-modrinth::strings.operations.scan'),
+            ]))
+            ->info()
+            ->send();
+    }
+
+    protected function claimInstalledScanStartNotification(InstalledOperationState $state): bool
+    {
+        $fingerprint = implode(':', [
+            $state->operation,
+            $state->serverId,
+            $state->projectType->value,
+            $state->queuedAt,
+        ]);
+
+        if ($this->notifiedInstalledScanStart === $fingerprint) {
+            return false;
+        }
+
+        $this->notifiedInstalledScanStart = $fingerprint;
+
+        return true;
+    }
+
+    /**
      * @param array{dispatched: bool, reason: ?string, state: ?InstalledOperationState} $dispatch
      */
     protected function notifyInstalledOperationDispatched(array $dispatch): void
@@ -2687,10 +2719,14 @@ class ModManagerPage extends Page implements HasTable
         }
 
         if ($dispatch['dispatched']) {
-            Notification::make()
-                ->title(trans('pelican-minecraft-modrinth::strings.operations.dispatched'))
-                ->info()
-                ->send();
+            if ($state !== null && $state->operation === InstalledOperationManager::OPERATION_SCAN) {
+                $this->notifyInstalledScanStarted($state);
+            } else {
+                Notification::make()
+                    ->title(trans('pelican-minecraft-modrinth::strings.operations.dispatched'))
+                    ->info()
+                    ->send();
+            }
 
             return;
         }

@@ -67,4 +67,52 @@ class ModManagerPagePayloadTest extends TestCase
 
         self::assertTrue($page->shouldPollForTest($state));
     }
+
+    public function test_scan_start_notification_is_claimed_once_per_operation(): void
+    {
+        $page = new class extends ModManagerPage {
+            public function claimScanStartNotificationForTest(InstalledOperationState $state): bool
+            {
+                return $this->claimInstalledScanStartNotification($state);
+            }
+        };
+        $scan = InstalledOperationState::queued(
+            InstalledOperationManager::OPERATION_SCAN,
+            42,
+            ProjectType::Plugin,
+        );
+
+        self::assertTrue($page->claimScanStartNotificationForTest($scan));
+        self::assertFalse($page->claimScanStartNotificationForTest($scan->running()));
+        self::assertTrue($page->claimScanStartNotificationForTest(InstalledOperationState::queued(
+            InstalledOperationManager::OPERATION_SCAN,
+            42,
+            ProjectType::Plugin,
+            now: new \DateTimeImmutable('+1 minute'),
+        )));
+    }
+
+    public function test_scan_status_is_not_rendered_in_the_page_body(): void
+    {
+        $page = new class extends ModManagerPage {
+            public function shouldShowOperationStatusForTest(): bool
+            {
+                return $this->shouldShowInstalledOperationStatus();
+            }
+        };
+
+        $page->installedOperation = InstalledOperationState::queued(
+            InstalledOperationManager::OPERATION_SCAN,
+            42,
+            ProjectType::Datapack,
+        )->toCachePayload();
+        self::assertFalse($page->shouldShowOperationStatusForTest());
+
+        $page->installedOperation = InstalledOperationState::queued(
+            InstalledOperationManager::OPERATION_BULK_UPDATE,
+            42,
+            ProjectType::Datapack,
+        )->toCachePayload();
+        self::assertTrue($page->shouldShowOperationStatusForTest());
+    }
 }
