@@ -279,6 +279,7 @@ class ModManagerPage extends Page implements HasTable
         );
 
         $this->refreshInstalledScanDataReady();
+        $this->dispatchInstalledScanIfMissing();
         // HasTabs resolves and then caches getTabs() while choosing the default
         // tab. Read the persisted scan result first, otherwise that first
         // cached definition permanently misses the Installed count badge for
@@ -378,6 +379,50 @@ class ModManagerPage extends Page implements HasTable
 
         $scanCacheKey = ModManager::getHashScanCacheKey($server, $type);
         $this->setInstalledScanResult(InstalledScanResult::fromCache(Cache::get($scanCacheKey)));
+    }
+
+    /**
+     * Start the first Installed scan from any mod-manager page, rather than
+     * making the visitor discover the Installed tab just to populate its
+     * count.  This is intentionally separate from catalog warming: it is a
+     * per-server Wings request, not speculative traffic to a shared upstream
+     * catalog API.
+     *
+     * The durable scan cache is the normal ten-minute cooldown. On a cache
+     * miss, InstalledOperationManager's per-server/type active state prevents
+     * repeat dispatches during a running scan; ScanInstalledProjects is also a
+     * unique queued job, which closes the simultaneous-page-load race before
+     * it can result in duplicate Wings scans.
+     */
+    protected function dispatchInstalledScanIfMissing(): void
+    {
+        if ($this->installedScanDataReady) {
+            return;
+        }
+
+        /** @var Server $server */
+        $server = Filament::getTenant();
+        $type = static::detectProjectType($server);
+
+        if (!$type) {
+            return;
+        }
+
+        $dispatch = app(InstalledOperationManager::class)->dispatchScan($server, $type);
+        $state = $dispatch['state'];
+
+        if ($state !== null) {
+            $this->installedOperation = $state->toCachePayload();
+            $this->pollInstalledOperations = $this->shouldPollInstalledOperation($state);
+        }
+
+        // Do not show a per-visit toast for this automatic background work.
+        // The persistent inline state below is enough to explain an ellipsis
+        // badge while a scan is queued or running.
+        if ($dispatch['reason'] === 'sync_queue') {
+            $this->operationQueueWarningShown = true;
+            $this->pollInstalledOperations = false;
+        }
     }
 
     /**
@@ -2235,7 +2280,7 @@ class ModManagerPage extends Page implements HasTable
                     ->extraAttributes(fn () => $this->pollInstalledOperations
                         ? ['wire:poll.2s' => 'pollInstalledOperation']
                         : [])
-                    ->visible(fn () => $this->activeTab === 'installed' && $this->shouldShowInstalledOperationStatus()),
+                    ->visible(fn () => $this->shouldShowInstalledOperationStatus()),
                 Group::make([
                     EmbeddedTable::make(),
                 ])->extraAttributes(fn () => array_merge([
@@ -2389,10 +2434,6 @@ class ModManagerPage extends Page implements HasTable
 
     public function pollInstalledOperation(): void
     {
-        if ($this->activeTab !== 'installed') {
-            return;
-        }
-
         $state = $this->refreshInstalledOperationState();
 
         if ($state === null) {
@@ -2414,6 +2455,11 @@ class ModManagerPage extends Page implements HasTable
 
         $this->handledInstalledOperation = $fingerprint;
         $this->pollInstalledOperations = false;
+        // Catalog records do not read the Installed scan cache themselves.
+        // Refresh it explicitly so the header badge changes in this same
+        // Livewire poll response, without requiring a page reload or an
+        // Installed-tab visit.
+        $this->refreshInstalledScanDataReady();
         $this->forgetInstalledModsMetadata();
         $this->forgetVersionCaches();
         $this->isTableLoaded = false;
@@ -2456,13 +2502,6 @@ class ModManagerPage extends Page implements HasTable
 
     protected function refreshInstalledOperationState(): ?InstalledOperationState
     {
-        if ($this->activeTab !== 'installed') {
-            $this->installedOperation = null;
-            $this->pollInstalledOperations = false;
-
-            return null;
-        }
-
         /** @var Server $server */
         $server = Filament::getTenant();
         $type = static::detectProjectType($server);

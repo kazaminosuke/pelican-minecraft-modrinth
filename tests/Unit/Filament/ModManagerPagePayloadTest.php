@@ -2,7 +2,10 @@
 
 namespace Kazaminosuke\ModManager\Tests\Unit\Filament;
 
+use Kazaminosuke\ModManager\Enums\ProjectType;
 use Kazaminosuke\ModManager\Filament\Server\Pages\ModManagerPage;
+use Kazaminosuke\ModManager\Services\InstalledOperationManager;
+use Kazaminosuke\ModManager\Support\InstalledOperationState;
 use Kazaminosuke\ModManager\Support\InstalledScanResult;
 use PHPUnit\Framework\TestCase;
 use ReflectionProperty;
@@ -44,5 +47,24 @@ class ModManagerPagePayloadTest extends TestCase
         self::assertSame(4, $page->installedFilesCount);
         self::assertTrue($page->installedScanDataReady);
         self::assertFalse($page->hasCachedTabsForTest());
+    }
+
+    public function test_catalog_tab_keeps_polling_an_active_automatic_scan(): void
+    {
+        $page = new class extends ModManagerPage {
+            public function shouldPollForTest(?InstalledOperationState $state): bool
+            {
+                return $this->shouldPollInstalledOperation($state);
+            }
+        };
+        $page->activeTab = 'modrinth';
+
+        $state = InstalledOperationState::queued(
+            InstalledOperationManager::OPERATION_SCAN,
+            42,
+            ProjectType::Mod,
+        );
+
+        self::assertTrue($page->shouldPollForTest($state));
     }
 }
