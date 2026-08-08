@@ -23,6 +23,7 @@ use Filament\View\PanelsRenderHook;
 use Illuminate\Support\HtmlString;
 use Kazaminosuke\ModManager\Enums\MinecraftLoader;
 use Kazaminosuke\ModManager\Enums\ProjectType;
+use Kazaminosuke\ModManager\Filament\Server\Pages\MinecraftDatapackPage;
 use Kazaminosuke\ModManager\Filament\Server\Pages\ModManagerPage;
 use Kazaminosuke\ModManager\Models\ModManagerEggProfile;
 use Kazaminosuke\ModManager\Services\InstalledOperationManager;
@@ -50,6 +51,16 @@ class ModManagerPlugin implements HasPluginSettings, Plugin
             'prefix' => 'mcloader',
         ]);
 
+        // Filament's render hook scoping matches the exact runtime class
+        // (BasePage::getRenderHookScopes() returns [static::class], compared
+        // by string key - see ViewManager::renderHook()), not instanceof. A
+        // scope of ModManagerPage::class alone therefore never fires on
+        // MinecraftDatapackPage even though it extends ModManagerPage and
+        // renders through the exact same content()/table. Every hook below
+        // that targets this page's own table chrome must list every
+        // concrete page class it needs to appear on.
+        $pageClasses = [ModManagerPage::class, MinecraftDatapackPage::class];
+
         $panel->renderHook(
             TablesRenderHook::TOOLBAR_SEARCH_AFTER,
             fn () => new HtmlString(
@@ -61,7 +72,7 @@ class ModManagerPlugin implements HasPluginSettings, Plugin
                 .'<option value="popularity">'.e(trans('pelican-minecraft-modrinth::strings.table.sort.popularity')).'</option>'
                 .'</select></div>',
             ),
-            ModManagerPage::class,
+            $pageClasses,
         );
         $panel->renderHook(
             PanelsRenderHook::HEAD_END,
@@ -192,12 +203,12 @@ class ModManagerPlugin implements HasPluginSettings, Plugin
         $panel->renderHook(
             PanelsRenderHook::BODY_END,
             fn () => view('pelican-minecraft-modrinth::components.table-layout'),
-            ModManagerPage::class,
+            $pageClasses,
         );
         $panel->renderHook(
             PanelsRenderHook::BODY_END,
             fn () => view('pelican-minecraft-modrinth::components.table-swr-cache'),
-            ModManagerPage::class,
+            $pageClasses,
         );
 
     }

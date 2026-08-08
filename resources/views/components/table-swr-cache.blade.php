@@ -1368,8 +1368,28 @@
 
             controller.lastRenderedView = debugEnabled() ? describeViewState(wire) : null;
 
+            // The Installed tab's icon/downloads/date_modified enrichment is
+            // deliberately non-blocking (see ModManagerPage::pollEnrichment()):
+            // this exact morph can be a real, complete render where those
+            // fields are still the SWR_EMPTY_ICON_DATA_URI placeholder because
+            // the background fetch hasn't landed yet, not a loading state
+            // .fi-ta-table-loading-ctn would catch. Caching that placeholder
+            // snapshot here would make it the "last known good" projection
+            // replayed by holdCachedProjection() on every later navigation
+            // until this exact component instance happens to re-render after
+            // enrichment finishes and overwrites it - which is what made
+            // Installed-tab icons stay blank until leaving the page and
+            // coming back started a fresh component (and a fresh, already-
+            // resolved records() read). Skipping the write here instead
+            // leaves whichever snapshot was last captured while nothing was
+            // pending in place, so a stale-but-complete preview keeps being
+            // held rather than a fresher-but-incomplete one replacing it.
+            const enrichmentPending = getWireValue(wire, 'pollEnrichment', false) === true;
+
             if (getRows(content).length > 0) {
-                capture(wrapper, key);
+                if (!enrichmentPending) {
+                    capture(wrapper, key);
+                }
             } else if (content.querySelector('.fi-ta-empty-state')) {
                 storage.remove(key);
                 writeIndex(readIndex().filter((entry) => entry?.key !== key));

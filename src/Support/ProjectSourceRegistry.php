@@ -69,7 +69,13 @@ class ProjectSourceRegistry
     public function availableFor(Server $server, ProjectType $type): array
     {
         $server->loadMissing('egg');
-        $features = $server->egg->features ?? [];
+        // ->inherit_features, not ->features: a child egg (config_from set)
+        // with no features of its own falls back to its parent's - the same
+        // fix ProjectType::fromServerExplicit() got in Stage 8. Reading
+        // ->features here missed every source feature flag set on the
+        // parent egg instead of the child, silently collapsing this egg
+        // back to Modrinth-only regardless of what was actually enabled.
+        $features = $server->egg->inherit_features ?? [];
 
         $enabled = [];
 
