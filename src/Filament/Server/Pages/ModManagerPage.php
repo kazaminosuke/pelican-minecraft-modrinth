@@ -364,10 +364,6 @@ class ModManagerPage extends Page implements HasTable
      */
     protected function refreshInstalledScanDataReady(): void
     {
-        if ($this->activeTab !== 'installed') {
-            return;
-        }
-
         /** @var Server $server */
         $server = Filament::getTenant();
         $type = static::detectProjectType($server);
@@ -615,9 +611,9 @@ class ModManagerPage extends Page implements HasTable
     /**
      * One tab per available source (when more than one is enabled for this
      * egg), each showing a "needs configuration" badge if isConfigured() is
-     * false, plus the "Installed" tab. When only Modrinth is available (the
-     * default for every egg that hasn't opted into extra sources), this
-     * collapses back to the original "All" / "Installed" tabs unchanged.
+     * false, plus the "Installed" tab with the cached scan's file count. When
+     * only Modrinth is available, this collapses back to the original "All" /
+     * "Installed" tabs unchanged.
      *
      * @return array<string, Tab>
      */
@@ -642,7 +638,12 @@ class ModManagerPage extends Page implements HasTable
             }
         }
 
-        $tabs['installed'] = Tab::make(trans('pelican-minecraft-modrinth::strings.page.view_installed'));
+        $installedTab = Tab::make(trans('pelican-minecraft-modrinth::strings.page.view_installed'));
+        if ($this->installedFilesCount !== null && $this->installedFilesCount >= 0) {
+            $installedTab = $installedTab->badge($this->installedFilesCount);
+        }
+
+        $tabs['installed'] = $installedTab;
 
         return $tabs;
     }
@@ -1376,7 +1377,10 @@ class ModManagerPage extends Page implements HasTable
             // Weapons"), so retain a wider filters panel for the two real filters.
             ->filtersFormWidth(Width::Medium)
             ->filters([
-                SelectFilter::make('catalog_category')->label(trans('pelican-minecraft-modrinth::strings.table.filters.category'))->options(fn () => $this->getCatalogCategoryOptions()),
+                SelectFilter::make('catalog_category')
+                    ->label(trans('pelican-minecraft-modrinth::strings.table.filters.category'))
+                    ->options(fn () => $this->getCatalogCategoryOptions())
+                    ->visible(fn () => $this->getCatalogCategoryOptions() !== []),
                 SelectFilter::make('catalog_environment')
                     ->label(trans('pelican-minecraft-modrinth::strings.table.filters.environment'))
                     ->options([
@@ -1954,6 +1958,17 @@ class ModManagerPage extends Page implements HasTable
     /** @return array<string, string> */
     protected function getCatalogCategoryOptions(): array
     {
+        /** @var Server $server */
+        $server = Filament::getTenant();
+
+        if ($this->getCurrentSource()?->getKey() === ProjectSourceKey::CurseForge
+            && static::detectProjectType($server) === ProjectType::Datapack) {
+            // CurseForge's Datapack catalog always searches its dedicated Data
+            // Packs category. Offering a second category selector here would
+            // be misleading because it intentionally cannot override that.
+            return [];
+        }
+
         return match ($this->getCurrentSource()?->getKey()) {
             ProjectSourceKey::Modrinth => ['adventure' => 'Adventure', 'cursed' => 'Cursed', 'decoration' => 'Decoration', 'economy' => 'Economy', 'equipment' => 'Equipment', 'food' => 'Food', 'magic' => 'Magic', 'optimization' => 'Optimization', 'social' => 'Social', 'technology' => 'Technology', 'utility' => 'Utility', 'worldgen' => 'World Generation'],
             ProjectSourceKey::CurseForge => ['406' => 'Technology', '407' => 'Storage', '408' => 'Cosmetic', '409' => 'Ores and Resources', '410' => 'Armor, Tools, and Weapons', '412' => 'Miscellaneous', '413' => 'Server Utility', '414' => 'Food', '415' => 'Energy', '416' => 'Farming', '417' => 'Transport', '419' => 'Magic'],

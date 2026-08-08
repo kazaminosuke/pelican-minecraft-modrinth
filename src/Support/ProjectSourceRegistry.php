@@ -55,9 +55,11 @@ class ProjectSourceRegistry
      * project type.
      *
      * Modrinth is always the baseline source - unchanged from pre-multi-source
-     * behavior, so no existing egg needs to be touched. An egg opts into
-     * additional sources purely additively, by adding their ProjectSourceKey
-     * value (e.g. "curseforge", "hangar") to its features; doing so never
+     * behavior, so no existing egg needs to be touched. CurseForge is also a
+     * baseline for Plugin and Datapack catalogs. An operator can opt out for a
+     * particular egg with "curseforge_disabled"; Mod catalogs keep their
+     * existing explicit "curseforge" opt-in. Hangar and GitHub Releases remain
+     * opt-in through their ProjectSourceKey values. None of these choices ever
      * silently removes Modrinth.
      *
      * Does NOT filter by isConfigured() - callers decide how to present an
@@ -79,9 +81,16 @@ class ProjectSourceRegistry
 
         $enabled = [];
 
-        // Keep the catalog tabs and automatic hash lookup aligned: when an egg
-        // enables CurseForge, it is shown and scanned before Modrinth.
-        if (in_array(ProjectSourceKey::CurseForge->value, $features, true)) {
+        // Keep catalog tabs and automatic hash lookup aligned. CurseForge is
+        // enabled by default for Paper-style Plugin and Datapack pages, while
+        // mods retain the original explicit opt-in. The negative flag wins so
+        // inherited features give operators an unambiguous per-egg opt-out.
+        $curseForgeEnabled = !in_array('curseforge_disabled', $features, true)
+            && ($type === ProjectType::Plugin
+                || $type === ProjectType::Datapack
+                || in_array(ProjectSourceKey::CurseForge->value, $features, true));
+
+        if ($curseForgeEnabled) {
             $enabled[] = $this->sources[ProjectSourceKey::CurseForge->value];
         }
 

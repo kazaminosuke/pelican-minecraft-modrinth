@@ -16,6 +16,7 @@ use Kazaminosuke\ModManager\Services\InstalledOperationManager;
 use Kazaminosuke\ModManager\Sources\CurseForgeSource;
 use Kazaminosuke\ModManager\Support\MinecraftVersionResolver;
 use Kazaminosuke\ModManager\Support\SourceCache;
+use Kazaminosuke\ModManager\Support\SourceFetchSpec;
 use Mockery;
 use PHPUnit\Framework\TestCase;
 
@@ -65,6 +66,27 @@ class CurseForgeSourceSearchCacheTest extends TestCase
         $source->search($server, ProjectType::Plugin, 1, null, []);
 
         self::assertTrue($source->hasCachedSearch($server, ProjectType::Plugin, 1, null, []));
+    }
+
+    public function test_datapack_search_uses_the_data_pack_category_without_a_mod_loader_filter(): void
+    {
+        $this->bindApiKey('test-key');
+        $executor = Mockery::mock(SourceFetchExecutorInterface::class);
+        $executor->shouldReceive('fetch')
+            ->once()
+            ->withArgs(function (SourceFetchSpec $spec): bool {
+                self::assertSame('search', $spec->operation);
+                self::assertSame(ProjectType::Datapack->value, $spec->arguments['project_type']);
+                self::assertSame(6945, $spec->arguments['params']['categoryId']);
+                self::assertArrayNotHasKey('modLoaderType', $spec->arguments['params']);
+
+                return true;
+            })
+            ->andReturn(['hits' => [], 'total_hits' => 0]);
+        $source = new CurseForgeSource($this->sourceCache($this->cache(), $executor));
+
+        self::assertTrue($source->supportsProjectType(ProjectType::Datapack));
+        self::assertSame(['hits' => [], 'total_hits' => 0], $source->search($this->server(), ProjectType::Datapack));
     }
 
     private function bindApiKey(?string $key): void

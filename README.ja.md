@@ -12,11 +12,11 @@
 | ソース | APIキー | 検索 | ハッシュ照合 | 対応プロジェクト種別 |
 |---|---|---|---|---|
 | [Modrinth](https://modrinth.com) | 不要 | ✅ | ✅(`sha512`) | Mod, Plugin, Datapack |
-| [CurseForge](https://www.curseforge.com/minecraft) | **必須** | ✅ | ✅(`murmur2`) | Mod, Plugin |
+| [CurseForge](https://www.curseforge.com/minecraft) | **必須** | ✅ | ✅(`murmur2`) | Mod, Plugin, Datapack |
 | [Hangar](https://hangar.papermc.io) | 不要 | ✅ | ✅(`sha256`) | Plugin |
 | [GitHub Releases](https://github.com) | 任意(推奨) | ❌(`owner/repo`を1件ずつ追跡) | ❌ | Mod, Plugin |
 
-Modrinthは常に有効です。他の3つはegg単位のオプトインです([Egg設定](#egg設定)を参照)。GitHub Releasesはトークンなしでも動作しますが、未認証時のレート制限(60リクエスト/時)は乏しいため、トークンが設定されるまでバックグラウンドのキャッシュウォーミングからは除外されます。
+Modrinthは常に有効です。CurseForgeはPlugin/Datapackページでは既定で有効です(Modページでは従来どおりオプトイン)。eggのfeaturesに`curseforge_disabled`を追加すると、そのeggだけで明示的に無効化できます。HangarとGitHub Releasesはegg単位のオプトインです([Egg設定](#egg設定)を参照)。GitHub Releasesはトークンなしでも動作しますが、未認証時のレート制限(60リクエスト/時)は乏しいため、トークンが設定されるまでバックグラウンドのキャッシュウォーミングからは除外されます。
 
 ## 要件
 
@@ -50,13 +50,13 @@ https://github.com/kazaminosuke/pelican-minecraft-modrinth/releases/latest/downl
 
 さらに`minecraft`**タグ**と、バージョン/ローダー別のフィルタリングを機能させるためのローダータグ(`paper`、`purpur`、`folia`、`spigot`、`bukkit`、`fabric`、`quilt`、`forge`、`neoforge`、`sponge`、`velocity`、`waterfall`、`bungeecord`のいずれか)を追加してください。
 
-追加のカタログソースを有効にするには、それぞれのfeatureフラグも追加します。
+オプトインのカタログソースを有効にするには、それぞれのfeatureフラグも追加します。
 
 ```json
 { "features": ["mod_manager", "curseforge", "hangar"], "tags": ["minecraft", "fabric"] }
 ```
 
-`curseforge`・`hangar`・`github_releases`は、それぞれ対応するタブを有効にします(上表の対応プロジェクト種別の範囲内)。このフラグがないeggでは、該当ソースのAPIキーを設定していてもそのタブ自体が表示されません。
+`hangar`・`github_releases`は、それぞれ対応するタブを有効にします(上表の対応プロジェクト種別の範囲内)。`curseforge`はModカタログをオプトインで有効にし、Plugin/DatapackカタログではCurseForgeが既定で有効です。これらの組み合わせでCurseForgeを明示的に隠すには`curseforge_disabled`を追加します。この無効化指定は`curseforge`より優先されます。
 
 **eggの自動認識**([内部の仕組み](#内部の仕組み)参照)により、公式のMinecraft eggの大半は上記を手動設定する必要がありません(明示的な`features`/`tags`が設定されていれば常にそちらが優先されます)。
 これに伴う変更点として、認識されたJava系egg(mod/plugin/hybrid/vanilla/modpack)ではdatapack管理が`datapack_manager` featureなしでも**既定で有効**になります。無効化するにはeggのfeatureに`datapack_manager_disabled`を追加するか、`MOD_MANAGER_EGG_AUTODETECT=false`を設定して自動認識導入前の挙動(`datapack_manager`の明示指定が必須)に完全に戻してください。

@@ -12,11 +12,11 @@ A [Pelican Panel](https://pelican.dev) plugin that lets you search, install, upd
 | Source | API key | Search | Hash matching | Project types |
 |---|---|---|---|---|
 | [Modrinth](https://modrinth.com) | Not required | ✅ | ✅ (`sha512`) | Mod, Plugin, Datapack |
-| [CurseForge](https://www.curseforge.com/minecraft) | **Required** | ✅ | ✅ (`murmur2`) | Mod, Plugin |
+| [CurseForge](https://www.curseforge.com/minecraft) | **Required** | ✅ | ✅ (`murmur2`) | Mod, Plugin, Datapack |
 | [Hangar](https://hangar.papermc.io) | Not required | ✅ | ✅ (`sha256`) | Plugin |
 | [GitHub Releases](https://github.com) | Optional, recommended | ❌ (tracks one `owner/repo` at a time) | ❌ | Mod, Plugin |
 
-Modrinth is always available. The other three are opt-in per egg - see [Egg configuration](#egg-configuration).
+Modrinth is always available. CurseForge is enabled by default on Plugin and Datapack pages (and remains opt-in for Mod pages); add `curseforge_disabled` to an egg's features to disable it for that egg. Hangar and GitHub Releases are opt-in per egg - see [Egg configuration](#egg-configuration).
 GitHub Releases works without a token, but its unauthenticated rate limit (60 requests/hour) is scarce enough that background cache warming skips it entirely until one is configured.
 
 ## Requirements
@@ -51,13 +51,13 @@ Add one of these **features** to the egg so the plugin knows what to manage:
 
 Also add the `minecraft` **tag**, plus a loader tag so version/loader-specific filtering works: `paper`, `purpur`, `folia`, `spigot`, `bukkit`, `fabric`, `quilt`, `forge`, `neoforge`, `sponge`, `velocity`, `waterfall`, or `bungeecord`.
 
-To enable the extra catalog sources, add their feature flag too:
+To enable the opt-in catalog sources, add their feature flag too:
 
 ```json
 { "features": ["mod_manager", "curseforge", "hangar"], "tags": ["minecraft", "fabric"] }
 ```
 
-`curseforge`, `hangar`, and `github_releases` each unlock their matching tab (subject to the project types they support - see the table above). Without one of these flags, that source's tab never appears for that egg, regardless of whether an API key is configured for it.
+`hangar` and `github_releases` each unlock their matching tab (subject to the project types they support - see the table above). `curseforge` continues to opt a Mod catalog in, while Plugin and Datapack catalogs enable CurseForge by default. Add `curseforge_disabled` to explicitly hide CurseForge for any of those egg/project-type combinations; this opt-out takes precedence over `curseforge`.
 
 **Automatic egg detection** (see [How it works](#how-it-works)) means most official Minecraft eggs don't need any of the above set manually - explicit `features`/`tags` still always win when present.
 One consequence: datapack management now **defaults to on** for any recognized Java server egg (mod/plugin/hybrid/vanilla/modpack), even without a `datapack_manager` feature. Add `datapack_manager_disabled` to an egg's features to opt back out, or set `MOD_MANAGER_EGG_AUTODETECT=false` to fully restore the pre-autodetect behaviour where `datapack_manager` must be explicit.

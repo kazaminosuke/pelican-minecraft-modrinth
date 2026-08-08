@@ -35,6 +35,14 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
     protected const CLASS_ID_PLUGIN = 5;
 
     /**
+     * CurseForge publishes Minecraft datapacks inside its Minecraft Mods
+     * class, under the Data Packs category. They are archive downloads rather
+     * than loader-specific jars, so searches and version lookups deliberately
+     * do not apply a mod-loader filter (see isCompatibleFileForType()).
+     */
+    protected const CATEGORY_ID_DATAPACK = 6945;
+
+    /**
      * The API documentation does not publish a maximum for POST /mods/files.
      * A live request with 105 entries (93 unique IDs) succeeds, but keep response sizes bounded.
      */
@@ -153,7 +161,7 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
             'sortOrder' => 'desc',
         ];
 
-        if ($classId === self::CLASS_ID_MOD) {
+        if ($type === ProjectType::Mod) {
             $modLoaderType = $this->modLoaderTypeFor($server);
             if ($modLoaderType === null) {
                 return null;
@@ -161,7 +169,9 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
             $params['modLoaderType'] = $modLoaderType;
         }
 
-        if (!empty($filters['category'])) {
+        if ($type === ProjectType::Datapack) {
+            $params['categoryId'] = self::CATEGORY_ID_DATAPACK;
+        } elseif (!empty($filters['category'])) {
             $params['categoryId'] = (int) $filters['category'];
         }
         if ($search) {
@@ -371,6 +381,7 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
             arguments: [
                 'project_id' => $projectId,
                 'params' => $params,
+                'project_type' => $type->value,
             ],
         ), CacheProfile::InstalledLatest);
 
@@ -416,6 +427,7 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
     protected function fetchWarmVersions(
         array $projectIds,
         array $params,
+        ProjectType $type,
         float $timeoutSeconds,
     ): array {
         $this->lastWarmVersionFailures = [];
@@ -449,7 +461,7 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
                 continue;
             }
 
-            $versions = $this->normalizeVersions($payload);
+            $versions = $this->normalizeVersions($payload, $type);
             if ($versions !== []) {
                 $versionsByProjectId[$projectId] = $versions;
             }
@@ -495,7 +507,7 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
                     throw new Exception("Invalid CurseForge versions response for project $projectId");
                 }
 
-                $versions = $this->normalizeVersions($payload);
+                $versions = $this->normalizeVersions($payload, $type);
             } catch (Exception $exception) {
                 report($exception);
                 $this->lastWarmVersionFailures[(string) $projectId] = $exception->getMessage();
@@ -541,6 +553,7 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
             arguments: [
                 'params' => $params,
                 'requests' => $serializedRequests,
+                'project_type' => $type->value,
             ],
         ), CacheProfile::InstalledLatest);
 
@@ -581,6 +594,7 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
             arguments: [
                 'params' => $params,
                 'requests' => $serializedRequests,
+                'project_type' => $type->value,
             ],
         );
         $peeked = $this->cache()->swrDeferred($spec, CacheProfile::InstalledLatest);
@@ -603,6 +617,7 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
     protected function fetchLatestVersions(
         array $requests,
         array $params,
+        ProjectType $type,
         float $timeoutSeconds,
     ): LatestVersionLookupResult {
         $debugTiming = (bool) config('pelican-minecraft-modrinth.debug_timing', false);
@@ -619,6 +634,7 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
         $versionsByProjectId = $this->fetchWarmVersions(
             array_map(fn (LatestVersionLookupRequest $request) => $request->projectId, $validRequests),
             $params,
+            $type,
             $timeoutSeconds,
         );
 
@@ -863,7 +879,11 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
             'pageSize' => 50,
         ];
 
-        if ($this->classIdFor($type) === self::CLASS_ID_MOD) {
+        if ($this->classIdFor($type) === null) {
+            return null;
+        }
+
+        if ($type === ProjectType::Mod) {
             $modLoaderType = $this->modLoaderTypeFor($server);
 
             if ($modLoaderType === null) {
@@ -880,10 +900,12 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
      * @param array<string, mixed> $response
      * @return array<int, mixed>
      */
-    protected function normalizeVersions(array $response): array
+    protected function normalizeVersions(array $response, ?ProjectType $type = null): array
     {
         $versions = collect($response['data'] ?? [])
-            ->filter(fn ($file) => is_array($file) && ($file['isAvailable'] ?? true))
+            ->filter(fn ($file) => is_array($file)
+                && ($file['isAvailable'] ?? true)
+                && $this->isCompatibleFileForType($file, $type))
             ->map(fn (array $file) => $this->normalizeVersion($file))
             ->values()
             ->all();
@@ -1038,10 +1060,11 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
                 '/mods/'.(string) ($spec->arguments['project_id'] ?? '').'/files',
                 (array) ($spec->arguments['params'] ?? []),
                 $timeoutSeconds,
-            )),
+            ), ProjectType::from((string) ($spec->arguments['project_type'] ?? 'mod'))),
             'latest' => $this->fetchLatestVersions(
                 $this->hydrateLatestRequests((array) ($spec->arguments['requests'] ?? [])),
                 (array) ($spec->arguments['params'] ?? []),
+                ProjectType::from((string) ($spec->arguments['project_type'] ?? 'mod')),
                 $timeoutSeconds,
             ),
             'hashes' => $this->fetchVersionsByHash(
@@ -1136,8 +1159,15 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
         return match ($type) {
             ProjectType::Mod => self::CLASS_ID_MOD,
             ProjectType::Plugin => self::CLASS_ID_PLUGIN,
-            ProjectType::Datapack => null,
+            ProjectType::Datapack => self::CLASS_ID_MOD,
         };
+    }
+
+    /** @param array<string, mixed> $file */
+    protected function isCompatibleFileForType(array $file, ?ProjectType $type): bool
+    {
+        return $type !== ProjectType::Datapack
+            || str_ends_with(strtolower((string) ($file['fileName'] ?? '')), '.zip');
     }
 
     /**

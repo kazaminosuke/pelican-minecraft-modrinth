@@ -2,6 +2,7 @@
 
 namespace Kazaminosuke\ModManager\Tests\Unit\Support;
 
+use App\Models\Egg;
 use App\Models\Server;
 use Illuminate\Cache\ArrayStore;
 use Illuminate\Cache\Repository as LaravelCacheRepository;
@@ -11,9 +12,11 @@ use Illuminate\Contracts\Bus\Dispatcher;
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
 use Illuminate\Contracts\Config\Repository as ConfigRepository;
 use Illuminate\Contracts\Translation\Translator;
+use Illuminate\Database\Capsule\Manager as Capsule;
 use Illuminate\Log\Context\Repository as ContextRepository;
 use Illuminate\Support\Facades\Facade;
 use Kazaminosuke\ModManager\Contracts\ProjectSourceInterface;
+use Kazaminosuke\ModManager\Enums\ProjectType;
 use Kazaminosuke\ModManager\Jobs\WarmProjectMetadata;
 use Kazaminosuke\ModManager\Services\InstalledOperationManager;
 use Kazaminosuke\ModManager\Sources\CurseForgeSource;
@@ -21,6 +24,8 @@ use Kazaminosuke\ModManager\Sources\GitHubReleasesSource;
 use Kazaminosuke\ModManager\Sources\HangarSource;
 use Kazaminosuke\ModManager\Sources\ModrinthSource;
 use Kazaminosuke\ModManager\Support\ProjectSourceRegistry;
+use Kazaminosuke\ModManager\Support\EggProfileRegistry;
+use Kazaminosuke\ModManager\Support\EggProfileResolver;
 use Mockery;
 use PHPUnit\Framework\TestCase;
 
@@ -29,6 +34,8 @@ class ProjectSourceRegistryTest extends TestCase
     private ?Container $previousContainer = null;
 
     private mixed $previousFacadeApplication = null;
+
+    private static ?Capsule $capsule = null;
 
     protected function setUp(): void
     {
@@ -43,14 +50,26 @@ class ProjectSourceRegistryTest extends TestCase
         $translator->shouldReceive('get')->andReturnUsing(fn (string $key) => $key);
         $container = new Container();
         $container->instance('translator', $translator);
+        $container->instance('config', new LaravelConfigRepository([
+            'pelican-minecraft-modrinth' => ['egg_autodetect_enabled' => true],
+        ]));
         Container::setInstance($container);
         Facade::setFacadeApplication($container);
+
+        if (self::$capsule === null) {
+            self::$capsule = new Capsule();
+            self::$capsule->addConnection(['driver' => 'sqlite', 'database' => ':memory:']);
+            self::$capsule->setAsGlobal();
+            self::$capsule->bootEloquent();
+        }
     }
 
     protected function tearDown(): void
     {
         Container::setInstance($this->previousContainer);
         Facade::setFacadeApplication($this->previousFacadeApplication);
+        EggProfileRegistry::clear();
+        EggProfileResolver::clear();
         Mockery::close();
 
         parent::tearDown();
@@ -179,8 +198,45 @@ class ProjectSourceRegistryTest extends TestCase
         self::assertSame('B', $rows[1]['title']);
     }
 
+    public function test_paper_profile_enables_curseforge_by_default_for_plugin_catalogs(): void
+    {
+        EggProfileRegistry::seed([[
+            'id' => 'paper',
+            'match' => ['uuid' => ['paper-uuid'], 'name_aliases' => ['paper'], 'variable_signatures' => []],
+            'status' => 'resolved',
+            'project_type' => 'plugin',
+            'loader' => 'paper',
+            'is_proxy' => false,
+            'minecraft_version_variables' => ['MINECRAFT_VERSION'],
+        ]]);
+        $server = $this->serverWithEgg('paper-uuid');
+        $modrinth = Mockery::mock(ModrinthSource::class);
+        $curseForge = Mockery::mock(CurseForgeSource::class);
+        $modrinth->shouldReceive('supportsProjectType')->once()->with(ProjectType::Plugin)->andReturnTrue();
+        $curseForge->shouldReceive('supportsProjectType')->once()->with(ProjectType::Plugin)->andReturnTrue();
+
+        self::assertSame(ProjectType::Plugin, ProjectType::fromServer($server));
+        self::assertSame(
+            [$curseForge, $modrinth],
+            $this->registryWith(modrinth: $modrinth, curseForge: $curseForge)->availableFor($server, ProjectType::Plugin),
+        );
+    }
+
+    public function test_curseforge_disabled_feature_overrides_the_plugin_default(): void
+    {
+        $server = $this->serverWithEgg(features: ['curseforge_disabled']);
+        $modrinth = Mockery::mock(ModrinthSource::class);
+        $modrinth->shouldReceive('supportsProjectType')->once()->with(ProjectType::Plugin)->andReturnTrue();
+
+        self::assertSame(
+            [$modrinth],
+            $this->registryWith(modrinth: $modrinth)->availableFor($server, ProjectType::Plugin),
+        );
+    }
+
     protected function registryWith(
         ?ProjectSourceInterface $modrinth = null,
+        ?CurseForgeSource $curseForge = null,
         bool $supportsAsyncDispatch = false,
     ): ProjectSourceRegistry {
         // InstalledOperationManager is final, so it can't be Mockery-mocked
@@ -198,7 +254,7 @@ class ProjectSourceRegistryTest extends TestCase
 
         return new ProjectSourceRegistry(
             $modrinth ?? Mockery::mock(ModrinthSource::class),
-            Mockery::mock(CurseForgeSource::class),
+            $curseForge ?? Mockery::mock(CurseForgeSource::class),
             Mockery::mock(HangarSource::class),
             Mockery::mock(GitHubReleasesSource::class),
             $operations,
@@ -236,6 +292,19 @@ class ProjectSourceRegistryTest extends TestCase
     {
         $server = new Server();
         $server->forceFill(['id' => 7]);
+
+        return $server;
+    }
+
+    private function serverWithEgg(?string $uuid = null, array $features = []): Server
+    {
+        $egg = new Egg();
+        $egg->forceFill(['id' => 70, 'uuid' => $uuid, 'name' => 'Paper', 'features' => $features, 'tags' => ['minecraft']]);
+        $egg->setRelation('variables', collect());
+
+        $server = new Server();
+        $server->forceFill(['id' => 70]);
+        $server->setRelation('egg', $egg);
 
         return $server;
     }
