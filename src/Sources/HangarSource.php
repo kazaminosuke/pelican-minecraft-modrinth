@@ -31,6 +31,9 @@ class HangarSource implements BatchLatestVersionSourceInterface, ProjectSourceIn
     /** Hangar's version-listing endpoint caps `limit` at 25. */
     protected const PAGE_SIZE = 25;
 
+    /** Must match ModManagerPage's catalog paginator page size. */
+    protected const CATALOG_PAGE_SIZE = 20;
+
     /**
      * Hangar's hash lookup only tells you which *project* matched, not which
      * version/file - this bounds how many recent-versions pages we scan (per
@@ -165,8 +168,12 @@ class HangarSource implements BatchLatestVersionSourceInterface, ProjectSourceIn
         $params = [
             'platform' => $platform,
             'version' => MinecraftVersionResolver::resolve($server),
-            'limit' => self::PAGE_SIZE,
-            'offset' => ($page - 1) * self::PAGE_SIZE,
+            // The table paginator renders 20 records per page. Hangar accepts
+            // that limit even though its version-listing endpoint permits up
+            // to 25; using PAGE_SIZE here made its offset skip five records
+            // per UI page and exposed empty pages before the displayed total.
+            'limit' => self::CATALOG_PAGE_SIZE,
+            'offset' => ($page - 1) * self::CATALOG_PAGE_SIZE,
             // Hangar's ProjectSortingStrategy enum (confirmed against its
             // official OpenAPI spec): each value already bakes in a fixed
             // direction (e.g. "downloads" is always most-downloaded-first),

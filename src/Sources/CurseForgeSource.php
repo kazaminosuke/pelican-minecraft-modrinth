@@ -35,12 +35,15 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
     protected const CLASS_ID_PLUGIN = 5;
 
     /**
-     * CurseForge publishes Minecraft datapacks inside its Minecraft Mods
-     * class, under the Data Packs category. They are archive downloads rather
-     * than loader-specific jars, so searches and version lookups deliberately
-     * do not apply a mod-loader filter (see isCompatibleFileForType()).
+     * CurseForge publishes Minecraft datapacks under its Texture Packs class
+     * (classId 12), in the Data Packs category. They are archive downloads
+     * rather than loader-specific jars, so searches and version lookups
+     * deliberately do not apply a mod-loader filter
+     * (see isCompatibleFileForType()).
      */
-    protected const CATEGORY_ID_DATAPACK = 6945;
+    protected const CLASS_ID_DATAPACK = 12;
+
+    protected const CATEGORY_ID_DATAPACK = 5193;
 
     /**
      * The API documentation does not publish a maximum for POST /mods/files.
@@ -1022,7 +1025,7 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
     {
         $deadline = microtime(true) + $timeoutSeconds;
 
-        foreach ([self::CLASS_ID_MOD, self::CLASS_ID_PLUGIN] as $classId) {
+        foreach ([self::CLASS_ID_MOD, self::CLASS_ID_PLUGIN, self::CLASS_ID_DATAPACK] as $classId) {
             $response = $this->getJson('/mods/search', [
                 'gameId' => self::GAME_ID,
                 'classId' => $classId,
@@ -1159,7 +1162,7 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
         return match ($type) {
             ProjectType::Mod => self::CLASS_ID_MOD,
             ProjectType::Plugin => self::CLASS_ID_PLUGIN,
-            ProjectType::Datapack => self::CLASS_ID_MOD,
+            ProjectType::Datapack => self::CLASS_ID_DATAPACK,
         };
     }
 

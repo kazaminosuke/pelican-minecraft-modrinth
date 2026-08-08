@@ -77,7 +77,8 @@ class CurseForgeSourceSearchCacheTest extends TestCase
             ->withArgs(function (SourceFetchSpec $spec): bool {
                 self::assertSame('search', $spec->operation);
                 self::assertSame(ProjectType::Datapack->value, $spec->arguments['project_type']);
-                self::assertSame(6945, $spec->arguments['params']['categoryId']);
+                self::assertSame(12, $spec->arguments['params']['classId']);
+                self::assertSame(5193, $spec->arguments['params']['categoryId']);
                 self::assertArrayNotHasKey('modLoaderType', $spec->arguments['params']);
 
                 return true;
