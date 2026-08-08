@@ -2,9 +2,7 @@
 
 *[日本語](README.ja.md)*
 
-A [Pelican Panel](https://pelican.dev) plugin that lets you search, install, update, and manage
-Minecraft mods, plugins, and datapacks from **Modrinth, CurseForge, Hangar, and GitHub Releases**
-directly in the server panel.
+A [Pelican Panel](https://pelican.dev) plugin that lets you search, install, update, and manage Minecraft mods, plugins, and datapacks from **Modrinth, CurseForge, Hangar, and GitHub Releases** directly in the server panel.
 
 ![Catalog tab](docs/images/catalog.png)
 ![Installed tab](docs/images/installed.png)
@@ -19,23 +17,19 @@ directly in the server panel.
 | [GitHub Releases](https://github.com) | Optional, recommended | ❌ (tracks one `owner/repo` at a time) | ❌ | Mod, Plugin |
 
 Modrinth is always available. The other three are opt-in per egg - see [Egg configuration](#egg-configuration).
-GitHub Releases works without a token, but its unauthenticated rate limit (60 requests/hour) is
-scarce enough that background cache warming skips it entirely until one is configured.
+GitHub Releases works without a token, but its unauthenticated rate limit (60 requests/hour) is scarce enough that background cache warming skips it entirely until one is configured.
 
 ## Requirements
 
 - Pelican Panel (`main`, Filament 5.6+)
 - PHP 8.3 - 8.5
-- **An asynchronous queue worker.** Installed-file scans, bulk updates, and cache warming all run
-  as queued jobs so Livewire requests stay responsive. Configure a real driver (for example
-  `QUEUE_CONNECTION=database`) and keep a worker running:
+- **An asynchronous queue worker.** Installed-file scans, bulk updates, and cache warming all run as queued jobs so Livewire requests stay responsive. Configure a real driver (for example `QUEUE_CONNECTION=database`) and keep a worker running:
 
   ```sh
   php artisan queue:work
   ```
 
-  The `sync` and `null` drivers are intentionally rejected for scans/bulk updates - the plugin shows
-  a queue-configuration warning instead of blocking the browser request on them.
+  The `sync` and `null` drivers are intentionally rejected for scans/bulk updates - the plugin shows a queue-configuration warning instead of blocking the browser request on them.
 
 ## Installation
 
@@ -45,9 +39,7 @@ scarce enough that background cache warming skips it entirely until one is confi
 https://github.com/kazaminosuke/pelican-minecraft-modrinth/releases/latest/download/pelican-minecraft-modrinth.zip
 ```
 
-**Option 2: Upload ZIP** - download the latest ZIP from the
-[Releases](https://github.com/kazaminosuke/pelican-minecraft-modrinth/releases) page and upload it
-in the plugin installer.
+**Option 2: Upload ZIP** - download the latest ZIP from the [Releases](https://github.com/kazaminosuke/pelican-minecraft-modrinth/releases) page and upload it in the plugin installer.
 
 ## Egg configuration
 
@@ -57,9 +49,7 @@ Add one of these **features** to the egg so the plugin knows what to manage:
 - `plugin_manager` - manages `plugins/`
 - `datapack_manager` - manages `world/datapacks/` (can be combined with either of the above)
 
-Also add the `minecraft` **tag**, plus a loader tag so version/loader-specific filtering works:
-`paper`, `purpur`, `folia`, `spigot`, `bukkit`, `fabric`, `quilt`, `forge`, `neoforge`, `sponge`,
-`velocity`, `waterfall`, or `bungeecord`.
+Also add the `minecraft` **tag**, plus a loader tag so version/loader-specific filtering works: `paper`, `purpur`, `folia`, `spigot`, `bukkit`, `fabric`, `quilt`, `forge`, `neoforge`, `sponge`, `velocity`, `waterfall`, or `bungeecord`.
 
 To enable the extra catalog sources, add their feature flag too:
 
@@ -67,17 +57,10 @@ To enable the extra catalog sources, add their feature flag too:
 { "features": ["mod_manager", "curseforge", "hangar"], "tags": ["minecraft", "fabric"] }
 ```
 
-`curseforge`, `hangar`, and `github_releases` each unlock their matching tab (subject to the project
-types they support - see the table above). Without one of these flags, that source's tab never
-appears for that egg, regardless of whether an API key is configured for it.
+`curseforge`, `hangar`, and `github_releases` each unlock their matching tab (subject to the project types they support - see the table above). Without one of these flags, that source's tab never appears for that egg, regardless of whether an API key is configured for it.
 
-**Automatic egg detection** (see [How it works](#how-it-works)) means most official Minecraft eggs
-don't need any of the above set manually - explicit `features`/`tags` still always win when present.
-One consequence: datapack management now **defaults to on** for any recognized Java server egg
-(mod/plugin/hybrid/vanilla/modpack), even without a `datapack_manager` feature. Add
-`datapack_manager_disabled` to an egg's features to opt back out, or set
-`MOD_MANAGER_EGG_AUTODETECT=false` to fully restore the pre-autodetect behaviour where
-`datapack_manager` must be explicit.
+**Automatic egg detection** (see [How it works](#how-it-works)) means most official Minecraft eggs don't need any of the above set manually - explicit `features`/`tags` still always win when present.
+One consequence: datapack management now **defaults to on** for any recognized Java server egg (mod/plugin/hybrid/vanilla/modpack), even without a `datapack_manager` feature. Add `datapack_manager_disabled` to an egg's features to opt back out, or set `MOD_MANAGER_EGG_AUTODETECT=false` to fully restore the pre-autodetect behaviour where `datapack_manager` must be explicit.
 
 ## Settings
 

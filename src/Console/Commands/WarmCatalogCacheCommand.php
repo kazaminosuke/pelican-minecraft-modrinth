@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\DB;
 use Kazaminosuke\ModManager\Enums\ProjectType;
 use Kazaminosuke\ModManager\Jobs\WarmCatalogSearch;
 use Kazaminosuke\ModManager\Services\InstalledOperationManager;
+use Kazaminosuke\ModManager\Support\EggProfileResolver;
 use Kazaminosuke\ModManager\Support\ProjectSourceRegistry;
 
 /**
@@ -106,11 +107,11 @@ final class WarmCatalogCacheCommand extends Command
     }
 
     /**
-     * loader and project type are pure functions of a server's egg (see
-     * ProjectType::fromServer() / MinecraftLoader::fromServer(), which
-     * only ever inspect $server->egg->features/tags) - so grouping only
-     * needs to happen in PHP; there is nothing per-server to look up for
-     * those two. Minecraft version is the one genuinely per-server value.
+     * Loader and project type are resolved from the server's egg (including
+     * Stage 8's UUID/name/signature profile fallback), while Minecraft
+     * version is genuinely per-server. Eager-load the complete egg shape
+     * plus its variable names: selecting only features/tags would make an
+     * auto-detected official egg look unresolved to EggProfileResolver.
      *
      * It's read here via a direct query against server_variables joined to
      * egg_variables, rather than through Server::variables() (as
@@ -120,28 +121,40 @@ final class WarmCatalogCacheCommand extends Command
      * servers at once - Server::with('variables') would silently scope
      * every row to one server's id instead of each row's own.
      *
-     * Two total queries (servers+egg via one eager-loaded query, then one
-     * direct join for the Minecraft version variable) rather than one
-     * query per server.
+     * Three total queries (servers+eggs, egg variable names, then direct
+     * server-variable values) rather than one query per server.
      *
      * @return array<int, array{loader: string, mc_version: string, project_type: string, server_id: int, server_count: int}>
      */
     protected function discoverCombos(): array
     {
         $servers = Server::query()
-            ->with('egg:id,features,tags')
+            ->with([
+                'egg:id,uuid,name,update_url,features,tags',
+                'egg.variables:id,egg_id,env_variable',
+            ])
             ->get(['id', 'egg_id']);
 
         if ($servers->isEmpty()) {
             return [];
         }
 
-        /** @var Collection<int, string> $mcVersionsByServerId */
-        $mcVersionsByServerId = DB::table('server_variables')
+        /** @var Collection<int, object{server_id: int, env_variable: string, variable_value: string|null}> $serverVariableRows */
+        $serverVariableRows = DB::table('server_variables')
             ->join('egg_variables', 'egg_variables.id', '=', 'server_variables.variable_id')
-            ->whereIn('egg_variables.env_variable', ['MINECRAFT_VERSION', 'MC_VERSION'])
+            ->whereIn('egg_variables.env_variable', ['MINECRAFT_VERSION', 'MC_VERSION', 'DL_VERSION', 'VANILLA_VERSION'])
             ->whereIn('server_variables.server_id', $servers->pluck('id'))
-            ->pluck('server_variables.variable_value', 'server_variables.server_id');
+            ->get([
+                'server_variables.server_id',
+                'egg_variables.env_variable',
+                'server_variables.variable_value',
+            ]);
+
+        /** @var array<int, array<string, string|null>> $mcVersionsByServerId */
+        $mcVersionsByServerId = [];
+        foreach ($serverVariableRows as $row) {
+            $mcVersionsByServerId[(int) $row->server_id][$row->env_variable] = $row->variable_value;
+        }
 
         $defaultMcVersion = config('pelican-minecraft-modrinth.latest_minecraft_version');
         $combos = [];
@@ -159,7 +172,24 @@ final class WarmCatalogCacheCommand extends Command
                 continue;
             }
 
-            $mcVersion = $mcVersionsByServerId->get($server->id);
+            $profile = EggProfileResolver::resolve($server);
+            $mcVersion = $profile->minecraftVersionOverride;
+
+            if (!is_string($mcVersion) || $mcVersion === '') {
+                $versionNames = array_values(array_unique(array_merge(
+                    $profile->minecraftVersionVariables,
+                    ['MINECRAFT_VERSION', 'MC_VERSION'],
+                )));
+
+                foreach ($versionNames as $name) {
+                    $candidate = $mcVersionsByServerId[$server->id][$name] ?? null;
+                    if (is_string($candidate) && $candidate !== '' && $candidate !== 'latest') {
+                        $mcVersion = $candidate;
+
+                        break;
+                    }
+                }
+            }
 
             if (!is_string($mcVersion) || $mcVersion === '' || $mcVersion === 'latest') {
                 $mcVersion = $defaultMcVersion;
