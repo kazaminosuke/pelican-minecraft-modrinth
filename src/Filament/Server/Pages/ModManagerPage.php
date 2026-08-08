@@ -278,8 +278,12 @@ class ModManagerPage extends Page implements HasTable
             session()->get($this->getCatalogSortSessionKey(), 'downloads'),
         );
 
-        $this->loadDefaultActiveTab();
         $this->refreshInstalledScanDataReady();
+        // HasTabs resolves and then caches getTabs() while choosing the default
+        // tab. Read the persisted scan result first, otherwise that first
+        // cached definition permanently misses the Installed count badge for
+        // the whole component request (including after a browser reload).
+        $this->loadDefaultActiveTab();
         $this->refreshInstalledOperationState();
 
         $this->dispatchCatalogWarm();
@@ -373,9 +377,26 @@ class ModManagerPage extends Page implements HasTable
         }
 
         $scanCacheKey = ModManager::getHashScanCacheKey($server, $type);
-        $scanResult = InstalledScanResult::fromCache(Cache::get($scanCacheKey));
+        $this->setInstalledScanResult(InstalledScanResult::fromCache(Cache::get($scanCacheKey)));
+    }
+
+    /**
+     * Keep the tab definition coherent with the durable scan cache. Filament's
+     * HasTabs trait memoizes getTabs() in $cachedTabs, so merely changing the
+     * public count property cannot update an already-rendered Installed badge.
+     */
+    protected function setInstalledScanResult(?InstalledScanResult $scanResult): void
+    {
+        $installedFilesCount = $scanResult?->diskFileCount;
+        $changed = $this->installedFilesCount !== $installedFilesCount
+            || $this->installedScanDataReady !== ($scanResult !== null);
+
         $this->installedScanDataReady = $scanResult !== null;
-        $this->installedFilesCount = $scanResult?->diskFileCount;
+        $this->installedFilesCount = $installedFilesCount;
+
+        if ($changed) {
+            unset($this->cachedTabs);
+        }
     }
 
     /** @return array<string, string> */
@@ -466,7 +487,7 @@ class ModManagerPage extends Page implements HasTable
             : InstalledScanResult::fromCache(
                 Cache::get(ModManager::getHashScanCacheKey($server, $type)),
             );
-        $this->installedFilesCount = $scanResult?->diskFileCount;
+        $this->setInstalledScanResult($scanResult);
 
         if ($this->isModManagerTimingEnabled()) {
             Log::info('Mod manager timing', [
@@ -1116,7 +1137,7 @@ class ModManagerPage extends Page implements HasTable
         }
 
         Cache::forget(ModManager::getHashScanCacheKey($server, $type));
-        $this->installedFilesCount = null;
+        $this->setInstalledScanResult(null);
         $this->unknownFiles = array_values(
             array_filter($this->unknownFiles, fn (string $filename) => strtolower($filename) !== strtolower($safeNewFilename))
         );
@@ -1222,8 +1243,7 @@ class ModManagerPage extends Page implements HasTable
                     $installedMods = $this->getInstalledModsMetadata();
                     $unknownFiles = $scanResult === null ? [] : $scanResult->unknownFiles;
                     $this->unknownFiles = $unknownFiles;
-                    $this->installedScanDataReady = $scanResult !== null;
-                    $this->installedFilesCount = $scanResult?->diskFileCount;
+                    $this->setInstalledScanResult($scanResult);
 
                     $operations = app(InstalledOperationManager::class);
                     $scanState = $operations->state(
@@ -1890,7 +1910,7 @@ class ModManagerPage extends Page implements HasTable
                                 ->throw();
 
                             Cache::forget(ModManager::getHashScanCacheKey($server, $type));
-                            $this->installedFilesCount = null;
+                            $this->setInstalledScanResult(null);
                             $this->unknownFiles = array_values(
                                 array_filter($this->unknownFiles, fn (string $filename) => strtolower($filename) !== strtolower($safeFilename))
                             );
