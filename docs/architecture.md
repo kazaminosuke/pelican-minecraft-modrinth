@@ -27,14 +27,15 @@ signature has changed (or is absent). A case-insensitive filename collision on d
 that would map to the same tracked entry) deliberately discards any reusable signature and forces
 a fresh hash, since the persisted index cannot safely disambiguate them.
 
-## Background jobs & status badges
+## Background jobs, notifications & status badges
 
 Scans and bulk updates run as queued jobs (`InstalledOperationManager`, statuses `queued` →
 `running` → `completed`/`failed`) so a slow Wings directory listing or a batch of upstream update
-checks never blocks a Livewire request. The Installed tab polls for the active operation's state
-and reflects it as a badge; `supportsAsyncDispatch()` is checked before dispatching anything, and
-every entry point that would otherwise dispatch synchronously on the `sync`/`null` queue drivers
-shows a warning instead.
+checks never blocks a Livewire request. Any applicable Mod/Plugin/Datapack manager page dispatches
+a missing installed-file scan, and active operations are polled every two seconds. Scan lifecycle is
+reported through Filament notifications, while bulk-update progress remains inline. `supportsAsyncDispatch()`
+is checked before dispatching anything; the `sync`/`null` queue drivers are rejected with a warning
+instead of running a Wings scan in a Livewire request.
 
 ## Stale-while-revalidate cache layer
 
@@ -75,7 +76,7 @@ requests during an outage doesn't retry the same failing call repeatedly.
 Two independent warming paths keep the cache populated ahead of a real visit:
 
 - **`Jobs\WarmCatalogSearch`**, dispatched per-visit from `ModManagerPage::mount()` for every
-  available source's first page (plus the active source's second page), and in bulk by the
+  searchable catalog source's first page (plus the active source's second page), and in bulk by the
   scheduled **`mod-manager:warm-catalog`** command (`Console\Commands\WarmCatalogCacheCommand`,
   registered on Laravel's scheduler every 10 minutes - matching `CacheProfile::Search`'s fresh
   TTL). The command discovers every `(loader, Minecraft version, project type)` combination
@@ -100,10 +101,10 @@ Filament's table `deferLoading()` accepts a closure. `ModManagerPage::hasWarmRec
 (no fetch, no dispatch) whether the current view's data is already cached, and the table only defers
 when it isn't - a cached view renders synchronously instead of paying for the extra
 `wire:init="loadTable"` round trip every deferred table costs. The Installed tab is deliberately
-excluded: an Installed-tab render can still trigger a synchronous Wings scan when no scan result is
-cached yet and no queue is configured, and the metadata cache `hasWarmRecordsCache()` can see is not
-the same, shorter-lived cache that guards that call - so a "warm" verdict there would not reliably
-guarantee a fast response.
+excluded: a render can discover a missing installed-scan cache and must update operation state or
+show a queue-configuration warning, while the metadata cache `hasWarmRecordsCache()` can see is not
+the same, shorter-lived cache that guards that work. A "warm" verdict would therefore not reliably
+describe that render's behavior; the manager rejects sync/null queues, so this remains non-blocking.
 
 ## Client-side SWR table preview
 

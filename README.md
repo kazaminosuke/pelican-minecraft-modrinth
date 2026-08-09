@@ -17,7 +17,7 @@ A [Pelican Panel](https://pelican.dev) plugin that lets you search, install, upd
 | [GitHub Releases](https://github.com) | Optional, recommended | ❌ (tracks one `owner/repo` at a time) | ❌ | Mod, Plugin |
 
 Modrinth is always available. CurseForge is enabled by default on Plugin and Datapack pages (and remains opt-in for Mod pages); add `curseforge_disabled` to an egg's features to disable it for that egg. Hangar and GitHub Releases are opt-in per egg - see [Egg configuration](#egg-configuration).
-GitHub Releases works without a token, but its unauthenticated rate limit (60 requests/hour) is scarce enough that background cache warming skips it entirely until one is configured.
+GitHub Releases works without a token, but its unauthenticated rate limit (60 requests/hour) is scarce enough that configuring one is recommended for direct repository tracking. GitHub Releases has no catalog cache-warming path.
 
 ## Requirements
 
@@ -57,7 +57,7 @@ To enable the opt-in catalog sources, add their feature flag too:
 { "features": ["mod_manager", "curseforge", "hangar"], "tags": ["minecraft", "fabric"] }
 ```
 
-`hangar` and `github_releases` each unlock their matching tab (subject to the project types they support - see the table above). `curseforge` continues to opt a Mod catalog in, while Plugin and Datapack catalogs enable CurseForge by default. Add `curseforge_disabled` to explicitly hide CurseForge for any of those egg/project-type combinations; this opt-out takes precedence over `curseforge`.
+`hangar` unlocks its matching catalog tab. `github_releases` enables the **Track GitHub Repository** action instead: GitHub Releases has no browseable catalog, so enter an `owner/repo` there to track its latest release. `curseforge` continues to opt a Mod catalog in, while Plugin and Datapack catalogs enable CurseForge by default. Add `curseforge_disabled` to explicitly hide CurseForge for any of those egg/project-type combinations; this opt-out takes precedence over `curseforge`.
 
 **Automatic egg detection** (see [How it works](#how-it-works)) means most official Minecraft eggs don't need any of the above set manually - explicit `features`/`tags` still always win when present.
 One consequence: datapack management now **defaults to on** for any recognized Java server egg (mod/plugin/hybrid/vanilla/modpack), even without a `datapack_manager` feature. Add `datapack_manager_disabled` to an egg's features to opt back out, or set `MOD_MANAGER_EGG_AUTODETECT=false` to fully restore the pre-autodetect behaviour where `datapack_manager` must be explicit.
@@ -88,9 +88,9 @@ version, and datapack support on eggs that automatic detection couldn't resolve.
 
 The same screen has a **Clear cache** action, which behaves differently by scope:
 
-- **All servers** - clears every server's tracked-mods metadata and the shared caches, but does
-  **not** force an immediate re-scan; each server re-scans lazily the next time its Installed tab
-  is opened.
+- **All servers** - clears every server's tracked-file metadata and the shared caches, but does
+  **not** force an immediate re-scan; each server re-scans lazily the next time an applicable
+  Mod/Plugin/Datapack manager page is opened (on either a catalog or Installed tab).
 - **A single server** - clears that server's metadata and immediately queues a forced re-scan
   (needs a working queue - see [Requirements](#requirements)).
 
@@ -100,7 +100,9 @@ The same screen has a **Clear cache** action, which behaves differently by scope
   older `.modrinth-metadata.json`) tracks which installed file maps to which upstream project.
 - **Incremental hash scanning** re-hashes a file only when its size/modified-time signature has
   changed, instead of every file on every scan.
-- **Background jobs with status badges** handle scans and bulk updates without blocking the UI.
+- **Background jobs, notifications, and status badges** handle scans and bulk updates without
+  blocking the UI: scans report their lifecycle through notifications, while bulk-update progress
+  remains inline.
 - **A stale-while-revalidate cache** sits in front of every upstream API call, with a freshness
   policy per data type, plus **scheduled warm jobs** that pre-populate it for the loader/Minecraft
   version/project-type combinations actually in use, throttled separately from user traffic.

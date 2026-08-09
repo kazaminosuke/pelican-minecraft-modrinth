@@ -497,7 +497,8 @@ class ModManagerPlugin implements HasPluginSettings, Plugin
      * synchronously from this one request - doing that for every server,
      * each potentially hundreds of mods, in a single web request risks a
      * real timeout. Re-scanning instead happens lazily, the normal way, the
-     * next time each server's Installed tab is loaded.
+     * next time an applicable Mod/Plugin/Datapack manager page is opened
+     * (on either a catalog or Installed tab).
      */
     private static function clearAllServers(InstalledProjectService $service, DaemonFileRepository $fileRepository): void
     {

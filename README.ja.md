@@ -16,7 +16,7 @@
 | [Hangar](https://hangar.papermc.io) | 不要 | ✅ | ✅(`sha256`) | Plugin |
 | [GitHub Releases](https://github.com) | 任意(推奨) | ❌(`owner/repo`を1件ずつ追跡) | ❌ | Mod, Plugin |
 
-Modrinthは常に有効です。CurseForgeはPlugin/Datapackページでは既定で有効です(Modページでは従来どおりオプトイン)。eggのfeaturesに`curseforge_disabled`を追加すると、そのeggだけで明示的に無効化できます。HangarとGitHub Releasesはegg単位のオプトインです([Egg設定](#egg設定)を参照)。GitHub Releasesはトークンなしでも動作しますが、未認証時のレート制限(60リクエスト/時)は乏しいため、トークンが設定されるまでバックグラウンドのキャッシュウォーミングからは除外されます。
+Modrinthは常に有効です。CurseForgeはPlugin/Datapackページでは既定で有効です(Modページでは従来どおりオプトイン)。eggのfeaturesに`curseforge_disabled`を追加すると、そのeggだけで明示的に無効化できます。HangarとGitHub Releasesはegg単位のオプトインです([Egg設定](#egg設定)を参照)。GitHub Releasesはトークンなしでも動作しますが、未認証時のレート制限(60リクエスト/時)は乏しいため、直接リポジトリを追跡する場合はトークンの設定を推奨します。GitHub Releasesにはカタログのキャッシュウォーミング経路はありません。
 
 ## 要件
 
@@ -56,7 +56,7 @@ https://github.com/kazaminosuke/pelican-minecraft-modrinth/releases/latest/downl
 { "features": ["mod_manager", "curseforge", "hangar"], "tags": ["minecraft", "fabric"] }
 ```
 
-`hangar`・`github_releases`は、それぞれ対応するタブを有効にします(上表の対応プロジェクト種別の範囲内)。`curseforge`はModカタログをオプトインで有効にし、Plugin/DatapackカタログではCurseForgeが既定で有効です。これらの組み合わせでCurseForgeを明示的に隠すには`curseforge_disabled`を追加します。この無効化指定は`curseforge`より優先されます。
+`hangar`は対応するカタログタブを有効にします。`github_releases`は代わりに**GitHubリポジトリを追跡**アクションを有効にします。GitHub Releasesには一覧検索できるカタログがないため、ここで`owner/repo`を入力して最新リリースを追跡してください。`curseforge`はModカタログをオプトインで有効にし、Plugin/DatapackカタログではCurseForgeが既定で有効です。これらの組み合わせでCurseForgeを明示的に隠すには`curseforge_disabled`を追加します。この無効化指定は`curseforge`より優先されます。
 
 **eggの自動認識**([内部の仕組み](#内部の仕組み)参照)により、公式のMinecraft eggの大半は上記を手動設定する必要がありません(明示的な`features`/`tags`が設定されていれば常にそちらが優先されます)。
 これに伴う変更点として、認識されたJava系egg(mod/plugin/hybrid/vanilla/modpack)ではdatapack管理が`datapack_manager` featureなしでも**既定で有効**になります。無効化するにはeggのfeatureに`datapack_manager_disabled`を追加するか、`MOD_MANAGER_EGG_AUTODETECT=false`を設定して自動認識導入前の挙動(`datapack_manager`の明示指定が必須)に完全に戻してください。
@@ -81,8 +81,8 @@ datapack対応を手動設定する**Egg profiles**アクションもありま�
 
 同じ画面には**キャッシュをクリア**アクションもあり、対象範囲によって挙動が異なります。
 
-- **全サーバー** - 全サーバーの追跡済みMetadataと共有キャッシュをクリアしますが、即座には
-  再スキャンしません。各サーバーは次回Installedタブを開いたときに自動的に再スキャンされます。
+- **全サーバー** - 全サーバーの追跡済みファイルMetadataと共有キャッシュをクリアしますが、即座には
+  再スキャンしません。各サーバーは次回、該当するMod/Plugin/Datapack管理ページ(カタログまたはInstalledタブ)を開いたときに自動的に再スキャンされます。
 - **単一サーバー** - そのサーバーのMetadataをクリアし、即座に強制再スキャンをキューに投入します
   (稼働中のキューが必要です。[要件](#要件)を参照)。
 
@@ -93,8 +93,8 @@ datapack対応を手動設定する**Egg profiles**アクションもありま�
   プロジェクトの対応関係を追跡します。
 - **インクリメンタルなハッシュスキャン**により、サイズ/更新日時のシグネチャに変化があった
   ファイルのみを再ハッシュ化します(毎回全ファイルを再ハッシュ化しません)。
-- **バックグラウンドジョブとステータスバッジ**により、スキャンと一括更新がUIをブロックせずに
-  実行されます。
+- **バックグラウンドジョブ・通知・ステータスバッジ**により、スキャンと一括更新がUIをブロックせずに
+  実行されます。スキャンの進行・完了は通知で表示し、一括更新の進行状況はページ内に表示します。
 - すべてのアップストリームAPI呼び出しの前段に**stale-while-revalidateキャッシュ**があり、
   データ種別ごとの鮮度ポリシーに加え、実際に使われている(ローダー / Minecraftバージョン /
   プロジェクト種別)の組み合わせを事前にキャッシュへ埋める**スケジュール実行のウォームジョブ**

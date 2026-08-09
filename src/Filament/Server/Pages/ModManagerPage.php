@@ -72,6 +72,9 @@ class ModManagerPage extends Page implements HasTable
      */
     private const SWR_EMPTY_ICON_DATA_URI = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
 
+    /** Keep every catalog source and the table paginator on the same page size. */
+    private const TABLE_PAGE_SIZE = 20;
+
     /** @var array<int, array{source: string, project_id: string, project_slug: string, project_title: string, version_id: string, version_number: string, filename: string, installed_at: string, author?: string}>|null */
     protected ?array $installedModsMetadata = null;
 
@@ -325,8 +328,8 @@ class ModManagerPage extends Page implements HasTable
 
         $activeSourceKey = $this->getCurrentSource()?->getKey()->value;
 
-        foreach ($this->getAvailableSources() as $source) {
-            if (!$source->isConfigured() || !$source->supportsSearch()) {
+        foreach ($this->getCatalogSources() as $source) {
+            if (!$source->isConfigured()) {
                 continue;
             }
 
@@ -496,6 +499,11 @@ class ModManagerPage extends Page implements HasTable
         // being silently dropped by this method overriding it without calling it.
         $this->baseUpdatedActiveTab();
         $this->refreshInstalledScanDataReady();
+        // A long-lived component can outlive the ten-minute scan cache. A
+        // catalog-tab switch is still a manager-page visit, so restore the
+        // same cache-miss behavior as mount() instead of leaving the badge at
+        // an ellipsis until the user opens Installed manually.
+        $this->dispatchInstalledScanIfMissing();
         $this->refreshInstalledOperationState();
 
         // Category IDs and the Modrinth-only environment filter are scoped to
@@ -620,8 +628,9 @@ class ModManagerPage extends Page implements HasTable
 
     /**
      * Sources enabled for this egg (via feature flags) that support the
-     * current page's project type. An egg with no source feature flags set
-     * (every egg before this feature existed) resolves to Modrinth only.
+     * current page's project type. An egg with no opt-in source feature flags
+     * keeps Modrinth as its baseline; Plugin and Datapack pages may also have
+     * their default CurseForge source unless the egg opts out.
      *
      * @return array<int, ProjectSourceInterface>
      */
@@ -641,14 +650,28 @@ class ModManagerPage extends Page implements HasTable
     }
 
     /**
-     * The source backing the currently active tab. When only one source is
-     * available (the common, backward-compatible case), it's used regardless
-     * of the tab key, since the tab is the generic "all" tab rather than a
-     * per-source one.
+     * Sources that can power a browsable catalog tab. Sources such as GitHub
+     * Releases remain available for installed-file provenance and their
+     * direct-tracking action, but must not produce an always-empty tab.
+     *
+     * @return array<int, ProjectSourceInterface>
+     */
+    protected function getCatalogSources(): array
+    {
+        return array_values(array_filter(
+            $this->getAvailableSources(),
+            static fn (ProjectSourceInterface $source): bool => $source->supportsSearch(),
+        ));
+    }
+
+    /**
+     * The source backing the currently active tab. When only one catalog
+     * source is available, it is used regardless of the tab key, since the
+     * tab is the generic "all" tab rather than a per-source one.
      */
     protected function getCurrentSource(): ?ProjectSourceInterface
     {
-        $sources = $this->getAvailableSources();
+        $sources = $this->getCatalogSources();
 
         if (count($sources) <= 1) {
             return $sources[0] ?? null;
@@ -661,6 +684,26 @@ class ModManagerPage extends Page implements HasTable
         }
 
         return null;
+    }
+
+    /**
+     * Modrinth is always the usable baseline catalog. Keep CurseForge enabled
+     * and visible for Plugin/Datapack pages, but open that baseline catalog
+     * first so a new visitor is not blocked by optional API configuration.
+     */
+    public function getDefaultActiveTab(): string|int|null
+    {
+        $sources = $this->getCatalogSources();
+
+        if (count($sources) > 1) {
+            foreach ($sources as $source) {
+                if ($source->getKey() === ProjectSourceKey::Modrinth) {
+                    return ProjectSourceKey::Modrinth->value;
+                }
+            }
+        }
+
+        return array_key_first($this->getCachedTabs());
     }
 
     protected function getSourceLabel(?string $sourceKey): string
@@ -676,17 +719,17 @@ class ModManagerPage extends Page implements HasTable
     }
 
     /**
-     * One tab per available source (when more than one is enabled for this
+     * One tab per searchable source (when more than one is enabled for this
      * egg), each showing a "needs configuration" badge if isConfigured() is
      * false, plus the "Installed" tab with the cached scan's file count. When
-     * only Modrinth is available, this collapses back to the original "All" /
-     * "Installed" tabs unchanged.
+     * only one catalog source is available, this collapses back to the
+     * original "All" / "Installed" tabs unchanged.
      *
      * @return array<string, Tab>
      */
     public function getTabs(): array
     {
-        $sources = $this->getAvailableSources();
+        $sources = $this->getCatalogSources();
         $tabs = [];
 
         if (count($sources) <= 1) {
@@ -713,6 +756,34 @@ class ModManagerPage extends Page implements HasTable
         $tabs['installed'] = $installedTab;
 
         return $tabs;
+    }
+
+    /**
+     * Clamp stale/direct paginator state to a real page. LengthAwarePaginator
+     * accepts a current page beyond its last page, which otherwise produces
+     * an empty table with a misleading "0 to 0" summary.
+     */
+    protected function clampTablePage(int $page, int $total): int
+    {
+        $lastPage = max(1, (int) ceil($total / self::TABLE_PAGE_SIZE));
+
+        return min(max(1, $page), $lastPage);
+    }
+
+    protected function synchronizeTablePage(int $page, int $total): int
+    {
+        $clampedPage = $this->clampTablePage($page, $total);
+
+        if ($clampedPage !== $page) {
+            // This runs from the records() callback itself. setPage() would
+            // invoke updatedPaginators(), which deliberately returns this
+            // table to deferred loading and discards the valid page we can
+            // already render in this same response. Keep Livewire's public
+            // paginator state in sync directly instead.
+            $this->paginators[$this->getTablePaginationPageName()] = $clampedPage;
+        }
+
+        return $clampedPage;
     }
 
     /** @return array<int, array{source: string, project_id: string, project_slug: string, project_title: string, version_id: string, version_number: string, filename: string, installed_at: string}> */
@@ -1226,20 +1297,14 @@ class ModManagerPage extends Page implements HasTable
      * costs.
      *
      * Deliberately always false for the Installed tab: unlike the catalog
-     * tab, records()'s installed branch can call InstalledOperationManager
-     * ::dispatchScan() when no scan result/state is cached yet, which runs
-     * the Wings hash scan synchronously whenever no async queue is
-     * configured. hasWarmRecordsCache() can only see the (longer-lived)
-     * metadata display cache, not that separate, shorter-lived scan-result
-     * cache - so a "warm" verdict here would not actually guarantee the
-     * fast path for that call, and could turn what is currently an
-     * always-deferred, always-hidden-behind-a-shell block into one that
-     * blocks the very first response instead. Keeping the Installed tab
-     * unconditionally deferred avoids that regression entirely; every
-     * render on that tab is already non-blocking within the deferred
-     * round trip itself (see peekVisibleLatestVersions()/peekInstalled()
-     * and pollEnrichment()), so there is no separate win being left on the
-     * table by excluding it here.
+     * tab, records()'s installed branch can still discover a missing scan
+     * cache and dispatch a job (or show the queue-configuration warning).
+     * hasWarmRecordsCache() can only see the longer-lived metadata display
+     * cache, not that separate scan-result cache. Keeping the Installed tab
+     * unconditionally deferred gives that state transition its own request;
+     * the manager rejects sync/null queues, and the render itself remains
+     * non-blocking through peekVisibleLatestVersions()/peekInstalled() and
+     * pollEnrichment().
      */
     protected function hasWarmRecordsCache(): bool
     {
@@ -1287,7 +1352,7 @@ class ModManagerPage extends Page implements HasTable
                 $type = static::detectProjectType($server);
 
                 if ($this->activeTab === 'installed') {
-                    $perPage = 20;
+                    $perPage = self::TABLE_PAGE_SIZE;
                     $scanCacheKey = ModManager::getHashScanCacheKey($server, $type);
                     $scanResult = InstalledScanResult::fromCache(Cache::get($scanCacheKey));
                     $installedMods = $this->getInstalledModsMetadata();
@@ -1305,6 +1370,10 @@ class ModManagerPage extends Page implements HasTable
                     if ($scanResult === null && $scanState === null) {
                         $dispatch = $operations->dispatchScan($server, $type);
                         $scanState = $dispatch['state'];
+
+                        if ($dispatch['dispatched'] && $scanState !== null) {
+                            $this->notifyInstalledScanStarted($scanState);
+                        }
 
                         if ($dispatch['reason'] === 'sync_queue' && !$this->operationQueueWarningShown) {
                             $this->operationQueueWarningShown = true;
@@ -1349,6 +1418,7 @@ class ModManagerPage extends Page implements HasTable
                         ? array_merge(...array_values($installedBySource))
                         : [];
                     $totalCount = count($orderedInstalledMods) + count($unknownFiles);
+                    $page = $this->synchronizeTablePage($page, $totalCount);
                     $offset = ($page - 1) * $perPage;
                     $pagedInstalledMods = array_slice($orderedInstalledMods, $offset, $perPage);
 
@@ -1403,7 +1473,7 @@ class ModManagerPage extends Page implements HasTable
                 $catalogStartedAt = $this->isModManagerTimingEnabled() ? microtime(true) : 0.0;
 
                 if (!$type || !$currentSource || !$currentSource->isConfigured() || !$currentSource->supportsSearch()) {
-                    return new LengthAwarePaginator([], 0, 20, $page);
+                    return new LengthAwarePaginator([], 0, self::TABLE_PAGE_SIZE, $this->synchronizeTablePage($page, 0));
                 }
 
                 $filterState = $this->tableFilters ?? [];
@@ -1411,7 +1481,24 @@ class ModManagerPage extends Page implements HasTable
                 $environment = $filterState['catalog_environment']['value'] ?? null;
                 $sortOption = $this->catalogSort;
 
-                $response = $currentSource->search($server, $type, $page, $search, ['sort' => $sortOption, 'category' => $category, 'environment' => $currentSource->getKey() === ProjectSourceKey::Modrinth ? $environment : null]);
+                $searchCatalog = fn (int $catalogPage): array => $currentSource->search(
+                    $server,
+                    $type,
+                    $catalogPage,
+                    $search,
+                    [
+                        'sort' => $sortOption,
+                        'category' => $category,
+                        'environment' => $currentSource->getKey() === ProjectSourceKey::Modrinth ? $environment : null,
+                    ],
+                );
+                $requestedPage = $page;
+                $response = $searchCatalog($page);
+                $page = $this->synchronizeTablePage($page, (int) $response['total_hits']);
+
+                if ($page !== $requestedPage && $response['total_hits'] > 0) {
+                    $response = $searchCatalog($page);
+                }
 
                 if ($this->isModManagerTimingEnabled()) {
                     Log::info('Mod manager timing', [
@@ -1433,7 +1520,7 @@ class ModManagerPage extends Page implements HasTable
 
                 $this->warmVisibleLatestVersions($hits, $server, $type);
 
-                return new LengthAwarePaginator($hits, $response['total_hits'], 20, $page);
+                return new LengthAwarePaginator($hits, $response['total_hits'], self::TABLE_PAGE_SIZE, $page);
             })
             // Render the page shell immediately, unless the current request's
             // records are already cached (fresh or stale) with no upstream
@@ -1442,7 +1529,7 @@ class ModManagerPage extends Page implements HasTable
             // hasWarmRecordsCache() for what "warm" means per tab, and why
             // the Installed tab is deliberately excluded from this check.
             ->deferLoading(fn (): bool => !$this->hasWarmRecordsCache())
-            ->paginated([20])
+            ->paginated([self::TABLE_PAGE_SIZE])
             // Category labels can be long (for example, "Armor, Tools, and
             // Weapons"), so retain a wider filters panel for the two real filters.
             ->filtersFormWidth(Width::Medium)
@@ -1450,14 +1537,14 @@ class ModManagerPage extends Page implements HasTable
                 SelectFilter::make('catalog_category')
                     ->label(trans('pelican-minecraft-modrinth::strings.table.filters.category'))
                     ->options(fn () => $this->getCatalogCategoryOptions())
-                    ->visible(fn () => $this->getCatalogCategoryOptions() !== []),
+                    ->visible(fn () => $this->activeTab !== 'installed' && $this->getCatalogCategoryOptions() !== []),
                 SelectFilter::make('catalog_environment')
                     ->label(trans('pelican-minecraft-modrinth::strings.table.filters.environment'))
                     ->options([
                         'server' => trans('pelican-minecraft-modrinth::strings.table.filters.environment_server'),
                         'client' => trans('pelican-minecraft-modrinth::strings.table.filters.environment_client'),
                     ])
-                    ->visible(fn () => $this->getCurrentSource()?->getKey() === ProjectSourceKey::Modrinth),
+                    ->visible(fn () => $this->activeTab !== 'installed' && $this->getCurrentSource()?->getKey() === ProjectSourceKey::Modrinth),
             ])
             ->emptyStateHeading(function () {
                 $currentSource = $this->getCurrentSource();
@@ -2157,12 +2244,8 @@ class ModManagerPage extends Page implements HasTable
                 })
                 ->visible(fn () => static::detectProjectType($server) !== null && $this->activeTab === 'installed'),
             Action::make('scan_mods')
-                ->label(trans('pelican-minecraft-modrinth::strings.actions.scan'))
-                ->tooltip(fn () => trans(match ($type) {
-                    ProjectType::Plugin => 'pelican-minecraft-modrinth::strings.actions.rescan_plugins_for_updates',
-                    ProjectType::Datapack => 'pelican-minecraft-modrinth::strings.actions.rescan_datapacks_for_updates',
-                    default => 'pelican-minecraft-modrinth::strings.actions.rescan_mods_for_updates',
-                }))
+                ->label(fn () => $this->getRescanActionLabel($type))
+                ->tooltip(fn () => $this->getRescanActionLabel($type))
                 ->icon('tabler-search')
                 ->action(function () use ($server, $type) {
                     $dispatch = app(InstalledOperationManager::class)->dispatchScan($server, $type, force: true);
@@ -2437,6 +2520,26 @@ class ModManagerPage extends Page implements HasTable
         return trans('pelican-minecraft-modrinth::strings.page.resolved_by_'.$source);
     }
 
+    protected function getRescanActionLabel(?ProjectType $type): string
+    {
+        return trans(match ($type) {
+            ProjectType::Plugin => 'pelican-minecraft-modrinth::strings.actions.rescan_plugins_for_updates',
+            ProjectType::Datapack => 'pelican-minecraft-modrinth::strings.actions.rescan_datapacks_for_updates',
+            default => 'pelican-minecraft-modrinth::strings.actions.rescan_mods_for_updates',
+        });
+    }
+
+    protected function getInstalledOperationFingerprint(InstalledOperationState $state): string
+    {
+        return $state->operation.':'.($state->finishedAt ?? '');
+    }
+
+    protected function markInstalledOperationHandled(InstalledOperationState $state): void
+    {
+        $this->handledInstalledOperation = $this->getInstalledOperationFingerprint($state);
+        $this->pollInstalledOperations = false;
+    }
+
     public function pollInstalledOperation(): void
     {
         $state = $this->refreshInstalledOperationState();
@@ -2453,13 +2556,12 @@ class ModManagerPage extends Page implements HasTable
             return;
         }
 
-        $fingerprint = $state->operation.':'.($state->finishedAt ?? '');
+        $fingerprint = $this->getInstalledOperationFingerprint($state);
         if ($this->handledInstalledOperation === $fingerprint) {
             return;
         }
 
-        $this->handledInstalledOperation = $fingerprint;
-        $this->pollInstalledOperations = false;
+        $this->markInstalledOperationHandled($state);
         // Catalog records do not read the Installed scan cache themselves.
         // Refresh it explicitly so the header badge changes in this same
         // Livewire poll response, without requiring a page reload or an
@@ -2467,8 +2569,10 @@ class ModManagerPage extends Page implements HasTable
         $this->refreshInstalledScanDataReady();
         $this->forgetInstalledModsMetadata();
         $this->forgetVersionCaches();
-        $this->isTableLoaded = false;
-        $this->resetTable();
+        // A poll response re-renders the component already. Invalidate only
+        // the records cache so the table sees the new scan data while keeping
+        // the active page, search term, and catalog filters intact.
+        $this->flushCachedTableRecords();
         $this->notifyInstalledOperationFinished($state);
 
         /** @var Server $server */
@@ -2480,17 +2584,14 @@ class ModManagerPage extends Page implements HasTable
                 $state->operation,
             );
         }
-
-        $this->js('queueMicrotask(() => $wire.loadTable())');
     }
 
     /**
-     * Reload the table so a background enrichment fill (project metadata or
-     * a latest-version lookup queued by SourceCache::swrDeferred()) that
-     * landed since the last render becomes visible. records() recomputes
-     * pollEnrichment on every call, so this poll stops on its own once
-     * nothing is left pending - unlike pollInstalledOperation(), there is
-     * no operation state to track here.
+     * Invalidate the table records so a background enrichment fill (project
+     * metadata or a latest-version lookup queued by SourceCache::swrDeferred())
+     * that landed since the last render becomes visible. The poll request
+     * itself re-renders the component; unlike resetTable(), this preserves
+     * the Installed table's current page, search, and filters.
      */
     public function pollEnrichment(): void
     {
@@ -2500,9 +2601,7 @@ class ModManagerPage extends Page implements HasTable
             return;
         }
 
-        $this->isTableLoaded = false;
-        $this->resetTable();
-        $this->js('queueMicrotask(() => $wire.loadTable())');
+        $this->flushCachedTableRecords();
     }
 
     protected function refreshInstalledOperationState(): ?InstalledOperationState
@@ -2737,6 +2836,15 @@ class ModManagerPage extends Page implements HasTable
             $this->operationQueueWarningShown = true;
             $this->pollInstalledOperations = false;
         }
+
+        // dispatchScan()/dispatchBulkUpdate() persist a terminal failed
+        // state when their dispatcher throws. This method is already showing
+        // the immediate dispatch error, so do not let the next two-second
+        // poll show a second, generic operation-failed notification.
+        if ($reason === 'dispatch_failed' && $state !== null) {
+            $this->markInstalledOperationHandled($state);
+        }
+
         $title = match ($reason) {
             'already_active' => trans('pelican-minecraft-modrinth::strings.operations.already_active'),
             'sync_queue' => trans('pelican-minecraft-modrinth::strings.operations.queue_required'),
