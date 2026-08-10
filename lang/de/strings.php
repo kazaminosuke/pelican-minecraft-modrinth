@@ -8,7 +8,9 @@ return [
 
     'settings' => [
         'latest_minecraft_version' => 'Neueste Minecraft-Version',
-        'nav_sort' => 'Navigationsreihenfolge',
+        'mod_nav_sort' => 'Navigationsreihenfolge für Mods',
+        'plugin_nav_sort' => 'Navigationsreihenfolge für Plugins',
+        'datapack_nav_sort' => 'Navigationsreihenfolge für Datapacks',
         'nav_sort_helper' => 'Sortierreihenfolge im Seitenmenü. Niedrigere Zahlen erscheinen weiter oben.',
         'curseforge_api_key' => 'CurseForge-API-Schlüssel',
         'curseforge_api_key_helper' => 'Optional. Erforderlich, um CurseForge als Mod-, Plugin- oder Datapack-Quelle zu aktivieren. Schlüssel in der CurseForge Core API-Konsole (console.curseforge.com) erstellen.',

@@ -159,7 +159,15 @@ class ModManagerPage extends Page implements HasTable
 
     public static function getNavigationSort(): ?int
     {
-        return (int) env('MINECRAFT_MODRINTH_NAV_SORT', 11);
+        /** @var Server $server */
+        $server = Filament::getTenant();
+
+        return static::navigationSortFor(static::detectProjectType($server) ?? ProjectType::Mod);
+    }
+
+    protected static function navigationSortFor(ProjectType $type): int
+    {
+        return (int) config("pelican-minecraft-modrinth.navigation_sort.{$type->value}", 11);
     }
 
     protected static function detectProjectType(Server $server): ?ProjectType
@@ -667,7 +675,7 @@ class ModManagerPage extends Page implements HasTable
     /**
      * The source backing the currently active tab. When only one catalog
      * source is available, it is used regardless of the tab key, since the
-     * tab is the generic "all" tab rather than a per-source one.
+     * tab is the source's own catalog label rather than a per-source key.
      */
     protected function getCurrentSource(): ?ProjectSourceInterface
     {
@@ -720,10 +728,10 @@ class ModManagerPage extends Page implements HasTable
 
     /**
      * One tab per searchable source (when more than one is enabled for this
-     * egg), each showing a "needs configuration" badge if isConfigured() is
-     * false, plus the "Installed" tab with the cached scan's file count. When
-     * only one catalog source is available, this collapses back to the
-     * original "All" / "Installed" tabs unchanged.
+     * egg), plus the "Installed" tab with the cached scan's file count. A
+     * source requiring setup is excluded by ProjectSourceRegistry, so no
+     * unusable tab remains. When only one catalog source is available, its
+     * label is shown instead of a misleading generic "All" tab.
      *
      * @return array<string, Tab>
      */
@@ -733,18 +741,10 @@ class ModManagerPage extends Page implements HasTable
         $tabs = [];
 
         if (count($sources) <= 1) {
-            $tabs['all'] = Tab::make(trans('pelican-minecraft-modrinth::strings.page.view_all'));
+            $tabs['all'] = Tab::make($sources[0]?->getLabel() ?? trans('pelican-minecraft-modrinth::strings.page.view_all'));
         } else {
             foreach ($sources as $source) {
-                $tab = Tab::make($source->getLabel());
-
-                if (!$source->isConfigured()) {
-                    $tab = $tab->badge('!')
-                        ->badgeColor('warning')
-                        ->badgeTooltip(trans('pelican-minecraft-modrinth::strings.page.source_not_configured'));
-                }
-
-                $tabs[$source->getKey()->value] = $tab;
+                $tabs[$source->getKey()->value] = Tab::make($source->getLabel());
             }
         }
 

@@ -224,7 +224,9 @@ class ModManagerPlugin implements HasPluginSettings, Plugin
     {
         return [
             'latest_minecraft_version' => config('pelican-minecraft-modrinth.latest_minecraft_version', '26.1.2'),
-            'nav_sort' => env('MINECRAFT_MODRINTH_NAV_SORT', 11),
+            'mod_nav_sort' => config('pelican-minecraft-modrinth.navigation_sort.mod', 11),
+            'plugin_nav_sort' => config('pelican-minecraft-modrinth.navigation_sort.plugin', 11),
+            'datapack_nav_sort' => config('pelican-minecraft-modrinth.navigation_sort.datapack', 12),
             'curseforge_api_key' => config('pelican-minecraft-modrinth.curseforge_api_key'),
             'github_token' => config('pelican-minecraft-modrinth.github_token'),
             'allow_user_egg_profile_edit' => (bool) config('pelican-minecraft-modrinth.allow_user_egg_profile_edit', false),
@@ -238,11 +240,21 @@ class ModManagerPlugin implements HasPluginSettings, Plugin
                 ->label(trans('pelican-minecraft-modrinth::strings.settings.latest_minecraft_version'))
                 ->required()
                 ->default(fn () => config('pelican-minecraft-modrinth.latest_minecraft_version', '26.1.2')),
-            TextInput::make('nav_sort')
-                ->label(trans('pelican-minecraft-modrinth::strings.settings.nav_sort'))
+            TextInput::make('mod_nav_sort')
+                ->label(trans('pelican-minecraft-modrinth::strings.settings.mod_nav_sort'))
                 ->helperText(trans('pelican-minecraft-modrinth::strings.settings.nav_sort_helper'))
                 ->numeric()
-                ->default(env('MINECRAFT_MODRINTH_NAV_SORT', 11)),
+                ->default(fn () => config('pelican-minecraft-modrinth.navigation_sort.mod', 11)),
+            TextInput::make('plugin_nav_sort')
+                ->label(trans('pelican-minecraft-modrinth::strings.settings.plugin_nav_sort'))
+                ->helperText(trans('pelican-minecraft-modrinth::strings.settings.nav_sort_helper'))
+                ->numeric()
+                ->default(fn () => config('pelican-minecraft-modrinth.navigation_sort.plugin', 11)),
+            TextInput::make('datapack_nav_sort')
+                ->label(trans('pelican-minecraft-modrinth::strings.settings.datapack_nav_sort'))
+                ->helperText(trans('pelican-minecraft-modrinth::strings.settings.nav_sort_helper'))
+                ->numeric()
+                ->default(fn () => config('pelican-minecraft-modrinth.navigation_sort.datapack', 12)),
             TextInput::make('curseforge_api_key')
                 ->label(trans('pelican-minecraft-modrinth::strings.settings.curseforge_api_key'))
                 ->helperText(trans('pelican-minecraft-modrinth::strings.settings.curseforge_api_key_helper'))
@@ -334,7 +346,9 @@ class ModManagerPlugin implements HasPluginSettings, Plugin
     {
         $this->writeToEnvironment([
             'LATEST_MINECRAFT_VERSION' => $data['latest_minecraft_version'],
-            'MINECRAFT_MODRINTH_NAV_SORT' => $data['nav_sort'],
+            'MINECRAFT_MODRINTH_MOD_NAV_SORT' => $data['mod_nav_sort'],
+            'MINECRAFT_MODRINTH_PLUGIN_NAV_SORT' => $data['plugin_nav_sort'],
+            'MINECRAFT_MODRINTH_DATAPACK_NAV_SORT' => $data['datapack_nav_sort'],
             'CURSEFORGE_API_KEY' => $data['curseforge_api_key'] ?? '',
             'GITHUB_TOKEN' => $data['github_token'] ?? '',
             'MOD_MANAGER_ALLOW_USER_EGG_PROFILE_EDIT' => ($data['allow_user_egg_profile_edit'] ?? false) ? 'true' : 'false',

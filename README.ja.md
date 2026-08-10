@@ -16,7 +16,7 @@
 | [Hangar](https://hangar.papermc.io) | 不要 | ✅ | ✅(`sha256`) | Plugin |
 | [GitHub Releases](https://github.com) | 任意(推奨) | ❌(`owner/repo`を1件ずつ追跡) | ❌ | Mod, Plugin |
 
-Modrinthは常に有効です。CurseForgeはPlugin/Datapackページでは既定で有効です(Modページでは従来どおりオプトイン)。eggのfeaturesに`curseforge_disabled`を追加すると、そのeggだけで明示的に無効化できます。HangarとGitHub Releasesはegg単位のオプトインです([Egg設定](#egg設定)を参照)。GitHub Releasesはトークンなしでも動作しますが、未認証時のレート制限(60リクエスト/時)は乏しいため、直接リポジトリを追跡する場合はトークンの設定を推奨します。GitHub Releasesにはカタログのキャッシュウォーミング経路はありません。
+Modrinthは常に有効です。CurseForgeはAPIキーを設定するとPlugin/Datapackページでは既定で利用可能になります(Modページでは従来どおりオプトイン)。eggのfeaturesに`curseforge_disabled`を追加すると、そのeggだけで明示的に無効化できます。HangarとGitHub Releasesはegg単位のオプトインです([Egg設定](#egg設定)を参照)。GitHub Releasesはトークンなしでも動作しますが、未認証時のレート制限(60リクエスト/時)は乏しいため、直接リポジトリを追跡する場合はトークンの設定を推奨します。GitHub Releasesにはカタログのキャッシュウォーミング経路はありません。
 
 ## 要件
 
@@ -69,7 +69,9 @@ https://github.com/kazaminosuke/pelican-minecraft-modrinth/releases/latest/downl
 | 項目 | `.env`キー |
 |---|---|
 | 最新Minecraftバージョン | `LATEST_MINECRAFT_VERSION` |
-| ナビゲーションの並び順 | `MINECRAFT_MODRINTH_NAV_SORT` |
+| Modのナビゲーション表示順 | `MINECRAFT_MODRINTH_MOD_NAV_SORT` |
+| Pluginのナビゲーション表示順 | `MINECRAFT_MODRINTH_PLUGIN_NAV_SORT` |
+| Datapackのナビゲーション表示順 | `MINECRAFT_MODRINTH_DATAPACK_NAV_SORT` |
 | CurseForge APIキー | `CURSEFORGE_API_KEY` |
 | GitHubトークン | `GITHUB_TOKEN` |
 | 一般ユーザーにもegg プロファイルの編集を許可 | `MOD_MANAGER_ALLOW_USER_EGG_PROFILE_EDIT`(既定OFF) |
@@ -114,8 +116,8 @@ datapack対応を手動設定する**Egg profiles**アクションもありま�
 - **「非同期キューワーカーが必要です」という警告が出る** - [要件](#要件)を参照してください。
 - **行が「未追跡」と表示される** - mod/plugin/datapackフォルダにファイルは存在するものの、
   まだMetadataインデックスに記録されていない状態です。再スキャンアクションを使用してください。
-- **ソースタブに`!`バッジが表示される** - そのソースはeggで有効化されているものの、未設定の
-  状態です(例: APIキー未設定のCurseForgeなど)。[設定](#設定)を参照してください。
+- **CurseForgeタブが表示されない** - [設定](#設定)でCurseForge APIキーを設定し、eggに
+  `curseforge_disabled` featureが含まれていないことを確認してください。
 - **カタログのデータが古いと感じる** - 設定画面のキャッシュをクリアアクションを使用してください。
   全サーバー/単一サーバーでの挙動の違いは上記の通りです。
 

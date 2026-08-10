@@ -27,6 +27,7 @@ use Kazaminosuke\ModManager\Support\ProjectSourceRegistry;
 use Kazaminosuke\ModManager\Support\EggProfileRegistry;
 use Kazaminosuke\ModManager\Support\EggProfileResolver;
 use Mockery;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 class ProjectSourceRegistryTest extends TestCase
@@ -214,12 +215,39 @@ class ProjectSourceRegistryTest extends TestCase
         $curseForge = Mockery::mock(CurseForgeSource::class);
         $modrinth->shouldReceive('supportsProjectType')->once()->with(ProjectType::Plugin)->andReturnTrue();
         $curseForge->shouldReceive('supportsProjectType')->once()->with(ProjectType::Plugin)->andReturnTrue();
+        $curseForge->shouldReceive('isConfigured')->once()->andReturnTrue();
 
         self::assertSame(ProjectType::Plugin, ProjectType::fromServer($server));
         self::assertSame(
             [$curseForge, $modrinth],
             $this->registryWith(modrinth: $modrinth, curseForge: $curseForge)->availableFor($server, ProjectType::Plugin),
         );
+    }
+
+    /** @param array<int, string> $features */
+    #[DataProvider('unconfiguredCurseForgeProjectTypes')]
+    public function test_unconfigured_curseforge_is_not_available_for_any_catalog_type(ProjectType $type, array $features): void
+    {
+        $server = $this->serverWithEgg(features: $features);
+        $modrinth = Mockery::mock(ModrinthSource::class);
+        $curseForge = Mockery::mock(CurseForgeSource::class);
+        $modrinth->shouldReceive('supportsProjectType')->once()->with($type)->andReturnTrue();
+        $curseForge->shouldReceive('isConfigured')->once()->andReturnFalse();
+
+        self::assertSame(
+            [$modrinth],
+            $this->registryWith(modrinth: $modrinth, curseForge: $curseForge)->availableFor($server, $type),
+        );
+    }
+
+    /** @return array<string, array{ProjectType, array<int, string>}> */
+    public static function unconfiguredCurseForgeProjectTypes(): array
+    {
+        return [
+            'mod opt-in' => [ProjectType::Mod, ['curseforge']],
+            'plugin default' => [ProjectType::Plugin, []],
+            'datapack default' => [ProjectType::Datapack, []],
+        ];
     }
 
     public function test_curseforge_disabled_feature_overrides_the_plugin_default(): void

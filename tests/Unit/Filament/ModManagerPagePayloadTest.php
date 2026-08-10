@@ -2,6 +2,9 @@
 
 namespace Kazaminosuke\ModManager\Tests\Unit\Filament;
 
+use Illuminate\Config\Repository as LaravelConfigRepository;
+use Illuminate\Container\Container;
+use Illuminate\Support\Facades\Facade;
 use Kazaminosuke\ModManager\Contracts\ProjectSourceInterface;
 use Kazaminosuke\ModManager\Enums\ProjectSourceKey;
 use Kazaminosuke\ModManager\Enums\ProjectType;
@@ -35,6 +38,11 @@ final class TestableModManagerPage extends ModManagerPage
     public function clampTablePageForTest(int $page, int $total): int
     {
         return $this->clampTablePage($page, $total);
+    }
+
+    public static function navigationSortForTest(ProjectType $type): int
+    {
+        return static::navigationSortFor($type);
     }
 
     public function markOperationHandledForTest(InstalledOperationState $state): void
@@ -188,6 +196,34 @@ class ModManagerPagePayloadTest extends TestCase
         self::assertSame(71, $page->clampTablePageForTest(72, 1416));
         self::assertSame(71, $page->clampTablePageForTest(71, 1416));
         self::assertSame(1, $page->clampTablePageForTest(4, 0));
+    }
+
+    public function test_navigation_sort_uses_a_distinct_setting_for_each_project_type(): void
+    {
+        $previousContainer = Container::getInstance();
+        $previousFacadeApplication = Facade::getFacadeApplication();
+        $container = new Container();
+        $config = new LaravelConfigRepository([
+            'pelican-minecraft-modrinth' => [
+                'navigation_sort' => [
+                    'mod' => 10,
+                    'plugin' => 20,
+                    'datapack' => 30,
+                ],
+            ],
+        ]);
+        $container->instance('config', $config);
+        Container::setInstance($container);
+        Facade::setFacadeApplication($container);
+
+        try {
+            self::assertSame(10, TestableModManagerPage::navigationSortForTest(ProjectType::Mod));
+            self::assertSame(20, TestableModManagerPage::navigationSortForTest(ProjectType::Plugin));
+            self::assertSame(30, TestableModManagerPage::navigationSortForTest(ProjectType::Datapack));
+        } finally {
+            Container::setInstance($previousContainer);
+            Facade::setFacadeApplication($previousFacadeApplication);
+        }
     }
 
     public function test_terminal_dispatch_failure_is_marked_handled_without_polling_again(): void

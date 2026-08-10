@@ -13,7 +13,7 @@ class MinecraftDatapackPage extends ModManagerPage
 
     public static function getNavigationSort(): ?int
     {
-        return parent::getNavigationSort() + 1;
+        return static::navigationSortFor(ProjectType::Datapack);
     }
 
     public static function getNavigationLabel(): string

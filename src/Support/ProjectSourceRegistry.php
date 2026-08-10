@@ -62,9 +62,9 @@ class ProjectSourceRegistry
      * opt-in through their ProjectSourceKey values. None of these choices ever
      * silently removes Modrinth.
      *
-     * Does NOT filter by isConfigured() - callers decide how to present an
-     * enabled-but-unconfigured source (e.g. a disabled tab with a "configure
-     * in plugin settings" hint).
+     * CurseForge additionally requires a configured API key. Do not expose a
+     * catalog tab, filter choice, or hash-lookup candidate that cannot be
+     * used; the other optional sources have no required catalog credential.
      *
      * @return array<int, ProjectSourceInterface>
      */
@@ -90,7 +90,7 @@ class ProjectSourceRegistry
                 || $type === ProjectType::Datapack
                 || in_array(ProjectSourceKey::CurseForge->value, $features, true));
 
-        if ($curseForgeEnabled) {
+        if ($curseForgeEnabled && $this->sources[ProjectSourceKey::CurseForge->value]->isConfigured()) {
             $enabled[] = $this->sources[ProjectSourceKey::CurseForge->value];
         }
 

@@ -16,7 +16,7 @@ A [Pelican Panel](https://pelican.dev) plugin that lets you search, install, upd
 | [Hangar](https://hangar.papermc.io) | Not required | ✅ | ✅ (`sha256`) | Plugin |
 | [GitHub Releases](https://github.com) | Optional, recommended | ❌ (tracks one `owner/repo` at a time) | ❌ | Mod, Plugin |
 
-Modrinth is always available. CurseForge is enabled by default on Plugin and Datapack pages (and remains opt-in for Mod pages); add `curseforge_disabled` to an egg's features to disable it for that egg. Hangar and GitHub Releases are opt-in per egg - see [Egg configuration](#egg-configuration).
+Modrinth is always available. CurseForge is available by default on Plugin and Datapack pages once its API key is configured (and remains opt-in for Mod pages); add `curseforge_disabled` to an egg's features to disable it for that egg. Hangar and GitHub Releases are opt-in per egg - see [Egg configuration](#egg-configuration).
 GitHub Releases works without a token, but its unauthenticated rate limit (60 requests/hour) is scarce enough that configuring one is recommended for direct repository tracking. GitHub Releases has no catalog cache-warming path.
 
 ## Requirements
@@ -70,7 +70,9 @@ key unless noted otherwise:
 | Field | `.env` key |
 |---|---|
 | Latest Minecraft version | `LATEST_MINECRAFT_VERSION` |
-| Navigation sort order | `MINECRAFT_MODRINTH_NAV_SORT` |
+| Mod navigation sort order | `MINECRAFT_MODRINTH_MOD_NAV_SORT` |
+| Plugin navigation sort order | `MINECRAFT_MODRINTH_PLUGIN_NAV_SORT` |
+| Datapack navigation sort order | `MINECRAFT_MODRINTH_DATAPACK_NAV_SORT` |
 | CurseForge API key | `CURSEFORGE_API_KEY` |
 | GitHub token | `GITHUB_TOKEN` |
 | Allow non-admins to edit egg profiles | `MOD_MANAGER_ALLOW_USER_EGG_PROFILE_EDIT` (default off) |
@@ -121,8 +123,8 @@ including the detection order and how to configure an egg manually.
 - **"An asynchronous queue worker is required" warning** - see [Requirements](#requirements).
 - **A row shows "Not tracked"** - a file exists in the mod/plugin/datapack folder that isn't (yet)
   recorded in the metadata index. Use the Rescan action.
-- **A source tab shows a `!` badge** - that source is enabled for the egg but not configured (for
-  example CurseForge without an API key). See [Settings](#settings).
+- **The CurseForge tab is not shown** - configure a CurseForge API key in [Settings](#settings), and ensure
+  the egg does not include the `curseforge_disabled` feature.
 - **Catalog data looks stale** - use the settings screen's Clear cache action; see above for the
   all-servers/single-server difference.
 

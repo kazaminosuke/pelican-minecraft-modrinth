@@ -8,7 +8,9 @@ return [
 
     'settings' => [
         'latest_minecraft_version' => '最新のMinecraftバージョン',
-        'nav_sort' => 'ナビゲーション表示順',
+        'mod_nav_sort' => 'Modのナビゲーション表示順',
+        'plugin_nav_sort' => 'Pluginのナビゲーション表示順',
+        'datapack_nav_sort' => 'Datapackのナビゲーション表示順',
         'nav_sort_helper' => 'サイドメニューでの表示順序です。数字が小さいほど上に表示されます。',
         'curseforge_api_key' => 'CurseForge APIキー',
         'curseforge_api_key_helper' => '任意項目です。CurseForgeをMod/Plugin/Datapackのソースとして有効にする場合に必要です。CurseForge Core APIコンソール(console.curseforge.com)でキーを発行してください。',
