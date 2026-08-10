@@ -75,8 +75,18 @@ https://github.com/kazaminosuke/pelican-minecraft-modrinth/releases/latest/downl
 | CurseForge APIキー | `CURSEFORGE_API_KEY` |
 | GitHubトークン | `GITHUB_TOKEN` |
 | 一般ユーザーにもegg プロファイルの編集を許可 | `MOD_MANAGER_ALLOW_USER_EGG_PROFILE_EDIT`(既定OFF) |
+| 一般サーバーユーザーにプロジェクトの追加を許可 | `MOD_MANAGER_ALLOW_USER_PROJECT_INSTALL`(既定OFF) |
+| 一般サーバーユーザーにプロジェクトの更新を許可(一括更新を含む) | `MOD_MANAGER_ALLOW_USER_PROJECT_UPDATE`(既定OFF) |
+| 一般サーバーユーザーにプロジェクトの削除を許可 | `MOD_MANAGER_ALLOW_USER_PROJECT_DELETE`(既定OFF) |
 
 「最新Minecraftバージョン」は、サーバー自身に`MINECRAFT_VERSION`/`MC_VERSION`起動時変数が設定されていない場合のフォールバック値です。「一般ユーザーにもeggプロファイルの編集を許可」は、そのサーバーを既に管理できるユーザー(所有者・管理者・`startup.update`権限を持つサブユーザー)に編集を広げるだけで、全ユーザーに開放するものではありません。判定ロジックの詳細は[`docs/architecture.md`](docs/architecture.md)(英語)を参照してください。**注意:** この権限判定ロジックには現時点で自動テストが整備されておらず、手動確認のみで検証されています。変更する際は手動での再確認をお願いします。
+
+プロジェクトの追加・更新・削除は別途保護されます。Root Adminは常に許可され、管理者はRolesで
+**Minecraft Mod Manager: Create** / **Update** / **Delete** を操作ごとに付与できます。上記3つの
+トグルは既定OFFです。ONにした操作では、対応する通常のファイル権限を持つサーバーユーザーにも
+許可が広がります(追加は`FileCreate`、更新・一括更新は`FileCreate`と`FileDelete`の両方、削除は
+`FileDelete`)。UIだけでなくLivewireアクション側でも同じ判定を行います。詳細は
+[`docs/architecture.md`](docs/architecture.md)(英語)を参照してください。
 
 同じ画面には、自動認識で解決できなかったeggに対して対応種別・ローダー・MCバージョン・
 datapack対応を手動設定する**Egg profiles**アクションもあります。
@@ -95,8 +105,9 @@ datapack対応を手動設定する**Egg profiles**アクションもありま�
   プロジェクトの対応関係を追跡します。
 - **インクリメンタルなハッシュスキャン**により、サイズ/更新日時のシグネチャに変化があった
   ファイルのみを再ハッシュ化します(毎回全ファイルを再ハッシュ化しません)。
-- **バックグラウンドジョブ・通知・ステータスバッジ**により、スキャンと一括更新がUIをブロックせずに
-  実行されます。スキャンの進行・完了は通知で表示し、一括更新の進行状況はページ内に表示します。
+- **バックグラウンドジョブ・ステータスバッジ**により、スキャンと一括更新がUIをブロックせずに
+  実行されます。スキャンはInstalledタブを開いている間だけ進行・短時間の完了結果を表示し、
+  一括更新の進行状況はページ内に表示します。
 - すべてのアップストリームAPI呼び出しの前段に**stale-while-revalidateキャッシュ**があり、
   データ種別ごとの鮮度ポリシーに加え、実際に使われている(ローダー / Minecraftバージョン /
   プロジェクト種別)の組み合わせを事前にキャッシュへ埋める**スケジュール実行のウォームジョブ**

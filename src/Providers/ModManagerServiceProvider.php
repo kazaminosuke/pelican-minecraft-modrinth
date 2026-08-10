@@ -2,6 +2,7 @@
 
 namespace Kazaminosuke\ModManager\Providers;
 
+use App\Models\Role;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\ServiceProvider;
@@ -17,6 +18,7 @@ use Kazaminosuke\ModManager\Sources\ModrinthSource;
 use Kazaminosuke\ModManager\Support\EggProfileResolver;
 use Kazaminosuke\ModManager\Support\MinecraftVersionResolver;
 use Kazaminosuke\ModManager\Support\ProjectSourceRegistry;
+use Kazaminosuke\ModManager\Support\ProjectOperationAuthorizer;
 use Kazaminosuke\ModManager\Support\SourceCache;
 use Kazaminosuke\ModManager\Support\SourceFetchExecutor;
 use Kazaminosuke\ModManager\Support\WarmRequestThrottle;
@@ -37,6 +39,7 @@ class ModManagerServiceProvider extends ServiceProvider
             VersionLookupCoordinator::class,
             InstalledProjectService::class,
             InstalledOperationManager::class,
+            ProjectOperationAuthorizer::class,
             WarmRequestThrottle::class,
         ] as $service) {
             $this->app->singleton($service);
@@ -49,6 +52,14 @@ class ModManagerServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        // Pelican's Admin > Roles screen discovers third-party permissions
+        // from Role::getPermissionList(). These three are deliberately
+        // separate so a role can be allowed to install, update, or delete
+        // managed files independently of the general-user toggles.
+        Role::registerCustomPermissions([
+            'minecraftModManager' => ['create', 'update', 'delete'],
+        ]);
+
         Queue::looping(function (): void {
             MinecraftVersionResolver::clear();
             // EggProfileResolver::resolve() is memoized the same way and by

@@ -665,6 +665,12 @@ Stage 1〜8 の全体レビュー（`pelican-mod-manager-design.md`・本設計�
 
 ### 10-2. 既存のセキュリティギャップ（6-3 節）— Stage 8 の範囲外として持ち越し
 
+> **2026-08-10追記（別改修で解消済み）:** 以下はStage 8完了時点の記録です。その後の独立した
+> 権限制御改修で、追加・更新(一括更新を含む)・削除はそれぞれRoot Admin、Rolesの
+> `Minecraft Mod Manager: Create/Update/Delete`、または明示的にONにした一般ユーザー用トグルと
+> 対応するファイル権限で認可されるようになりました。現行仕様は
+> [`docs/architecture.md`](docs/architecture.md)の「Project write authorization」を参照してください。
+
 6-3 節・7 章「決め打ちせず確認すべき点」で判断を求めていた「mod のインストール／アンイン
 ストール／一括更新に `SubuserPermission::FileUpdate` / `FileDelete` のチェックを追加すべきか」
 について、**Stage 8 では対応しない**ことを確定する。

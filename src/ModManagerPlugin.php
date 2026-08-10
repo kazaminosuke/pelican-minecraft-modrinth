@@ -239,6 +239,9 @@ class ModManagerPlugin implements HasPluginSettings, Plugin
             'curseforge_api_key' => config('pelican-minecraft-modrinth.curseforge_api_key'),
             'github_token' => config('pelican-minecraft-modrinth.github_token'),
             'allow_user_egg_profile_edit' => (bool) config('pelican-minecraft-modrinth.allow_user_egg_profile_edit', false),
+            'allow_user_project_install' => (bool) config('pelican-minecraft-modrinth.allow_user_project_install', false),
+            'allow_user_project_update' => (bool) config('pelican-minecraft-modrinth.allow_user_project_update', false),
+            'allow_user_project_delete' => (bool) config('pelican-minecraft-modrinth.allow_user_project_delete', false),
         ];
     }
 
@@ -284,6 +287,18 @@ class ModManagerPlugin implements HasPluginSettings, Plugin
                 ->label(trans('pelican-minecraft-modrinth::strings.settings.allow_user_egg_profile_edit'))
                 ->helperText(trans('pelican-minecraft-modrinth::strings.settings.allow_user_egg_profile_edit_helper'))
                 ->default(fn () => (bool) config('pelican-minecraft-modrinth.allow_user_egg_profile_edit', false)),
+            Toggle::make('allow_user_project_install')
+                ->label(trans('pelican-minecraft-modrinth::strings.settings.allow_user_project_install'))
+                ->helperText(trans('pelican-minecraft-modrinth::strings.settings.allow_user_project_install_helper'))
+                ->default(fn () => (bool) config('pelican-minecraft-modrinth.allow_user_project_install', false)),
+            Toggle::make('allow_user_project_update')
+                ->label(trans('pelican-minecraft-modrinth::strings.settings.allow_user_project_update'))
+                ->helperText(trans('pelican-minecraft-modrinth::strings.settings.allow_user_project_update_helper'))
+                ->default(fn () => (bool) config('pelican-minecraft-modrinth.allow_user_project_update', false)),
+            Toggle::make('allow_user_project_delete')
+                ->label(trans('pelican-minecraft-modrinth::strings.settings.allow_user_project_delete'))
+                ->helperText(trans('pelican-minecraft-modrinth::strings.settings.allow_user_project_delete_helper'))
+                ->default(fn () => (bool) config('pelican-minecraft-modrinth.allow_user_project_delete', false)),
             // A standalone action embedded in the settings form's schema
             // (rather than a plugin-settings form field) - it runs
             // independently of the "Save" submission that PluginResource
@@ -361,6 +376,9 @@ class ModManagerPlugin implements HasPluginSettings, Plugin
             'CURSEFORGE_API_KEY' => $data['curseforge_api_key'] ?? '',
             'GITHUB_TOKEN' => $data['github_token'] ?? '',
             'MOD_MANAGER_ALLOW_USER_EGG_PROFILE_EDIT' => ($data['allow_user_egg_profile_edit'] ?? false) ? 'true' : 'false',
+            'MOD_MANAGER_ALLOW_USER_PROJECT_INSTALL' => ($data['allow_user_project_install'] ?? false) ? 'true' : 'false',
+            'MOD_MANAGER_ALLOW_USER_PROJECT_UPDATE' => ($data['allow_user_project_update'] ?? false) ? 'true' : 'false',
+            'MOD_MANAGER_ALLOW_USER_PROJECT_DELETE' => ($data['allow_user_project_delete'] ?? false) ? 'true' : 'false',
         ]);
 
         Notification::make()

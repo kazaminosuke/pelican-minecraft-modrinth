@@ -54,6 +54,27 @@ final class TestableModManagerPage extends ModManagerPage
     {
         return $this->shouldPollInstalledOperation($state);
     }
+
+    public function applyInstalledOperationForTest(?InstalledOperationState $state): void
+    {
+        $this->setInstalledOperationState($state);
+    }
+
+    public function rememberScanCompletionForTest(InstalledOperationState $state): void
+    {
+        $this->rememberInstalledScanCompletion($state);
+    }
+
+    public function shouldShowOperationStatusForTest(): bool
+    {
+        return $this->shouldShowInstalledOperationStatus();
+    }
+
+    /** @return array<string, string> */
+    public function operationStatusAttributesForTest(): array
+    {
+        return $this->installedOperationStatusExtraAttributes();
+    }
 }
 
 class ModManagerPagePayloadTest extends TestCase
@@ -121,45 +142,74 @@ class ModManagerPagePayloadTest extends TestCase
         self::assertTrue($page->shouldPollForTest($state));
     }
 
-    public function test_scan_start_notification_is_claimed_once_per_operation(): void
+    public function test_scan_status_is_visible_only_when_installed_tab_observes_the_scan(): void
     {
-        $page = new class extends ModManagerPage {
-            public function claimScanStartNotificationForTest(InstalledOperationState $state): bool
-            {
-                return $this->claimInstalledScanStartNotification($state);
-            }
-        };
+        $page = new TestableModManagerPage();
         $scan = InstalledOperationState::queued(
             InstalledOperationManager::OPERATION_SCAN,
             42,
             ProjectType::Plugin,
         );
 
-        self::assertTrue($page->claimScanStartNotificationForTest($scan));
-        self::assertFalse($page->claimScanStartNotificationForTest($scan->running()));
-        self::assertTrue($page->claimScanStartNotificationForTest(InstalledOperationState::queued(
-            InstalledOperationManager::OPERATION_SCAN,
-            42,
-            ProjectType::Plugin,
-            now: new \DateTimeImmutable('+1 minute'),
-        )));
+        $page->activeTab = ProjectSourceKey::Modrinth->value;
+        $page->applyInstalledOperationForTest($scan);
+        self::assertFalse($page->shouldShowOperationStatusForTest());
+        self::assertNull($page->observedInstalledScan);
+
+        $page->activeTab = 'installed';
+        $page->applyInstalledOperationForTest($scan);
+        self::assertTrue($page->shouldShowOperationStatusForTest());
+        self::assertNotNull($page->observedInstalledScan);
     }
 
-    public function test_scan_status_is_not_rendered_in_the_page_body(): void
+    public function test_scan_completion_is_short_lived_and_uses_an_absolute_deadline(): void
     {
-        $page = new class extends ModManagerPage {
-            public function shouldShowOperationStatusForTest(): bool
-            {
-                return $this->shouldShowInstalledOperationStatus();
-            }
-        };
-
-        $page->installedOperation = InstalledOperationState::queued(
+        $page = new TestableModManagerPage();
+        $page->activeTab = 'installed';
+        $scan = InstalledOperationState::queued(
             InstalledOperationManager::OPERATION_SCAN,
             42,
             ProjectType::Datapack,
-        )->toCachePayload();
+            now: new \DateTimeImmutable('-1 minute'),
+        );
+        $page->applyInstalledOperationForTest($scan);
+        $completed = $scan->completed([], new \DateTimeImmutable('-1 second'));
+        $page->applyInstalledOperationForTest($completed);
+        $page->rememberScanCompletionForTest($completed);
+
+        self::assertTrue($page->shouldShowOperationStatusForTest());
+        $firstAttributes = $page->operationStatusAttributesForTest();
+        $secondAttributes = $page->operationStatusAttributesForTest();
+        self::assertSame($firstAttributes, $secondAttributes);
+        self::assertArrayHasKey('x-init', $firstAttributes);
+        self::assertStringContainsString('Date.now()', $firstAttributes['x-init']);
+
+        $page->activeTab = ProjectSourceKey::Modrinth->value;
         self::assertFalse($page->shouldShowOperationStatusForTest());
+    }
+
+    public function test_expired_scan_completion_is_not_rendered(): void
+    {
+        $page = new TestableModManagerPage();
+        $page->activeTab = 'installed';
+        $scan = InstalledOperationState::queued(
+            InstalledOperationManager::OPERATION_SCAN,
+            42,
+            ProjectType::Datapack,
+            now: new \DateTimeImmutable('-2 minutes'),
+        );
+        $page->applyInstalledOperationForTest($scan);
+        $completed = $scan->completed([], new \DateTimeImmutable('-30 seconds'));
+        $page->applyInstalledOperationForTest($completed);
+        $page->rememberScanCompletionForTest($completed);
+
+        self::assertFalse($page->shouldShowOperationStatusForTest());
+        self::assertSame([], $page->operationStatusAttributesForTest());
+    }
+
+    public function test_bulk_update_status_remains_rendered(): void
+    {
+        $page = new TestableModManagerPage();
 
         $page->installedOperation = InstalledOperationState::queued(
             InstalledOperationManager::OPERATION_BULK_UPDATE,

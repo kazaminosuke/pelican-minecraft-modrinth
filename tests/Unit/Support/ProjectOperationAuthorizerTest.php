@@ -1,0 +1,133 @@
+<?php
+
+namespace Kazaminosuke\ModManager\Tests\Unit\Support;
+
+use App\Enums\SubuserPermission;
+use App\Models\Server;
+use App\Models\User;
+use Illuminate\Config\Repository as LaravelConfigRepository;
+use Illuminate\Container\Container;
+use Kazaminosuke\ModManager\Enums\ProjectOperation;
+use Kazaminosuke\ModManager\Support\ProjectOperationAuthorizer;
+use Mockery;
+use PHPUnit\Framework\TestCase;
+
+class ProjectOperationAuthorizerTest extends TestCase
+{
+    protected function tearDown(): void
+    {
+        Mockery::close();
+
+        parent::tearDown();
+    }
+
+    public function test_root_admin_can_manage_every_project_operation(): void
+    {
+        $user = $this->user(rootAdmin: true);
+
+        foreach (ProjectOperation::cases() as $operation) {
+            self::assertTrue($this->allows($user, $operation));
+        }
+    }
+
+    public function test_explicit_role_permission_is_scoped_to_its_operation(): void
+    {
+        $user = $this->user(permissions: [
+            'update minecraftModManager' => true,
+        ]);
+
+        self::assertTrue($this->allows($user, ProjectOperation::Update));
+        self::assertFalse($this->allows($user, ProjectOperation::Install));
+        self::assertFalse($this->allows($user, ProjectOperation::Delete));
+    }
+
+    public function test_enabled_general_user_operation_requires_matching_native_file_permissions(): void
+    {
+        $installUser = $this->user(permissions: [
+            SubuserPermission::FileCreate->value => true,
+        ]);
+        self::assertTrue($this->allows($installUser, ProjectOperation::Install, [
+            'allow_user_project_install' => true,
+        ]));
+
+        $incompleteUpdateUser = $this->user(permissions: [
+            SubuserPermission::FileCreate->value => true,
+        ]);
+        self::assertFalse($this->allows($incompleteUpdateUser, ProjectOperation::Update, [
+            'allow_user_project_update' => true,
+        ]));
+
+        $updateUser = $this->user(permissions: [
+            SubuserPermission::FileCreate->value => true,
+            SubuserPermission::FileDelete->value => true,
+        ]);
+        self::assertTrue($this->allows($updateUser, ProjectOperation::Update, [
+            'allow_user_project_update' => true,
+        ]));
+
+        $deleteUser = $this->user(permissions: [
+            SubuserPermission::FileDelete->value => true,
+        ]);
+        self::assertTrue($this->allows($deleteUser, ProjectOperation::Delete, [
+            'allow_user_project_delete' => true,
+        ]));
+    }
+
+    public function test_general_user_file_permissions_do_not_bypass_a_disabled_operation(): void
+    {
+        $user = $this->user(permissions: [
+            SubuserPermission::FileCreate->value => true,
+            SubuserPermission::FileDelete->value => true,
+        ]);
+
+        foreach (ProjectOperation::cases() as $operation) {
+            self::assertFalse($this->allows($user, $operation));
+        }
+    }
+
+    /**
+     * @param array<string, bool> $config
+     */
+    private function allows(User $user, ProjectOperation $operation, array $config = []): bool
+    {
+        $previousContainer = Container::getInstance();
+        $container = new Container();
+        $container->instance('config', new LaravelConfigRepository([
+            'pelican-minecraft-modrinth' => $config,
+        ]));
+        Container::setInstance($container);
+
+        try {
+            /** @var Server $server */
+            $server = Mockery::mock(Server::class);
+
+            return (new ProjectOperationAuthorizer())->allows($user, $server, $operation);
+        } finally {
+            Container::setInstance($previousContainer);
+        }
+    }
+
+    /** @param array<string, bool> $permissions */
+    private function user(bool $rootAdmin = false, array $permissions = []): User
+    {
+        return new class($rootAdmin, $permissions) extends User {
+            /** @param array<string, bool> $permissions */
+            public function __construct(
+                private readonly bool $rootAdmin,
+                private readonly array $permissions,
+            ) {}
+
+            public function isRootAdmin(): bool
+            {
+                return $this->rootAdmin;
+            }
+
+            public function can($abilities, mixed $arguments = []): bool
+            {
+                $key = $abilities instanceof \BackedEnum ? $abilities->value : (string) $abilities;
+
+                return $this->permissions[$key] ?? false;
+            }
+        };
+    }
+}

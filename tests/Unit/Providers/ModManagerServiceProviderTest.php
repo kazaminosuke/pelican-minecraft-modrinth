@@ -12,6 +12,7 @@ use Kazaminosuke\ModManager\Sources\CurseForgeSource;
 use Kazaminosuke\ModManager\Sources\GitHubReleasesSource;
 use Kazaminosuke\ModManager\Sources\HangarSource;
 use Kazaminosuke\ModManager\Sources\ModrinthSource;
+use Kazaminosuke\ModManager\Support\ProjectOperationAuthorizer;
 use Kazaminosuke\ModManager\Support\ProjectSourceRegistry;
 use Kazaminosuke\ModManager\Support\SourceCache;
 use Kazaminosuke\ModManager\Support\WarmRequestThrottle;
@@ -35,6 +36,7 @@ class ModManagerServiceProviderTest extends TestCase
             VersionLookupCoordinator::class,
             InstalledProjectService::class,
             InstalledOperationManager::class,
+            ProjectOperationAuthorizer::class,
             WarmRequestThrottle::class,
         ] as $service) {
             self::assertTrue($application->isShared($service), "{$service} was not registered as a singleton.");

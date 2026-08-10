@@ -38,6 +38,7 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Kazaminosuke\ModManager\Contracts\ProjectSourceInterface;
 use Kazaminosuke\ModManager\Enums\MinecraftLoader;
+use Kazaminosuke\ModManager\Enums\ProjectOperation;
 use Kazaminosuke\ModManager\Enums\ProjectSourceKey;
 use Kazaminosuke\ModManager\Enums\ProjectType;
 use Kazaminosuke\ModManager\Facades\ModManager;
@@ -50,6 +51,7 @@ use Kazaminosuke\ModManager\Support\EggProfileResolver;
 use Kazaminosuke\ModManager\Support\InstalledOperationState;
 use Kazaminosuke\ModManager\Support\InstalledScanResult;
 use Kazaminosuke\ModManager\Support\ProjectIconUrl;
+use Kazaminosuke\ModManager\Support\ProjectOperationAuthorizer;
 use Kazaminosuke\ModManager\Support\ProjectSourceRegistry;
 
 class ModManagerPage extends Page implements HasTable
@@ -68,6 +70,9 @@ class ModManagerPage extends Page implements HasTable
 
     /** Keep every catalog source and the table paginator on the same page size. */
     private const TABLE_PAGE_SIZE = 20;
+
+    /** A success outcome remains visible long enough to be read, but never persists. */
+    private const INSTALLED_SCAN_COMPLETION_VISIBLE_SECONDS = 5;
 
     /** @var array<int, array{source: string, project_id: string, project_slug: string, project_title: string, version_id: string, version_number: string, filename: string, installed_at: string, author?: string}>|null */
     protected ?array $installedModsMetadata = null;
@@ -113,8 +118,19 @@ class ModManagerPage extends Page implements HasTable
     /** Prevent a completed operation from refreshing the deferred table more than once. */
     public ?string $handledInstalledOperation = null;
 
-    /** Prevent a scan-start toast from being emitted again by this Livewire component. */
-    public ?string $notifiedInstalledScanStart = null;
+    /**
+     * The scan operation observed while this component was on the Installed
+     * tab. Its queued-at timestamp is immutable across the scan lifecycle,
+     * so it identifies one scan without exposing daemon details.
+     */
+    public ?string $observedInstalledScan = null;
+
+    /**
+     * @var array<string, mixed>|null A short-lived successful scan outcome
+     *      for the Installed tab only. It is component-local so an old
+     *      completion message never returns after a browser reload.
+     */
+    public ?array $installedScanCompletion = null;
 
     /** Avoid repeating the operator-facing queue configuration warning in one component session. */
     public bool $operationQueueWarningShown = false;
@@ -412,12 +428,7 @@ class ModManagerPage extends Page implements HasTable
         $state = $dispatch['state'];
 
         if ($state !== null) {
-            $this->installedOperation = $state->toCachePayload();
-            $this->pollInstalledOperations = $this->shouldPollInstalledOperation($state);
-        }
-
-        if ($dispatch['dispatched'] && $state !== null) {
-            $this->notifyInstalledScanStarted($state);
+            $this->setInstalledOperationState($state);
         }
 
         if ($dispatch['reason'] === 'sync_queue') {
@@ -487,6 +498,14 @@ class ModManagerPage extends Page implements HasTable
 
     public function updatedActiveTab(?string $activeTab): void
     {
+        // Scan progress and its brief success outcome belong exclusively to
+        // the Installed tab. Do not let a tab switch make a catalog visitor
+        // see an operation that finished while they were browsing sources.
+        if ($activeTab !== 'installed') {
+            $this->observedInstalledScan = null;
+            $this->installedScanCompletion = null;
+        }
+
         // A loaded table normally evaluates its records during this same
         // Livewire update. Reset it to Filament's deferred state first, so an
         // Installed-tab hydration runs in the follow-up loadTable request
@@ -1147,6 +1166,24 @@ class ModManagerPage extends Page implements HasTable
         };
     }
 
+    protected function canManageProjectOperation(Server $server, ProjectOperation $operation): bool
+    {
+        return app(ProjectOperationAuthorizer::class)->allows(user(), $server, $operation);
+    }
+
+    protected function canManageCurrentProjectOperation(ProjectOperation $operation): bool
+    {
+        /** @var Server $server */
+        $server = Filament::getTenant();
+
+        return $this->canManageProjectOperation($server, $operation);
+    }
+
+    protected function authorizeProjectOperation(Server $server, ProjectOperation $operation): void
+    {
+        abort_unless($this->canManageProjectOperation($server, $operation), 403);
+    }
+
     /**
      * @param array<string, mixed> $record
      * @param array<string, mixed> $versionData
@@ -1163,6 +1200,11 @@ class ModManagerPage extends Page implements HasTable
         array $primaryFile,
         ?array $installedMod = null
     ): void {
+        $this->authorizeProjectOperation(
+            $server,
+            $installedMod === null ? ProjectOperation::Install : ProjectOperation::Update,
+        );
+
         $safeNewFilename = $this->validateFilename($primaryFile['filename']);
         $oldFilename = $installedMod ? $this->validateFilename($installedMod['filename']) : null;
 
@@ -1360,10 +1402,6 @@ class ModManagerPage extends Page implements HasTable
                         $dispatch = $operations->dispatchScan($server, $type);
                         $scanState = $dispatch['state'];
 
-                        if ($dispatch['dispatched'] && $scanState !== null) {
-                            $this->notifyInstalledScanStarted($scanState);
-                        }
-
                         if ($dispatch['reason'] === 'sync_queue' && !$this->operationQueueWarningShown) {
                             $this->operationQueueWarningShown = true;
                             Notification::make()
@@ -1374,8 +1412,7 @@ class ModManagerPage extends Page implements HasTable
                     }
 
                     if ($scanState !== null) {
-                        $this->installedOperation = $scanState->toCachePayload();
-                        $this->pollInstalledOperations = $this->shouldPollInstalledOperation($scanState);
+                        $this->setInstalledOperationState($scanState);
                     } else {
                         $state = $this->refreshInstalledOperationState();
                         $this->pollInstalledOperations = $state === null
@@ -1693,6 +1730,9 @@ class ModManagerPage extends Page implements HasTable
                                 $headerAction = Action::make('install_version_' . $versionIndex)
                                     ->label(trans('pelican-minecraft-modrinth::strings.actions.install'))
                                     ->icon('tabler-download')
+                                    ->authorize(fn () => $this->canManageCurrentProjectOperation(
+                                        $installedMod === null ? ProjectOperation::Install : ProjectOperation::Update,
+                                    ))
                                     ->action(function (DaemonFileRepository $fileRepository) use ($record, $versionData, $primaryFile, $sourceKey) {
                                         try {
                                             /** @var Server $server */
@@ -1765,6 +1805,7 @@ class ModManagerPage extends Page implements HasTable
                     ->icon('tabler-download')
                     ->color('success')
                     ->tooltip(trans('pelican-minecraft-modrinth::strings.actions.install_latest'))
+                    ->authorize(fn (): bool => $this->canManageCurrentProjectOperation(ProjectOperation::Install))
                     ->hidden(fn (array $record): bool => $record['untracked'] ?? false)
                     ->visible(function (array $record) {
                         if (empty($record['project_id'])) {
@@ -1840,6 +1881,7 @@ class ModManagerPage extends Page implements HasTable
                     ->icon('tabler-refresh')
                     ->color('warning')
                     ->tooltip(trans('pelican-minecraft-modrinth::strings.actions.update'))
+                    ->authorize(fn (): bool => $this->canManageCurrentProjectOperation(ProjectOperation::Update))
                     ->hidden(fn (array $record): bool => $record['untracked'] ?? false)
                     ->visible(function (array $record) {
                         if (empty($record['project_id'])) {
@@ -1997,6 +2039,7 @@ class ModManagerPage extends Page implements HasTable
                     ->icon('tabler-trash')
                     ->color('danger')
                     ->tooltip(trans('pelican-minecraft-modrinth::strings.actions.uninstall'))
+                    ->authorize(fn (): bool => $this->canManageCurrentProjectOperation(ProjectOperation::Delete))
                     ->visible(function (array $record) {
                         if (($record['untracked'] ?? false) === true) {
                             return true;
@@ -2015,6 +2058,7 @@ class ModManagerPage extends Page implements HasTable
                         try {
                             /** @var Server $server */
                             $server = Filament::getTenant();
+                            $this->authorizeProjectOperation($server, ProjectOperation::Delete);
 
                             $safeFilename = $this->getUninstallFilename($record);
 
@@ -2148,6 +2192,7 @@ class ModManagerPage extends Page implements HasTable
             Action::make('track_github_repo')
                 ->label(trans('pelican-minecraft-modrinth::strings.actions.track_github_repo'))
                 ->icon('tabler-brand-github')
+                ->authorize(fn (): bool => $this->canManageProjectOperation($server, ProjectOperation::Install))
                 ->disabled(fn () => !$githubSource?->isConfigured())
                 ->tooltip(fn () => $githubSource?->isConfigured() ? null : trans('pelican-minecraft-modrinth::strings.page.source_not_configured'))
                 ->schema([
@@ -2214,7 +2259,7 @@ class ModManagerPage extends Page implements HasTable
                             ->send();
                     }
                 })
-                ->visible(fn () => $githubAvailable),
+                ->visible(fn () => $githubAvailable && $this->canManageProjectOperation($server, ProjectOperation::Install)),
             Action::make('update_all')
                 ->label(fn () => trans(match ($type) {
                     ProjectType::Plugin => 'pelican-minecraft-modrinth::strings.actions.update_all_plugins',
@@ -2224,11 +2269,16 @@ class ModManagerPage extends Page implements HasTable
                 ->icon('tabler-download')
                 ->color('warning')
                 ->requiresConfirmation()
+                ->authorize(fn (): bool => $this->canManageProjectOperation($server, ProjectOperation::Update))
                 ->action(function () use ($server, $type) {
+                    $this->authorizeProjectOperation($server, ProjectOperation::Update);
+
                     $dispatch = app(InstalledOperationManager::class)->dispatchBulkUpdate($server, $type);
                     $this->notifyInstalledOperationDispatched($dispatch);
                 })
-                ->visible(fn () => static::detectProjectType($server) !== null && $this->activeTab === 'installed'),
+                ->visible(fn () => static::detectProjectType($server) !== null
+                    && $this->activeTab === 'installed'
+                    && $this->canManageProjectOperation($server, ProjectOperation::Update)),
             Action::make('scan_mods')
                 ->label(fn () => $this->getRescanActionLabel($type))
                 ->tooltip(fn () => $this->getRescanActionLabel($type))
@@ -2311,6 +2361,7 @@ class ModManagerPage extends Page implements HasTable
                     ]),
                 $this->getTabsContentComponent(),
                 Section::make()
+                    ->extraAttributes(fn () => $this->installedOperationStatusExtraAttributes())
                     ->schema([
                         TextEntry::make('installed_operation_status')
                             ->hiddenLabel()
@@ -2320,7 +2371,7 @@ class ModManagerPage extends Page implements HasTable
                             // genuinely still in flight. The terminal states get
                             // an icon that reads as an outcome instead, so a
                             // finished scan no longer looks like a running one.
-                            ->icon(fn () => match ($this->installedOperation['status'] ?? null) {
+                            ->icon(fn () => match ($this->getInstalledOperationDisplayPayload()['status'] ?? null) {
                                 InstalledOperationState::STATUS_COMPLETED => 'tabler-check',
                                 InstalledOperationState::STATUS_FAILED => 'tabler-alert-triangle',
                                 default => $this->operationQueueWarningShown
@@ -2328,7 +2379,7 @@ class ModManagerPage extends Page implements HasTable
                                     : 'tabler-loader-2',
                             })
                             ->badge()
-                            ->color(fn () => match ($this->installedOperation['status'] ?? null) {
+                            ->color(fn () => match ($this->getInstalledOperationDisplayPayload()['status'] ?? null) {
                                 InstalledOperationState::STATUS_RUNNING => 'info',
                                 InstalledOperationState::STATUS_COMPLETED => 'success',
                                 InstalledOperationState::STATUS_FAILED => 'danger',
@@ -2348,8 +2399,9 @@ class ModManagerPage extends Page implements HasTable
                                 : []),
                     ])
                     // Bulk-update progress remains useful in the page body.
-                    // Installed-file scan progress is intentionally delivered
-                    // through Filament notifications instead.
+                    // A scan uses this same position, but only while the
+                    // Installed tab is open (including its brief success
+                    // outcome); catalog tabs stay free of scan state.
                     ->visible(fn () => $this->shouldShowInstalledOperationStatus()),
                 Group::make([
                     EmbeddedTable::make(),
@@ -2526,6 +2578,46 @@ class ModManagerPage extends Page implements HasTable
         $this->pollInstalledOperations = false;
     }
 
+    protected function getInstalledScanFingerprint(InstalledOperationState $state): string
+    {
+        return implode(':', [
+            $state->operation,
+            $state->serverId,
+            $state->projectType->value,
+            $state->queuedAt,
+        ]);
+    }
+
+    protected function setInstalledOperationState(?InstalledOperationState $state): void
+    {
+        $this->installedOperation = $state?->toCachePayload();
+        $this->pollInstalledOperations = $this->shouldPollInstalledOperation($state);
+
+        if ($state?->operation !== InstalledOperationManager::OPERATION_SCAN || !$state->isActive()) {
+            return;
+        }
+
+        // A new scan supersedes any prior short-lived success outcome. Only
+        // remember it when Installed is actually open; a catalog visitor
+        // should never inherit scan UI after changing tabs.
+        $this->installedScanCompletion = null;
+        $this->observedInstalledScan = $this->activeTab === 'installed'
+            ? $this->getInstalledScanFingerprint($state)
+            : null;
+    }
+
+    protected function rememberInstalledScanCompletion(InstalledOperationState $state): void
+    {
+        if ($state->operation !== InstalledOperationManager::OPERATION_SCAN
+            || $state->status !== InstalledOperationState::STATUS_COMPLETED
+            || $this->activeTab !== 'installed'
+            || $this->observedInstalledScan !== $this->getInstalledScanFingerprint($state)) {
+            return;
+        }
+
+        $this->installedScanCompletion = $state->toCachePayload();
+    }
+
     public function pollInstalledOperation(): void
     {
         $state = $this->refreshInstalledOperationState();
@@ -2539,6 +2631,15 @@ class ModManagerPage extends Page implements HasTable
         if (!$state->isFinished()) {
             $this->pollInstalledOperations = true;
 
+            // Catalog pages do not render scan state. Skipping this poll's
+            // component render avoids rebuilding its table, project cards,
+            // and image nodes every two seconds while Wings is scanning.
+            // Installed must still render so its progress badge can change.
+            if ($state->operation === InstalledOperationManager::OPERATION_SCAN
+                && $this->activeTab !== 'installed') {
+                $this->skipRender();
+            }
+
             return;
         }
 
@@ -2548,6 +2649,7 @@ class ModManagerPage extends Page implements HasTable
         }
 
         $this->markInstalledOperationHandled($state);
+        $this->rememberInstalledScanCompletion($state);
         // Catalog records do not read the Installed scan cache themselves.
         // Refresh it explicitly so the header badge changes in this same
         // Livewire poll response, without requiring a page reload or an
@@ -2604,8 +2706,19 @@ class ModManagerPage extends Page implements HasTable
         }
 
         $operations = app(InstalledOperationManager::class);
+        $scanState = $operations->state($server, $type, InstalledOperationManager::OPERATION_SCAN);
+
+        // Scan and bulk update are mutually exclusive. The common active
+        // scan path therefore needs only one cache lookup per two-second
+        // poll instead of reading the unrelated bulk-update state as well.
+        if ($scanState?->isActive()) {
+            $this->setInstalledOperationState($scanState);
+
+            return $scanState;
+        }
+
         $states = array_values(array_filter([
-            $operations->state($server, $type, InstalledOperationManager::OPERATION_SCAN),
+            $scanState,
             $operations->state($server, $type, InstalledOperationManager::OPERATION_BULK_UPDATE),
         ]));
 
@@ -2621,16 +2734,94 @@ class ModManagerPage extends Page implements HasTable
         });
 
         $state = $states[0] ?? null;
-        $this->installedOperation = $state?->toCachePayload();
-        $this->pollInstalledOperations = $this->shouldPollInstalledOperation($state);
+        $this->setInstalledOperationState($state);
 
         return $state;
     }
 
-    /** Scan states use notifications; only bulk-update progress remains inline. */
+    /**
+     * Scan progress is inline only while Installed is open. Bulk-update
+     * progress intentionally keeps its existing page-level visibility.
+     */
     protected function shouldShowInstalledOperationStatus(): bool
     {
-        return ($this->installedOperation['operation'] ?? null) === InstalledOperationManager::OPERATION_BULK_UPDATE;
+        if (($this->installedOperation['operation'] ?? null) === InstalledOperationManager::OPERATION_BULK_UPDATE) {
+            return true;
+        }
+
+        if ($this->activeTab !== 'installed') {
+            return false;
+        }
+
+        $operation = $this->getInstalledOperationDisplayPayload();
+
+        if (($operation['operation'] ?? null) !== InstalledOperationManager::OPERATION_SCAN) {
+            return false;
+        }
+
+        $status = $operation['status'] ?? null;
+
+        return in_array($status, [
+                InstalledOperationState::STATUS_QUEUED,
+                InstalledOperationState::STATUS_RUNNING,
+            ], true)
+            || ($status === InstalledOperationState::STATUS_COMPLETED
+                && $this->isInstalledScanCompletionVisible());
+    }
+
+    /** @return array<string, mixed>|null */
+    protected function getInstalledOperationDisplayPayload(): ?array
+    {
+        return $this->isInstalledScanCompletionVisible()
+            ? $this->installedScanCompletion
+            : $this->installedOperation;
+    }
+
+    protected function isInstalledScanCompletionVisible(): bool
+    {
+        $completion = $this->installedScanCompletion;
+        $finishedAt = $completion['finished_at'] ?? null;
+
+        if ($this->activeTab !== 'installed'
+            || ($completion['operation'] ?? null) !== InstalledOperationManager::OPERATION_SCAN
+            || ($completion['status'] ?? null) !== InstalledOperationState::STATUS_COMPLETED
+            || !is_string($finishedAt)) {
+            return false;
+        }
+
+        try {
+            return Carbon::parse($finishedAt)
+                ->addSeconds(self::INSTALLED_SCAN_COMPLETION_VISIBLE_SECONDS)
+                ->isFuture();
+        } catch (Exception) {
+            return false;
+        }
+    }
+
+    /** @return array<string, string> */
+    protected function installedOperationStatusExtraAttributes(): array
+    {
+        if (!$this->isInstalledScanCompletionVisible()) {
+            return [];
+        }
+
+        try {
+            $finishedAt = Carbon::parse($this->installedScanCompletion['finished_at']);
+        } catch (Exception) {
+            return [];
+        }
+
+        // The deadline is absolute, not "now + five seconds". Livewire can
+        // re-render during the outcome window, but that must not reset its
+        // timer and make the completion badge stick around indefinitely.
+        $deadline = $finishedAt
+            ->addSeconds(self::INSTALLED_SCAN_COMPLETION_VISIBLE_SECONDS)
+            ->getTimestamp() * 1000;
+
+        return [
+            'x-data' => '{}',
+            'x-init' => 'const remaining = Math.max(0, '.$deadline.' - Date.now()); if (remaining === 0) { $el.remove(); } else { setTimeout(() => $el.remove(), remaining); }',
+        ];
     }
 
     /**
@@ -2641,7 +2832,7 @@ class ModManagerPage extends Page implements HasTable
      */
     protected function installedOperationIsActive(): bool
     {
-        $status = $this->installedOperation['status'] ?? null;
+        $status = $this->getInstalledOperationDisplayPayload()['status'] ?? null;
 
         if (in_array($status, [InstalledOperationState::STATUS_COMPLETED, InstalledOperationState::STATUS_FAILED], true)) {
             return false;
@@ -2671,20 +2862,22 @@ class ModManagerPage extends Page implements HasTable
 
     protected function installedOperationStatus(): string
     {
-        if ($this->installedOperation === null) {
+        $installedOperation = $this->getInstalledOperationDisplayPayload();
+
+        if ($installedOperation === null) {
             return trans($this->operationQueueWarningShown
                 ? 'pelican-minecraft-modrinth::strings.operations.queue_required'
                 : 'pelican-minecraft-modrinth::strings.operations.checking');
         }
 
         $operation = trans(
-            $this->installedOperation['operation'] === InstalledOperationManager::OPERATION_BULK_UPDATE
+            $installedOperation['operation'] === InstalledOperationManager::OPERATION_BULK_UPDATE
                 ? 'pelican-minecraft-modrinth::strings.operations.bulk_update'
                 : 'pelican-minecraft-modrinth::strings.operations.scan',
         );
-        $status = $this->installedOperation['status'] ?? null;
-        $progress = (int) ($this->installedOperation['progress'] ?? 0);
-        $total = $this->installedOperation['total'] ?? null;
+        $status = $installedOperation['status'] ?? null;
+        $progress = (int) ($installedOperation['progress'] ?? 0);
+        $total = $installedOperation['total'] ?? null;
 
         return match ($status) {
             InstalledOperationState::STATUS_QUEUED => trans('pelican-minecraft-modrinth::strings.operations.queued', compact('operation')),
@@ -2746,50 +2939,8 @@ class ModManagerPage extends Page implements HasTable
             return;
         }
 
-        Notification::make()
-            ->title(trans('pelican-minecraft-modrinth::strings.operations.completed', [
-                'operation' => trans('pelican-minecraft-modrinth::strings.operations.scan'),
-            ]))
-            ->success()
-            ->send();
-    }
-
-    /**
-     * The queued state is created exactly when dispatchScan() accepts a new
-     * scan. Its immutable queuedAt value is therefore a stable operation ID
-     * across queued -> running -> completed poll transitions.
-     */
-    protected function notifyInstalledScanStarted(InstalledOperationState $state): void
-    {
-        if ($state->operation !== InstalledOperationManager::OPERATION_SCAN
-            || !$this->claimInstalledScanStartNotification($state)) {
-            return;
-        }
-
-        Notification::make()
-            ->title(trans('pelican-minecraft-modrinth::strings.operations.queued', [
-                'operation' => trans('pelican-minecraft-modrinth::strings.operations.scan'),
-            ]))
-            ->info()
-            ->send();
-    }
-
-    protected function claimInstalledScanStartNotification(InstalledOperationState $state): bool
-    {
-        $fingerprint = implode(':', [
-            $state->operation,
-            $state->serverId,
-            $state->projectType->value,
-            $state->queuedAt,
-        ]);
-
-        if ($this->notifiedInstalledScanStart === $fingerprint) {
-            return false;
-        }
-
-        $this->notifiedInstalledScanStart = $fingerprint;
-
-        return true;
+        // Successful scans are deliberately represented by the short-lived
+        // Installed-tab status instead of a global Filament notification.
     }
 
     /**
@@ -2799,19 +2950,21 @@ class ModManagerPage extends Page implements HasTable
     {
         $state = $dispatch['state'];
         if ($state !== null) {
-            $this->installedOperation = $state->toCachePayload();
-            $this->pollInstalledOperations = $this->shouldPollInstalledOperation($state);
+            $this->setInstalledOperationState($state);
         }
 
         if ($dispatch['dispatched']) {
             if ($state !== null && $state->operation === InstalledOperationManager::OPERATION_SCAN) {
-                $this->notifyInstalledScanStarted($state);
-            } else {
-                Notification::make()
-                    ->title(trans('pelican-minecraft-modrinth::strings.operations.dispatched'))
-                    ->info()
-                    ->send();
+                // Scan progress belongs in the Installed tab, not in a
+                // global notification. The tab condition is enforced by
+                // shouldShowInstalledOperationStatus().
+                return;
             }
+
+            Notification::make()
+                ->title(trans('pelican-minecraft-modrinth::strings.operations.dispatched'))
+                ->info()
+                ->send();
 
             return;
         }

@@ -76,6 +76,9 @@ key unless noted otherwise:
 | CurseForge API key | `CURSEFORGE_API_KEY` |
 | GitHub token | `GITHUB_TOKEN` |
 | Allow non-admins to edit egg profiles | `MOD_MANAGER_ALLOW_USER_EGG_PROFILE_EDIT` (default off) |
+| Allow server users to install projects | `MOD_MANAGER_ALLOW_USER_PROJECT_INSTALL` (default off) |
+| Allow server users to update projects, including bulk update | `MOD_MANAGER_ALLOW_USER_PROJECT_UPDATE` (default off) |
+| Allow server users to remove projects | `MOD_MANAGER_ALLOW_USER_PROJECT_DELETE` (default off) |
 
 "Latest Minecraft version" is the fallback used when a server has no `MINECRAFT_VERSION`/`MC_VERSION`
 startup variable of its own. "Allow non-admins to edit egg profiles" only extends editing to users who
@@ -84,6 +87,14 @@ permission) - it never opens the form to every user; see
 [`docs/architecture.md`](docs/architecture.md) for the full permission logic. **Note:** this
 permission logic currently has no automated test coverage - it has been verified by manual testing
 only; re-verify by hand after touching it.
+
+Project writes are separately protected. Root Admins are always allowed; an administrator can also
+grant a Role the **Minecraft Mod Manager: Create**, **Update**, or **Delete** permission for one
+operation at a time. The three toggles above are off by default. Enabling one additionally permits
+ordinary server users who have the matching native file permission: `FileCreate` for installation,
+both `FileCreate` and `FileDelete` for an update (including bulk update), or `FileDelete` for
+removal. The UI and its Livewire actions enforce the same decision; see
+[`docs/architecture.md`](docs/architecture.md).
 
 The same screen also has an **Egg profiles** action for manually setting a project type, loader, MC
 version, and datapack support on eggs that automatic detection couldn't resolve.
@@ -102,9 +113,9 @@ The same screen has a **Clear cache** action, which behaves differently by scope
   older `.modrinth-metadata.json`) tracks which installed file maps to which upstream project.
 - **Incremental hash scanning** re-hashes a file only when its size/modified-time signature has
   changed, instead of every file on every scan.
-- **Background jobs, notifications, and status badges** handle scans and bulk updates without
-  blocking the UI: scans report their lifecycle through notifications, while bulk-update progress
-  remains inline.
+- **Background jobs and status badges** handle scans and bulk updates without blocking the UI:
+  scans show progress and a brief completion outcome only while the Installed tab is open, while
+  bulk-update progress remains inline.
 - **A stale-while-revalidate cache** sits in front of every upstream API call, with a freshness
   policy per data type, plus **scheduled warm jobs** that pre-populate it for the loader/Minecraft
   version/project-type combinations actually in use, throttled separately from user traffic.

@@ -215,6 +215,26 @@ private/community egg this plugin doesn't ship a profile for.
 > verified manually today - there is no unit/feature test exercising them. Verify by hand after any
 > change near this method, and see [Known issues](#known-issues) below.
 
+## Project write authorization
+
+`Support\ProjectOperationAuthorizer` is the single decision point for installing, updating
+(including bulk update), and removing a managed project. A Root Admin is always allowed. The
+administrator can grant a Pelican Role one of the independently selectable custom permissions shown
+under **Minecraft Mod Manager** in Admin → Roles: `create`, `update`, or `delete`.
+
+The settings-screen flags `MOD_MANAGER_ALLOW_USER_PROJECT_INSTALL`,
+`MOD_MANAGER_ALLOW_USER_PROJECT_UPDATE`, and `MOD_MANAGER_ALLOW_USER_PROJECT_DELETE` are all off
+by default. Enabling one extends only that operation to users who have the corresponding native
+server file permission: `FileCreate` for installation, both `FileCreate` and `FileDelete` for an
+update, and `FileDelete` for removal. A Role permission remains sufficient even while its general
+user flag is off.
+
+Every relevant Filament action is both hidden/authorized through this decision and checked again at
+the write/dispatch boundary: version and latest installs, tracked GitHub releases, updates,
+uninstalls, and bulk-update dispatch. This prevents a handcrafted Livewire request from bypassing
+the UI. `tests/Unit/Support/ProjectOperationAuthorizerTest.php` covers Root Admin, independent
+Role abilities, each native-file-permission combination, and the default deny case.
+
 ## Cache key reference
 
 | Prefix | Built by | Scope |
@@ -233,15 +253,6 @@ expire on their own TTL later.
 
 ## Known issues
 
-- **Install/uninstall/bulk-update have no permission checks.** Every other file-mutating action in
-  Pelican Panel gates itself with a `SubuserPermission` (e.g. core's `ListFiles` requires
-  `FileUpdate`/`FileDelete`), but this plugin's install, uninstall, and bulk-update actions in
-  `Filament\Server\Pages\ModManagerPage` do not - any subuser who can merely *view* the server can
-  install, remove, or bulk-update mods/plugins/datapacks regardless of their file permissions. This
-  predates Stage 8 and was deliberately kept out of its scope (Stage 8 only added a permission check
-  for editing egg profiles, a narrower and newer surface). It needs its own change - adding
-  `SubuserPermission::FileUpdate`/`FileDelete` checks to those actions - tracked here so it isn't
-  lost; see `stage8-egg-autodetect-design.md` §10-2 for the fuller writeup.
 - **`canEditEggProfile()`'s permission toggle has no automated tests** - see the note in
   [Manually configuring an egg](#manually-configuring-an-egg) above. Its logic (config-gated
   admin-only vs. `SubuserPermission::StartupUpdate`) has been read-reviewed but only manually

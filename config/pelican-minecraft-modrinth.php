@@ -72,4 +72,12 @@ return [
     // by egg, not by server, so a save here can affect every other server
     // sharing that egg - the form warns about this when the toggle is on.
     'allow_user_egg_profile_edit' => env('MOD_MANAGER_ALLOW_USER_EGG_PROFILE_EDIT', false),
+
+    // Project write operations remain root-admin and explicitly authorized
+    // role-only by default. Each flag can additionally allow ordinary server
+    // users who hold the matching native file permission(s): create for an
+    // install, create+delete for an update, and delete for a removal.
+    'allow_user_project_install' => env('MOD_MANAGER_ALLOW_USER_PROJECT_INSTALL', false),
+    'allow_user_project_update' => env('MOD_MANAGER_ALLOW_USER_PROJECT_UPDATE', false),
+    'allow_user_project_delete' => env('MOD_MANAGER_ALLOW_USER_PROJECT_DELETE', false),
 ];
