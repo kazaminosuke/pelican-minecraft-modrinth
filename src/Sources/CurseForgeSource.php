@@ -18,6 +18,7 @@ use Kazaminosuke\ModManager\Support\CacheProfile;
 use Kazaminosuke\ModManager\Support\LatestVersionLookupRequest;
 use Kazaminosuke\ModManager\Support\LatestVersionLookupResult;
 use Kazaminosuke\ModManager\Support\MinecraftVersionResolver;
+use Kazaminosuke\ModManager\Support\ProjectIconUrl;
 use Kazaminosuke\ModManager\Support\SourceCache;
 use Kazaminosuke\ModManager\Support\SourceFetchSpec;
 
@@ -1200,7 +1201,7 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
             'slug' => $mod['slug'] ?? '',
             'title' => $mod['name'] ?? '',
             'description' => $mod['summary'] ?? '',
-            'icon_url' => $logo['thumbnailUrl'] ?? $logo['url'] ?? null,
+            'icon_url' => ProjectIconUrl::curseForgeThumbnail($logo['thumbnailUrl'] ?? $logo['url'] ?? null),
             'author' => (is_string($author) && $author !== '') ? $author : null,
             'downloads' => (int) ($mod['downloadCount'] ?? 0),
             'date_modified' => $mod['dateModified'] ?? null,

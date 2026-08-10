@@ -49,6 +49,7 @@ use Kazaminosuke\ModManager\Support\CacheVersion;
 use Kazaminosuke\ModManager\Support\EggProfileResolver;
 use Kazaminosuke\ModManager\Support\InstalledOperationState;
 use Kazaminosuke\ModManager\Support\InstalledScanResult;
+use Kazaminosuke\ModManager\Support\ProjectIconUrl;
 use Kazaminosuke\ModManager\Support\ProjectSourceRegistry;
 
 class ModManagerPage extends Page implements HasTable
@@ -64,13 +65,6 @@ class ModManagerPage extends Page implements HasTable
         InteractsWithTable::updatedTableFilters as protected baseUpdatedTableFilters;
         InteractsWithTable::updatedTableSearch as protected baseUpdatedTableSearch;
     }
-
-    /**
-     * A fixed, transparent fallback keeps Filament's ImageColumn markup stable
-     * when a catalog source has no project icon. The SWR client permits only
-     * this exact data URI when it serializes image values.
-     */
-    private const SWR_EMPTY_ICON_DATA_URI = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
 
     /** Keep every catalog source and the table paginator on the same page size. */
     private const TABLE_PAGE_SIZE = 20;
@@ -1562,20 +1556,21 @@ class ModManagerPage extends Page implements HasTable
             ->columns([
                 ImageColumn::make('icon_url')
                     ->label('')
-                    // ImageColumn omits its <img> when the state is blank. Use
-                    // a fixed transparent fallback so every catalog row has the
-                    // same cell structure for the in-place SWR projection.
-                    ->defaultImageUrl(self::SWR_EMPTY_ICON_DATA_URI)
-                    // A fixed square reserves both dimensions before an
-                    // external icon loads (or fails), eliminating catalog row
-                    // and column shifts caused by natural image dimensions.
-                    ->imageSize(40)
+                    // ImageColumn omits its <img> when the state is blank. A
+                    // local SVG keeps the common placeholder structure without
+                    // an external request or visible "No image" text.
+                    ->defaultImageUrl(ProjectIconUrl::placeholderDataUri())
                     ->alignCenter()
                     // The client-side stale preview updates only values in the
                     // real Filament cell. Keep this selector independent of
                     // Filament's generated HTML below the cell.
-                    ->extraCellAttributes(['data-mmr-swr-cell' => 'icon'])
-                    ->extraImgAttributes(['loading' => 'lazy', 'decoding' => 'async']),
+                    ->extraCellAttributes(['data-mmr-swr-cell' => 'icon', 'class' => 'mmr-project-icon-cell'])
+                    ->extraImgAttributes([
+                        'data-mmr-project-icon' => 'true',
+                        'loading' => 'lazy',
+                        'decoding' => 'async',
+                        'onerror' => ProjectIconUrl::fallbackHandler(),
+                    ]),
                 TextColumn::make('title')
                     ->label(trans('pelican-minecraft-modrinth::strings.table.columns.title'))
                     ->searchable()

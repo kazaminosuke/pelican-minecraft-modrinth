@@ -119,6 +119,15 @@ class ModManagerPlugin implements HasPluginSettings, Plugin
                     .');'
                     .'min-height:15rem;'
                 .'}'
+                // A container-relative, square image footprint reserves space
+                // before lazy remote icons decode without introducing a fixed
+                // pixel size. It scales with the actual table viewport.
+                .'.mmr-table-scroll-ctn{container-type:inline-size;}'
+                .'.mmr-table-scroll-ctn .mmr-project-icon-cell .fi-ta-image img{'
+                    .'display:block;inline-size:4.5cqi;'
+                    .'height:auto!important;block-size:auto!important;'
+                    .'aspect-ratio:1;object-fit:cover;'
+                .'}'
                 // Header, toolbar, filter indicators and the paginator keep
                 // their natural heights; only the row viewport flexes.
                 .'.mmr-table-scroll-ctn .fi-ta-main>*{flex:0 0 auto;}'

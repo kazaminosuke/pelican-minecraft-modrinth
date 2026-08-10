@@ -17,7 +17,7 @@
         const DEBUG_STORAGE_KEY = 'mmrSwrDebug';
         // This exact URI is the server-side ImageColumn fallback. It is safe to
         // retain in sessionStorage; no arbitrary data URI is ever accepted.
-        const EMPTY_ICON_DATA_URI = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+        const PROJECT_ICON_PLACEHOLDER_DATA_URI = @js(\Kazaminosuke\ModManager\Support\ProjectIconUrl::placeholderDataUri());
         const TTL_MS = 10 * 60 * 1000;
         const MAX_ENTRIES = 20;
         const WRAPPER_SELECTOR = '.mmr-table-scroll-ctn[data-mmr-swr-scope]';
@@ -630,7 +630,7 @@
                 return { src: null, alt: image.getAttribute('alt') ?? '' };
             }
 
-            if (source === EMPTY_ICON_DATA_URI) {
+            if (source === PROJECT_ICON_PLACEHOLDER_DATA_URI) {
                 return { src: source, alt: image.getAttribute('alt') ?? '' };
             }
 
@@ -1371,7 +1371,7 @@
             // The Installed tab's icon/downloads/date_modified enrichment is
             // deliberately non-blocking (see ModManagerPage::pollEnrichment()):
             // this exact morph can be a real, complete render where those
-            // fields are still the SWR_EMPTY_ICON_DATA_URI placeholder because
+            // fields are still the PROJECT_ICON_PLACEHOLDER_DATA_URI placeholder because
             // the background fetch hasn't landed yet, not a loading state
             // .fi-ta-table-loading-ctn would catch. Caching that placeholder
             // snapshot here would make it the "last known good" projection

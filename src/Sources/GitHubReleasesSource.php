@@ -17,6 +17,7 @@ use Kazaminosuke\ModManager\Exceptions\PartialSourceFetchException;
 use Kazaminosuke\ModManager\Support\CacheProfile;
 use Kazaminosuke\ModManager\Support\LatestVersionLookupRequest;
 use Kazaminosuke\ModManager\Support\LatestVersionLookupResult;
+use Kazaminosuke\ModManager\Support\ProjectIconUrl;
 use Kazaminosuke\ModManager\Support\SourceCache;
 use Kazaminosuke\ModManager\Support\SourceFetchSpec;
 use Throwable;
@@ -608,7 +609,7 @@ class GitHubReleasesSource implements BatchLatestVersionSourceInterface, Project
             'slug' => $repo['full_name'] ?? '',
             'title' => $repo['name'] ?? '',
             'description' => $repo['description'] ?? '',
-            'icon_url' => $repo['owner']['avatar_url'] ?? null,
+            'icon_url' => ProjectIconUrl::githubAvatar($repo['owner']['avatar_url'] ?? null),
             'author' => $repo['owner']['login'] ?? null,
             // GitHub doesn't expose a repo-level download counter.
             'downloads' => 0,
