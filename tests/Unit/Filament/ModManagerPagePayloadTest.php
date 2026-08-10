@@ -179,14 +179,14 @@ class ModManagerPagePayloadTest extends TestCase
         self::assertSame([ProjectSourceKey::Modrinth->value], $page->catalogSourceKeysForTest());
     }
 
-    public function test_multi_source_catalog_defaults_to_modrinth(): void
+    public function test_multi_source_catalog_defaults_to_the_first_visible_source(): void
     {
         $page = $this->pageWithSources([
             $this->source(ProjectSourceKey::CurseForge, supportsSearch: true),
             $this->source(ProjectSourceKey::Modrinth, supportsSearch: true),
         ]);
 
-        self::assertSame(ProjectSourceKey::Modrinth->value, $page->getDefaultActiveTab());
+        self::assertSame(ProjectSourceKey::CurseForge->value, $page->getDefaultActiveTab());
     }
 
     public function test_out_of_range_table_pages_are_clamped_to_the_last_real_page(): void

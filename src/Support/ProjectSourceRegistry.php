@@ -55,12 +55,11 @@ class ProjectSourceRegistry
      * project type.
      *
      * Modrinth is always the baseline source - unchanged from pre-multi-source
-     * behavior, so no existing egg needs to be touched. CurseForge is also a
-     * baseline for Plugin and Datapack catalogs. An operator can opt out for a
-     * particular egg with "curseforge_disabled"; Mod catalogs keep their
-     * existing explicit "curseforge" opt-in. Hangar and GitHub Releases remain
-     * opt-in through their ProjectSourceKey values. None of these choices ever
-     * silently removes Modrinth.
+     * behavior, so no existing egg needs to be touched. When configured,
+     * CurseForge is also a baseline for every catalog type. An operator can opt
+     * out for a particular egg with "curseforge_disabled". Hangar and GitHub
+     * Releases remain opt-in through their ProjectSourceKey values. None of
+     * these choices ever silently removes Modrinth.
      *
      * CurseForge additionally requires a configured API key. Do not expose a
      * catalog tab, filter choice, or hash-lookup candidate that cannot be
@@ -81,14 +80,11 @@ class ProjectSourceRegistry
 
         $enabled = [];
 
-        // Keep catalog tabs and automatic hash lookup aligned. CurseForge is
-        // enabled by default for Paper-style Plugin and Datapack pages, while
-        // mods retain the original explicit opt-in. The negative flag wins so
-        // inherited features give operators an unambiguous per-egg opt-out.
-        $curseForgeEnabled = !in_array('curseforge_disabled', $features, true)
-            && ($type === ProjectType::Plugin
-                || $type === ProjectType::Datapack
-                || in_array(ProjectSourceKey::CurseForge->value, $features, true));
+        // Keep catalog tabs and automatic hash lookup aligned. A configured
+        // CurseForge source is available for Mod, Plugin, and Datapack pages;
+        // the negative flag wins so inherited features give operators an
+        // unambiguous per-egg opt-out.
+        $curseForgeEnabled = !in_array('curseforge_disabled', $features, true);
 
         if ($curseForgeEnabled && $this->sources[ProjectSourceKey::CurseForge->value]->isConfigured()) {
             $enabled[] = $this->sources[ProjectSourceKey::CurseForge->value];

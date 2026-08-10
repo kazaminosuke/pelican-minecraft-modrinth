@@ -224,6 +224,32 @@ class ProjectSourceRegistryTest extends TestCase
         );
     }
 
+    #[DataProvider('configuredCurseForgeProjectTypes')]
+    public function test_configured_curseforge_is_available_for_every_catalog_type(ProjectType $type): void
+    {
+        $server = $this->serverWithEgg();
+        $modrinth = Mockery::mock(ModrinthSource::class);
+        $curseForge = Mockery::mock(CurseForgeSource::class);
+        $modrinth->shouldReceive('supportsProjectType')->once()->with($type)->andReturnTrue();
+        $curseForge->shouldReceive('isConfigured')->once()->andReturnTrue();
+        $curseForge->shouldReceive('supportsProjectType')->once()->with($type)->andReturnTrue();
+
+        self::assertSame(
+            [$curseForge, $modrinth],
+            $this->registryWith(modrinth: $modrinth, curseForge: $curseForge)->availableFor($server, $type),
+        );
+    }
+
+    /** @return array<string, array{ProjectType}> */
+    public static function configuredCurseForgeProjectTypes(): array
+    {
+        return [
+            'mod' => [ProjectType::Mod],
+            'plugin' => [ProjectType::Plugin],
+            'datapack' => [ProjectType::Datapack],
+        ];
+    }
+
     /** @param array<int, string> $features */
     #[DataProvider('unconfiguredCurseForgeProjectTypes')]
     public function test_unconfigured_curseforge_is_not_available_for_any_catalog_type(ProjectType $type, array $features): void
@@ -244,7 +270,7 @@ class ProjectSourceRegistryTest extends TestCase
     public static function unconfiguredCurseForgeProjectTypes(): array
     {
         return [
-            'mod opt-in' => [ProjectType::Mod, ['curseforge']],
+            'mod default' => [ProjectType::Mod, []],
             'plugin default' => [ProjectType::Plugin, []],
             'datapack default' => [ProjectType::Datapack, []],
         ];

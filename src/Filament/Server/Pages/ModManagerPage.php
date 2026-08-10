@@ -695,20 +695,15 @@ class ModManagerPage extends Page implements HasTable
     }
 
     /**
-     * Modrinth is always the usable baseline catalog. Keep CurseForge enabled
-     * and visible for Plugin/Datapack pages, but open that baseline catalog
-     * first so a new visitor is not blocked by optional API configuration.
+     * Catalog tabs are ordered by ProjectSourceRegistry. The first configured
+     * catalog source is the initial tab, matching the visible tab order.
      */
     public function getDefaultActiveTab(): string|int|null
     {
         $sources = $this->getCatalogSources();
 
         if (count($sources) > 1) {
-            foreach ($sources as $source) {
-                if ($source->getKey() === ProjectSourceKey::Modrinth) {
-                    return ProjectSourceKey::Modrinth->value;
-                }
-            }
+            return $sources[0]->getKey()->value;
         }
 
         return array_key_first($this->getCachedTabs());
@@ -1571,14 +1566,10 @@ class ModManagerPage extends Page implements HasTable
                     // a fixed transparent fallback so every catalog row has the
                     // same cell structure for the in-place SWR projection.
                     ->defaultImageUrl(self::SWR_EMPTY_ICON_DATA_URI)
-                    // Deliberately no imageWidth()/imageHeight(): leaving width
-                    // unset keeps ImageColumn's default of a 2.5rem height with
-                    // a natural-aspect width, so tall/wide icons stay legible at
-                    // their own size rather than being squeezed into a square.
-                    // The column then sizes itself to the widest of them, and
-                    // .fi-ta-image (w-full) fills that width in every row - so
-                    // centering it here is what keeps a square icon from sitting
-                    // against the left edge of the space a neighbour widened.
+                    // A fixed square reserves both dimensions before an
+                    // external icon loads (or fails), eliminating catalog row
+                    // and column shifts caused by natural image dimensions.
+                    ->imageSize(40)
                     ->alignCenter()
                     // The client-side stale preview updates only values in the
                     // real Filament cell. Keep this selector independent of

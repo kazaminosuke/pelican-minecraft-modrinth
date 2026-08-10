@@ -16,7 +16,7 @@ A [Pelican Panel](https://pelican.dev) plugin that lets you search, install, upd
 | [Hangar](https://hangar.papermc.io) | Not required | ✅ | ✅ (`sha256`) | Plugin |
 | [GitHub Releases](https://github.com) | Optional, recommended | ❌ (tracks one `owner/repo` at a time) | ❌ | Mod, Plugin |
 
-Modrinth is always available. CurseForge is available by default on Plugin and Datapack pages once its API key is configured (and remains opt-in for Mod pages); add `curseforge_disabled` to an egg's features to disable it for that egg. Hangar and GitHub Releases are opt-in per egg - see [Egg configuration](#egg-configuration).
+Modrinth is always available. CurseForge is available by default on Mod, Plugin, and Datapack pages once its API key is configured; add `curseforge_disabled` to an egg's features to disable it for that egg. Hangar and GitHub Releases are opt-in per egg - see [Egg configuration](#egg-configuration).
 GitHub Releases works without a token, but its unauthenticated rate limit (60 requests/hour) is scarce enough that configuring one is recommended for direct repository tracking. GitHub Releases has no catalog cache-warming path.
 
 ## Requirements
@@ -57,7 +57,7 @@ To enable the opt-in catalog sources, add their feature flag too:
 { "features": ["mod_manager", "curseforge", "hangar"], "tags": ["minecraft", "fabric"] }
 ```
 
-`hangar` unlocks its matching catalog tab. `github_releases` enables the **Track GitHub Repository** action instead: GitHub Releases has no browseable catalog, so enter an `owner/repo` there to track its latest release. `curseforge` continues to opt a Mod catalog in, while Plugin and Datapack catalogs enable CurseForge by default. Add `curseforge_disabled` to explicitly hide CurseForge for any of those egg/project-type combinations; this opt-out takes precedence over `curseforge`.
+`hangar` unlocks its matching catalog tab. `github_releases` enables the **Track GitHub Repository** action instead: GitHub Releases has no browseable catalog, so enter an `owner/repo` there to track its latest release. Once a CurseForge API key is configured, every catalog type enables CurseForge by default. Add `curseforge_disabled` to explicitly hide CurseForge for an egg; this opt-out takes precedence over the default.
 
 **Automatic egg detection** (see [How it works](#how-it-works)) means most official Minecraft eggs don't need any of the above set manually - explicit `features`/`tags` still always win when present.
 One consequence: datapack management now **defaults to on** for any recognized Java server egg (mod/plugin/hybrid/vanilla/modpack), even without a `datapack_manager` feature. Add `datapack_manager_disabled` to an egg's features to opt back out, or set `MOD_MANAGER_EGG_AUTODETECT=false` to fully restore the pre-autodetect behaviour where `datapack_manager` must be explicit.
