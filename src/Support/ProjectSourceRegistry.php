@@ -114,7 +114,7 @@ class ProjectSourceRegistry
      * source) falls back to an "unavailable" placeholder built from the
      * stored metadata.
      *
-     * @param array<int, array<string, mixed>> $installedMods
+     * @param  array<int, array<string, mixed>>  $installedMods
      * @return array<int, array<string, mixed>>
      */
     public function hydrateInstalled(array $installedMods, Server $server): array
@@ -169,7 +169,7 @@ class ProjectSourceRegistry
      * view this way costs one extra queued job per source, not one per
      * mod.
      *
-     * @param array<int, array<string, mixed>> $installedMods
+     * @param  array<int, array<string, mixed>>  $installedMods
      * @return array<int, array<string, mixed>>
      */
     public function peekInstalled(array $installedMods, Server $server): array
@@ -202,7 +202,11 @@ class ProjectSourceRegistry
 
                 $peekedByProjectId[$projectId] = $peeked;
 
-                if ($peeked['data'] === null) {
+                // `pending` differentiates a genuine cache miss from a
+                // definitive negative cache hit (for example, a project that
+                // was removed upstream or a source that is now unavailable).
+                // Only cache misses need a warming job and enrichment poll.
+                if ($peeked['data'] === null && ($peeked['pending'] ?? false)) {
                     $missingIds[] = $projectId;
                 }
             }
@@ -243,7 +247,13 @@ class ProjectSourceRegistry
                     continue;
                 }
 
-                $results[] = $this->pendingEntry($mod, $sourceKey);
+                if ($peeked['pending'] ?? false) {
+                    $results[] = $this->pendingEntry($mod, $sourceKey);
+
+                    continue;
+                }
+
+                $results[] = $this->unavailableEntry($mod, $sourceKey);
             }
         }
 
@@ -251,7 +261,7 @@ class ProjectSourceRegistry
     }
 
     /**
-     * @param array<int, array<string, mixed>> $mods
+     * @param  array<int, array<string, mixed>>  $mods
      * @return array<string, mixed>
      */
     protected function fetchProjectsMap(ProjectSourceInterface $source, array $mods): array
@@ -307,7 +317,7 @@ class ProjectSourceRegistry
      * still being fetched in the background - distinct from
      * unavailableEntry(), which means the source has no live match at all.
      *
-     * @param array<string, mixed> $mod
+     * @param  array<string, mixed>  $mod
      */
     protected function pendingEntry(array $mod, string $sourceKey): array
     {

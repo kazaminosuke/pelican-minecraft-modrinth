@@ -53,6 +53,7 @@ use Kazaminosuke\ModManager\Support\InstalledScanResult;
 use Kazaminosuke\ModManager\Support\ProjectIconUrl;
 use Kazaminosuke\ModManager\Support\ProjectOperationAuthorizer;
 use Kazaminosuke\ModManager\Support\ProjectSourceRegistry;
+use Livewire\Attributes\Locked;
 
 class ModManagerPage extends Page implements HasTable
 {
@@ -127,8 +128,8 @@ class ModManagerPage extends Page implements HasTable
 
     /**
      * @var array<string, mixed>|null A short-lived successful scan outcome
-     *      for the Installed tab only. It is component-local so an old
-     *      completion message never returns after a browser reload.
+     *                                for the Installed tab only. It is component-local so an old
+     *                                completion message never returns after a browser reload.
      */
     public ?array $installedScanCompletion = null;
 
@@ -161,7 +162,13 @@ class ModManagerPage extends Page implements HasTable
 
     protected int $modManagerTimingVersionLookupDurationMs = 0;
 
-    protected ?string $datapackWorldName = null;
+    /**
+     * Display-only component state. Keeping this in the Livewire snapshot
+     * avoids another server.properties read for every poll request; a page
+     * reload still resolves the current value from Wings.
+     */
+    #[Locked]
+    public ?string $datapackWorldName = null;
 
     protected static string|\BackedEnum|null $navigationIcon = 'tabler-packages';
 
@@ -585,7 +592,7 @@ class ModManagerPage extends Page implements HasTable
      * `tableColumns`, so this is the post-morph hook that actually runs when
      * the user presses "Apply columns".
      *
-     * @param array<int, array<string, mixed>>|null $state
+     * @param  array<int, array<string, mixed>>|null  $state
      */
     public function applyTableColumnManager(?array $state = null, bool $wasReordered = false): void
     {
@@ -982,7 +989,7 @@ class ModManagerPage extends Page implements HasTable
      * isLatestVersionPending()) so it isn't mistaken for a confirmed
      * no-update result.
      *
-     * @param array<int, array<string, mixed>> $records
+     * @param  array<int, array<string, mixed>>  $records
      * @return bool Whether any of the given records is still pending.
      */
     protected function peekVisibleLatestVersions(array $records, Server $server, ProjectType $type): bool
@@ -1112,7 +1119,23 @@ class ModManagerPage extends Page implements HasTable
     }
 
     /**
-     * @param array<int, array{primary: bool, filename: string, url: string}> $files
+     * Resolve a folder for display-only UI such as header actions. Mutating
+     * operations continue to resolve the folder at execution time.
+     */
+    protected function getDisplayProjectFolder(
+        Server $server,
+        DaemonFileRepository $fileRepository,
+        ProjectType $type,
+    ): string {
+        if ($type === ProjectType::Datapack) {
+            return $this->getCachedDatapackWorldName($server, $fileRepository).'/datapacks';
+        }
+
+        return ModManager::getProjectFolder($server, $fileRepository, $type);
+    }
+
+    /**
+     * @param  array<int, array{primary: bool, filename: string, url: string}>  $files
      * @return array{primary: bool, filename: string, url: string}|null
      */
     protected function getPrimaryFile(array $files): ?array
@@ -1185,10 +1208,10 @@ class ModManagerPage extends Page implements HasTable
     }
 
     /**
-     * @param array<string, mixed> $record
-     * @param array<string, mixed> $versionData
-     * @param array<string, mixed> $primaryFile
-     * @param array<string, mixed>|null $installedMod
+     * @param  array<string, mixed>  $record
+     * @param  array<string, mixed>  $versionData
+     * @param  array<string, mixed>  $primaryFile
+     * @param  array<string, mixed>|null  $installedMod
      *
      * @throws Exception
      */
@@ -1296,7 +1319,7 @@ class ModManagerPage extends Page implements HasTable
     }
 
     /**
-     * @param array<string, mixed> $record
+     * @param  array<string, mixed>  $record
      *
      * @throws Exception
      */
@@ -1472,7 +1495,10 @@ class ModManagerPage extends Page implements HasTable
                         }
                     }
 
-                    $this->pollEnrichment = $enrichmentPending;
+                    // A sync/null queue cannot complete a deferred metadata
+                    // fill, so polling it would only repeat the same cache
+                    // reads and table render indefinitely.
+                    $this->pollEnrichment = $enrichmentPending && $operations->supportsAsyncDispatch();
 
                     $unknownOffset = max(0, $offset - count($orderedInstalledMods));
                     $remainingSlots = $perPage - count($pagedInstalledMods);
@@ -1752,7 +1778,7 @@ class ModManagerPage extends Page implements HasTable
 
                                             $this->forgetInstalledModsMetadata();
                                             $this->forgetVersionCaches();
-                                            $this->js('$wire.$refresh()');
+                                            $this->flushCachedTableRecords();
 
                                             Notification::make()
                                                 ->title(trans('pelican-minecraft-modrinth::strings.notifications.install_success'))
@@ -1767,7 +1793,7 @@ class ModManagerPage extends Page implements HasTable
 
                                             $this->forgetInstalledModsMetadata();
                                             $this->forgetVersionCaches();
-                                            $this->js('$wire.$refresh()');
+                                            $this->flushCachedTableRecords();
 
                                             Notification::make()
                                                 ->title(trans('pelican-minecraft-modrinth::strings.notifications.install_failed'))
@@ -2112,7 +2138,7 @@ class ModManagerPage extends Page implements HasTable
                             }
 
                             if ($this->activeTab === 'installed') {
-                                $this->js('$wire.$refresh()');
+                                $this->flushCachedTableRecords();
                             }
 
                             Notification::make()
@@ -2129,7 +2155,7 @@ class ModManagerPage extends Page implements HasTable
                             $this->forgetVersionCaches();
 
                             if ($this->activeTab === 'installed') {
-                                $this->js('$wire.$refresh()');
+                                $this->flushCachedTableRecords();
                             }
 
                             Notification::make()
@@ -2175,7 +2201,7 @@ class ModManagerPage extends Page implements HasTable
 
         /** @var DaemonFileRepository $fileRepository */
         $fileRepository = app(DaemonFileRepository::class);
-        $folder = ModManager::getProjectFolder($server, $fileRepository, $type);
+        $folder = $this->getDisplayProjectFolder($server, $fileRepository, $type);
 
         $githubSource = app(ProjectSourceRegistry::class)->get(ProjectSourceKey::GitHubReleases);
         $availableSourceKeys = array_map(fn (ProjectSourceInterface $source) => $source->getKey()->value, $this->getAvailableSources());
@@ -2239,7 +2265,7 @@ class ModManagerPage extends Page implements HasTable
 
                         $this->forgetInstalledModsMetadata();
                         $this->forgetVersionCaches();
-                        $this->js('$wire.$refresh()');
+                        $this->flushCachedTableRecords();
 
                         Notification::make()
                             ->title(trans('pelican-minecraft-modrinth::strings.notifications.install_success'))
@@ -2620,6 +2646,7 @@ class ModManagerPage extends Page implements HasTable
 
     public function pollInstalledOperation(): void
     {
+        $previousOperation = $this->installedOperation;
         $state = $this->refreshInstalledOperationState();
 
         if ($state === null) {
@@ -2631,12 +2658,12 @@ class ModManagerPage extends Page implements HasTable
         if (!$state->isFinished()) {
             $this->pollInstalledOperations = true;
 
-            // Catalog pages do not render scan state. Skipping this poll's
-            // component render avoids rebuilding its table, project cards,
-            // and image nodes every two seconds while Wings is scanning.
-            // Installed must still render so its progress badge can change.
-            if ($state->operation === InstalledOperationManager::OPERATION_SCAN
-                && $this->activeTab !== 'installed') {
+            // The job cache does not change between scan/bulk progress
+            // updates. Avoid rebuilding the complete component (including
+            // catalog cards and image nodes) for such no-op polls, while
+            // retaining normal renders for state, progress, and completion
+            // transitions.
+            if ($this->shouldSkipInstalledOperationPollRender($previousOperation, $state)) {
                 $this->skipRender();
             }
 
@@ -2672,6 +2699,12 @@ class ModManagerPage extends Page implements HasTable
                 $state->operation,
             );
         }
+    }
+
+    /** @param array<string, mixed>|null $previousOperation */
+    protected function shouldSkipInstalledOperationPollRender(?array $previousOperation, InstalledOperationState $state): bool
+    {
+        return $state->isActive() && $this->installedOperation === $previousOperation;
     }
 
     /**
@@ -2762,9 +2795,9 @@ class ModManagerPage extends Page implements HasTable
         $status = $operation['status'] ?? null;
 
         return in_array($status, [
-                InstalledOperationState::STATUS_QUEUED,
-                InstalledOperationState::STATUS_RUNNING,
-            ], true)
+            InstalledOperationState::STATUS_QUEUED,
+            InstalledOperationState::STATUS_RUNNING,
+        ], true)
             || ($status === InstalledOperationState::STATUS_COMPLETED
                 && $this->isInstalledScanCompletionVisible());
     }
@@ -2944,7 +2977,7 @@ class ModManagerPage extends Page implements HasTable
     }
 
     /**
-     * @param array{dispatched: bool, reason: ?string, state: ?InstalledOperationState} $dispatch
+     * @param  array{dispatched: bool, reason: ?string, state: ?InstalledOperationState}  $dispatch
      */
     protected function notifyInstalledOperationDispatched(array $dispatch): void
     {

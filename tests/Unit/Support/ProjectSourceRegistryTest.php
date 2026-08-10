@@ -23,9 +23,9 @@ use Kazaminosuke\ModManager\Sources\CurseForgeSource;
 use Kazaminosuke\ModManager\Sources\GitHubReleasesSource;
 use Kazaminosuke\ModManager\Sources\HangarSource;
 use Kazaminosuke\ModManager\Sources\ModrinthSource;
-use Kazaminosuke\ModManager\Support\ProjectSourceRegistry;
 use Kazaminosuke\ModManager\Support\EggProfileRegistry;
 use Kazaminosuke\ModManager\Support\EggProfileResolver;
+use Kazaminosuke\ModManager\Support\ProjectSourceRegistry;
 use Mockery;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
@@ -120,6 +120,27 @@ class ProjectSourceRegistryTest extends TestCase
         self::assertSame('Sodium', $rows[0]['title']);
         self::assertSame('sodium', $rows[0]['slug']);
         self::assertNull($rows[0]['icon_url']);
+    }
+
+    public function test_peek_installed_returns_an_unavailable_placeholder_without_dispatching_for_a_negative_cache_hit(): void
+    {
+        $modrinth = Mockery::mock(ModrinthSource::class);
+        $modrinth->shouldReceive('peekProject')
+            ->once()
+            ->with('gone', false)
+            ->andReturn(['data' => null, 'pending' => false]);
+
+        $registry = $this->registryWith(modrinth: $modrinth, supportsAsyncDispatch: true);
+        $dispatcher = $this->bindDispatcher();
+        $dispatcher->shouldNotReceive('dispatch');
+
+        $rows = $registry->peekInstalled([
+            ['source' => 'modrinth', 'project_id' => 'gone', 'project_title' => 'Removed Project'],
+        ], $this->server());
+
+        self::assertCount(1, $rows);
+        self::assertTrue($rows[0]['unavailable']);
+        self::assertArrayNotHasKey('enrichment_pending', $rows[0]);
     }
 
     public function test_peek_installed_returns_an_unavailable_placeholder_for_an_unrecognized_source(): void
@@ -328,12 +349,15 @@ class ProjectSourceRegistryTest extends TestCase
         ]);
         $dispatcher = Mockery::mock(Dispatcher::class);
         $context = Mockery::mock(ContextRepository::class);
+        $translator = Mockery::mock(Translator::class);
         $context->shouldReceive('addHidden')->zeroOrMoreTimes();
         $context->shouldReceive('forgetHidden')->zeroOrMoreTimes();
+        $translator->shouldReceive('get')->andReturnUsing(fn (string $key) => $key);
         $container = new Container();
         $container->instance(CacheRepository::class, new LaravelCacheRepository(new ArrayStore()));
         $container->instance(ConfigRepository::class, $config);
         $container->instance('config', $config);
+        $container->instance('translator', $translator);
         $container->instance(Dispatcher::class, $dispatcher);
         $container->instance(ContextRepository::class, $context);
         Container::setInstance($container);

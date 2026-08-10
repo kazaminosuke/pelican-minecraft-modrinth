@@ -2,6 +2,8 @@
 
 namespace Kazaminosuke\ModManager\Tests\Unit\Filament;
 
+use App\Models\Server;
+use App\Repositories\Daemon\DaemonFileRepository;
 use Illuminate\Config\Repository as LaravelConfigRepository;
 use Illuminate\Container\Container;
 use Illuminate\Support\Facades\Facade;
@@ -12,6 +14,7 @@ use Kazaminosuke\ModManager\Filament\Server\Pages\ModManagerPage;
 use Kazaminosuke\ModManager\Services\InstalledOperationManager;
 use Kazaminosuke\ModManager\Support\InstalledOperationState;
 use Kazaminosuke\ModManager\Support\InstalledScanResult;
+use Livewire\Attributes\Locked;
 use Mockery;
 use PHPUnit\Framework\TestCase;
 use ReflectionProperty;
@@ -42,7 +45,7 @@ final class TestableModManagerPage extends ModManagerPage
 
     public static function navigationSortForTest(ProjectType $type): int
     {
-        return static::navigationSortFor($type);
+        return self::navigationSortFor($type);
     }
 
     public function markOperationHandledForTest(InstalledOperationState $state): void
@@ -58,6 +61,17 @@ final class TestableModManagerPage extends ModManagerPage
     public function applyInstalledOperationForTest(?InstalledOperationState $state): void
     {
         $this->setInstalledOperationState($state);
+    }
+
+    /** @param array<string, mixed>|null $previousOperation */
+    public function shouldSkipInstalledOperationPollRenderForTest(?array $previousOperation, InstalledOperationState $state): bool
+    {
+        return $this->shouldSkipInstalledOperationPollRender($previousOperation, $state);
+    }
+
+    public function displayProjectFolderForTest(Server $server, DaemonFileRepository $fileRepository, ProjectType $type): string
+    {
+        return $this->getDisplayProjectFolder($server, $fileRepository, $type);
     }
 
     public function rememberScanCompletionForTest(InstalledOperationState $state): void
@@ -94,9 +108,31 @@ class ModManagerPagePayloadTest extends TestCase
         self::assertFalse($property->isPublic());
     }
 
+    public function test_datapack_world_name_is_locked_component_state(): void
+    {
+        $property = new ReflectionProperty(ModManagerPage::class, 'datapackWorldName');
+
+        self::assertTrue($property->isPublic());
+        self::assertFalse($property->isProtected());
+        self::assertCount(1, $property->getAttributes(Locked::class));
+    }
+
+    public function test_display_folder_reuses_the_component_datapack_world_name(): void
+    {
+        $page = new TestableModManagerPage();
+        $page->datapackWorldName = 'custom-world';
+        $fileRepository = Mockery::mock(DaemonFileRepository::class);
+
+        self::assertSame(
+            'custom-world/datapacks',
+            $page->displayProjectFolderForTest(new Server(), $fileRepository, ProjectType::Datapack),
+        );
+    }
+
     public function test_persisted_scan_count_invalidates_the_memoized_tab_definition(): void
     {
-        $page = new class extends ModManagerPage {
+        $page = new class extends ModManagerPage
+        {
             public function primeTabsForTest(): void
             {
                 $this->cachedTabs = [];
@@ -125,7 +161,8 @@ class ModManagerPagePayloadTest extends TestCase
 
     public function test_catalog_tab_keeps_polling_an_active_automatic_scan(): void
     {
-        $page = new class extends ModManagerPage {
+        $page = new class extends ModManagerPage
+        {
             public function shouldPollForTest(?InstalledOperationState $state): bool
             {
                 return $this->shouldPollInstalledOperation($state);
@@ -140,6 +177,30 @@ class ModManagerPagePayloadTest extends TestCase
         );
 
         self::assertTrue($page->shouldPollForTest($state));
+    }
+
+    public function test_active_operation_poll_skips_render_only_when_its_payload_is_unchanged(): void
+    {
+        $page = new TestableModManagerPage();
+        $queued = InstalledOperationState::queued(
+            InstalledOperationManager::OPERATION_SCAN,
+            42,
+            ProjectType::Plugin,
+        );
+        $page->applyInstalledOperationForTest($queued);
+
+        self::assertTrue($page->shouldSkipInstalledOperationPollRenderForTest($queued->toCachePayload(), $queued));
+
+        $running = $queued->running(10);
+        $page->applyInstalledOperationForTest($running);
+
+        self::assertFalse($page->shouldSkipInstalledOperationPollRenderForTest($queued->toCachePayload(), $running));
+        self::assertTrue($page->shouldSkipInstalledOperationPollRenderForTest($running->toCachePayload(), $running));
+
+        $completed = $running->completed();
+        $page->applyInstalledOperationForTest($completed);
+
+        self::assertFalse($page->shouldSkipInstalledOperationPollRenderForTest($running->toCachePayload(), $completed));
     }
 
     public function test_scan_status_is_visible_only_when_installed_tab_observes_the_scan(): void
