@@ -206,6 +206,7 @@ class ModManagerPlugin implements HasPluginSettings, Plugin
                 .'@media (prefers-reduced-motion: no-preference){.mmr-installed-operation-spinning .fi-icon{animation:mmr-spin 1s linear infinite;}}'
                 .'</style>'
             ),
+            $pageClasses,
         );
         // Supplies --mmr-table-top for the flex layout above, and puts the
         // paginator's inline offset back after a morph strips it.

@@ -1327,8 +1327,12 @@
                     setHeldState(controller, true);
                 }
 
-                processWrapper(wrapper);
             });
+
+            // The document MutationObserver also sees this morph. Coalesce
+            // both paths through scan() so a complete table capture walks the
+            // cells and writes its session projection once, not twice.
+            scan();
         };
 
         const processWrapper = (wrapper) => {
