@@ -182,6 +182,7 @@ class ModManagerPagePayloadTest extends TestCase
     public function test_active_operation_poll_skips_render_only_when_its_payload_is_unchanged(): void
     {
         $page = new TestableModManagerPage();
+        $page->activeTab = 'installed';
         $queued = InstalledOperationState::queued(
             InstalledOperationManager::OPERATION_SCAN,
             42,
@@ -201,6 +202,36 @@ class ModManagerPagePayloadTest extends TestCase
         $page->applyInstalledOperationForTest($completed);
 
         self::assertFalse($page->shouldSkipInstalledOperationPollRenderForTest($running->toCachePayload(), $completed));
+    }
+
+    public function test_catalog_scan_progress_skips_render_while_installed_and_bulk_progress_do_not(): void
+    {
+        $page = new TestableModManagerPage();
+        $page->activeTab = ProjectSourceKey::Modrinth->value;
+        $queuedScan = InstalledOperationState::queued(
+            InstalledOperationManager::OPERATION_SCAN,
+            42,
+            ProjectType::Plugin,
+        );
+        $runningScan = $queuedScan->running(10);
+        $page->applyInstalledOperationForTest($runningScan);
+
+        self::assertTrue($page->shouldSkipInstalledOperationPollRenderForTest($queuedScan->toCachePayload(), $runningScan));
+
+        $page->activeTab = 'installed';
+        self::assertFalse($page->shouldSkipInstalledOperationPollRenderForTest($queuedScan->toCachePayload(), $runningScan));
+
+        $page->activeTab = ProjectSourceKey::Modrinth->value;
+        $queuedBulk = InstalledOperationState::queued(
+            InstalledOperationManager::OPERATION_BULK_UPDATE,
+            42,
+            ProjectType::Plugin,
+        );
+        $runningBulk = $queuedBulk->running(10);
+        $page->applyInstalledOperationForTest($runningBulk);
+
+        self::assertFalse($page->shouldSkipInstalledOperationPollRenderForTest($queuedBulk->toCachePayload(), $runningBulk));
+        self::assertFalse($page->shouldSkipInstalledOperationPollRenderForTest($runningScan->toCachePayload(), $runningScan->completed()));
     }
 
     public function test_scan_status_is_visible_only_when_installed_tab_observes_the_scan(): void

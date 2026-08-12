@@ -67,6 +67,60 @@ class SourceCacheTest extends TestCase
         self::assertSame($data, $result);
     }
 
+    public function test_peek_many_uses_one_cache_many_read_and_preserves_hit_and_miss_state(): void
+    {
+        $first = new SourceFetchSpec('modrinth', 'project', ['project_id' => 'first']);
+        $second = new SourceFetchSpec('modrinth', 'project', ['project_id' => 'second']);
+        $missing = new SourceFetchSpec('modrinth', 'project', ['project_id' => 'missing']);
+        $cache = Mockery::mock(CacheRepository::class);
+        $cache->shouldReceive('many')
+            ->once()
+            ->with([$first->cacheKey(), $second->cacheKey(), $missing->cacheKey()])
+            ->andReturn([
+                $first->cacheKey() => $this->entry(['title' => 'First'], time() + 60),
+                $second->cacheKey() => $this->entry(null, time() - 60),
+            ]);
+        $executor = Mockery::mock(SourceFetchExecutorInterface::class);
+        $executor->shouldNotReceive('fetch');
+        $executor->shouldNotReceive('emptyResult');
+
+        $result = $this->sourceCache($cache, 'sync', $executor)->peekMany([
+            'first' => $first,
+            'second' => $second,
+            'missing' => $missing,
+        ]);
+
+        self::assertSame(['title' => 'First'], $result['first']['data']);
+        self::assertTrue($result['first']['hit']);
+        self::assertTrue($result['first']['fresh']);
+        self::assertTrue($result['second']['hit']);
+        self::assertFalse($result['second']['fresh']);
+        self::assertNull($result['second']['data']);
+        self::assertFalse($result['missing']['hit']);
+    }
+
+    public function test_peek_many_reads_the_same_payload_shape_from_the_laravel_cache_repository(): void
+    {
+        $cache = $this->cache();
+        $first = new SourceFetchSpec('modrinth', 'project', ['project_id' => 'first']);
+        $second = new SourceFetchSpec('modrinth', 'project', ['project_id' => 'second']);
+        $cache->put($first->cacheKey(), $this->entry(['title' => 'First'], time() + 60), 300);
+        $cache->put($second->cacheKey(), $this->entry(['title' => 'Second'], time() - 60), 300);
+        $executor = Mockery::mock(SourceFetchExecutorInterface::class);
+        $executor->shouldNotReceive('fetch');
+        $executor->shouldNotReceive('emptyResult');
+
+        $result = $this->sourceCache($cache, 'sync', $executor)->peekMany([
+            'first' => $first,
+            'second' => $second,
+        ]);
+
+        self::assertSame(['title' => 'First'], $result['first']['data']);
+        self::assertTrue($result['first']['fresh']);
+        self::assertSame(['title' => 'Second'], $result['second']['data']);
+        self::assertFalse($result['second']['fresh']);
+    }
+
     public function test_stale_hit_returns_immediately_and_dispatches_one_unique_job_for_repeated_reads(): void
     {
         $cache = $this->cache();
@@ -374,8 +428,7 @@ class SourceCacheTest extends TestCase
         SourceFetchExecutorInterface $executor,
     ): SourceCache {
         $config = new LaravelConfigRepository(['queue' => ['default' => $queueDriver]]);
-        $dispatcher = Mockery::mock(Dispatcher::class);
-        $operations = new InstalledOperationManager($cache, $config, $dispatcher);
+        $operations = new InstalledOperationManager($cache, $config);
 
         return new SourceCache($cache, $operations, $executor);
     }

@@ -76,13 +76,15 @@ class ProjectSourceRegistryTest extends TestCase
         parent::tearDown();
     }
 
-    public function test_peek_installed_uses_cached_project_data_without_fetching(): void
+    public function test_peek_installed_reads_cached_project_data_in_one_source_batch_without_fetching(): void
     {
         $modrinth = Mockery::mock(ModrinthSource::class);
-        $modrinth->shouldReceive('peekProject')
+        $modrinth->shouldReceive('peekProjects')
             ->once()
-            ->with('abc', false)
-            ->andReturn(['data' => ['title' => 'Sodium', 'icon_url' => 'https://example.test/icon.png'], 'pending' => false]);
+            ->with(['abc'])
+            ->andReturn([
+                'abc' => ['data' => ['title' => 'Sodium', 'icon_url' => 'https://example.test/icon.png'], 'pending' => false],
+            ]);
 
         $registry = $this->registryWith(modrinth: $modrinth);
 
@@ -100,10 +102,10 @@ class ProjectSourceRegistryTest extends TestCase
     public function test_peek_installed_returns_a_pending_placeholder_on_a_cache_miss(): void
     {
         $modrinth = Mockery::mock(ModrinthSource::class);
-        $modrinth->shouldReceive('peekProject')
+        $modrinth->shouldReceive('peekProjects')
             ->once()
-            ->with('abc', false)
-            ->andReturn(['data' => null, 'pending' => true]);
+            ->with(['abc'])
+            ->andReturn(['abc' => ['data' => null, 'pending' => true]]);
 
         // Async dispatch unsupported here on purpose: this test is only
         // about the placeholder row's shape, not about dispatch - see
@@ -125,10 +127,10 @@ class ProjectSourceRegistryTest extends TestCase
     public function test_peek_installed_returns_an_unavailable_placeholder_without_dispatching_for_a_negative_cache_hit(): void
     {
         $modrinth = Mockery::mock(ModrinthSource::class);
-        $modrinth->shouldReceive('peekProject')
+        $modrinth->shouldReceive('peekProjects')
             ->once()
-            ->with('gone', false)
-            ->andReturn(['data' => null, 'pending' => false]);
+            ->with(['gone'])
+            ->andReturn(['gone' => ['data' => null, 'pending' => false]]);
 
         $registry = $this->registryWith(modrinth: $modrinth, supportsAsyncDispatch: true);
         $dispatcher = $this->bindDispatcher();
@@ -159,10 +161,13 @@ class ProjectSourceRegistryTest extends TestCase
     public function test_peek_installed_dispatches_one_batched_job_per_source_for_all_misses(): void
     {
         $modrinth = Mockery::mock(ModrinthSource::class);
-        $modrinth->shouldReceive('peekProject')
-            ->once()->with('a', false)->andReturn(['data' => null, 'pending' => true]);
-        $modrinth->shouldReceive('peekProject')
-            ->once()->with('b', false)->andReturn(['data' => null, 'pending' => true]);
+        $modrinth->shouldReceive('peekProjects')
+            ->once()
+            ->with(['a', 'b'])
+            ->andReturn([
+                'a' => ['data' => null, 'pending' => true],
+                'b' => ['data' => null, 'pending' => true],
+            ]);
 
         $registry = $this->registryWith(modrinth: $modrinth, supportsAsyncDispatch: true);
         $dispatcher = $this->bindDispatcher();
@@ -184,8 +189,10 @@ class ProjectSourceRegistryTest extends TestCase
     public function test_peek_installed_does_not_dispatch_when_async_dispatch_is_unsupported(): void
     {
         $modrinth = Mockery::mock(ModrinthSource::class);
-        $modrinth->shouldReceive('peekProject')
-            ->once()->with('a', false)->andReturn(['data' => null, 'pending' => true]);
+        $modrinth->shouldReceive('peekProjects')
+            ->once()
+            ->with(['a'])
+            ->andReturn(['a' => ['data' => null, 'pending' => true]]);
 
         $registry = $this->registryWith(modrinth: $modrinth, supportsAsyncDispatch: false);
 
@@ -324,7 +331,6 @@ class ProjectSourceRegistryTest extends TestCase
         $operations = new InstalledOperationManager(
             new LaravelCacheRepository(new ArrayStore()),
             $config,
-            Mockery::mock(Dispatcher::class),
         );
 
         return new ProjectSourceRegistry(

@@ -12,8 +12,6 @@ use Kazaminosuke\ModManager\Contracts\SourceFetchAuthoritativeInterface;
 use Kazaminosuke\ModManager\Enums\ProjectSourceKey;
 use Kazaminosuke\ModManager\Enums\ProjectType;
 use Kazaminosuke\ModManager\Repositories\InstalledMetadataRepository;
-use Kazaminosuke\ModManager\Sources\CurseForgeSource;
-use Kazaminosuke\ModManager\Sources\HangarSource;
 use Kazaminosuke\ModManager\Sources\ModrinthSource;
 use Kazaminosuke\ModManager\Support\CacheVersion;
 use Kazaminosuke\ModManager\Support\CurseForgeFingerprint;
@@ -22,6 +20,7 @@ use Kazaminosuke\ModManager\Support\InstalledMetadataReadResult;
 use Kazaminosuke\ModManager\Support\InstalledMetadataReadStatus;
 use Kazaminosuke\ModManager\Support\InstalledScanResult;
 use Kazaminosuke\ModManager\Support\MinecraftVersionResolver;
+use Kazaminosuke\ModManager\Support\ProjectSourceRegistry;
 
 class InstalledProjectService
 {
@@ -30,9 +29,7 @@ class InstalledProjectService
     private const HASH_SCAN_LOCK_SECONDS = 180;
 
     public function __construct(
-        protected ModrinthSource $source,
-        protected CurseForgeSource $curseForgeSource,
-        protected HangarSource $hangarSource,
+        protected ProjectSourceRegistry $sourceRegistry,
         protected InstalledMetadataRepository $metadataRepository,
     ) {}
 
@@ -410,7 +407,7 @@ class InstalledProjectService
         $matchedEntries = [];
         $lookupFailures = [];
 
-        foreach ($this->getHashLookupSourcesInPriorityOrder() as $hashSource) {
+        foreach ($this->getHashLookupSourcesInPriorityOrder($server, $type) as $hashSource) {
             if ($remainingFilenames === []) {
                 break;
             }
@@ -758,20 +755,20 @@ class InstalledProjectService
     }
 
     /**
-     * Sources to try, in priority order, when identifying unknown files by hash
-     * during a scan. CurseForge and Modrinth resolve a hash match straight to an
-     * exact version. Hangar's hash endpoint only identifies the parent project
-     * and needs an expensive follow-up scan of that project's versions to pin
-     * down the exact file (see HangarSource::findVersionEntryByHash()), so it's
-     * tried last and only against files the cheaper sources didn't already
-     * resolve - Hangar-exclusive plugins are a minority, so this avoids paying
-     * that cost for files that are actually on Modrinth or CurseForge.
+     * Sources to try, in priority order, when identifying unknown files by hash.
+     * The registry applies the same per-egg source enablement and project-type
+     * rules used by catalog tabs, then this method removes sources without hash
+     * lookup support. This avoids querying a disabled CurseForge source or the
+     * Plugin-only Hangar source for Mod/Datapack scans.
      *
      * @return array<int, ProjectSourceInterface>
      */
-    protected function getHashLookupSourcesInPriorityOrder(): array
+    protected function getHashLookupSourcesInPriorityOrder(Server $server, ProjectType $type): array
     {
-        return [$this->curseForgeSource, $this->source, $this->hangarSource];
+        return array_values(array_filter(
+            $this->sourceRegistry->availableFor($server, $type),
+            static fn (ProjectSourceInterface $source): bool => $source->supportsHashLookup(),
+        ));
     }
 
     /**

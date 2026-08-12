@@ -7,7 +7,6 @@ use Illuminate\Cache\ArrayStore;
 use Illuminate\Cache\Repository as LaravelCacheRepository;
 use Illuminate\Config\Repository as LaravelConfigRepository;
 use Illuminate\Container\Container;
-use Illuminate\Contracts\Bus\Dispatcher;
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Kazaminosuke\ModManager\Contracts\SourceFetchExecutorInterface;
@@ -103,8 +102,7 @@ class ModrinthSourceSearchCacheTest extends TestCase
     private function sourceCache(CacheRepository $cache, ?SourceFetchExecutorInterface $executor = null): SourceCache
     {
         $config = new LaravelConfigRepository(['queue' => ['default' => 'sync']]);
-        $dispatcher = Mockery::mock(Dispatcher::class);
-        $operations = new InstalledOperationManager($cache, $config, $dispatcher);
+        $operations = new InstalledOperationManager($cache, $config);
 
         return new SourceCache($cache, $operations, $executor ?? Mockery::mock(SourceFetchExecutorInterface::class));
     }

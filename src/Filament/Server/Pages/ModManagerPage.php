@@ -2658,11 +2658,10 @@ class ModManagerPage extends Page implements HasTable
         if (!$state->isFinished()) {
             $this->pollInstalledOperations = true;
 
-            // The job cache does not change between scan/bulk progress
-            // updates. Avoid rebuilding the complete component (including
-            // catalog cards and image nodes) for such no-op polls, while
-            // retaining normal renders for state, progress, and completion
-            // transitions.
+            // Avoid rebuilding the complete component (including catalog cards
+            // and image nodes) when this poll cannot change visible state.
+            // shouldSkipInstalledOperationPollRender() retains normal renders
+            // for Installed scan progress, bulk progress, and completion.
             if ($this->shouldSkipInstalledOperationPollRender($previousOperation, $state)) {
                 $this->skipRender();
             }
@@ -2704,6 +2703,17 @@ class ModManagerPage extends Page implements HasTable
     /** @param array<string, mixed>|null $previousOperation */
     protected function shouldSkipInstalledOperationPollRender(?array $previousOperation, InstalledOperationState $state): bool
     {
+        // Scan progress is intentionally not shown outside Installed. While a
+        // catalog is open, intermediate queued/running updates therefore do
+        // not need to rebuild the catalog table or its image DOM. A terminal
+        // state still renders below so the count badge and cache refresh are
+        // applied immediately.
+        if ($state->isActive()
+            && $state->operation === InstalledOperationManager::OPERATION_SCAN
+            && $this->activeTab !== 'installed') {
+            return true;
+        }
+
         return $state->isActive() && $this->installedOperation === $previousOperation;
     }
 

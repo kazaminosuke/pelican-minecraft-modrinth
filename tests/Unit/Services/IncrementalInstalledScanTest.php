@@ -2,12 +2,25 @@
 
 namespace Kazaminosuke\ModManager\Tests\Unit\Services;
 
+use App\Models\Server;
+use Kazaminosuke\ModManager\Contracts\ProjectSourceInterface;
+use Kazaminosuke\ModManager\Enums\ProjectType;
+use Kazaminosuke\ModManager\Repositories\InstalledMetadataRepository;
 use Kazaminosuke\ModManager\Services\InstalledProjectService;
 use Kazaminosuke\ModManager\Support\InstalledMetadataDocument;
+use Kazaminosuke\ModManager\Support\ProjectSourceRegistry;
+use Mockery;
 use PHPUnit\Framework\TestCase;
 
 class IncrementalInstalledScanTest extends TestCase
 {
+    protected function tearDown(): void
+    {
+        Mockery::close();
+
+        parent::tearDown();
+    }
+
     public function test_hashes_are_reused_only_when_size_modified_time_and_all_algorithms_match(): void
     {
         $service = new TestableInstalledProjectService();
@@ -45,6 +58,30 @@ class IncrementalInstalledScanTest extends TestCase
         self::assertSame('1', $byProject['c']['version_id']);
     }
 
+    public function test_hash_lookup_sources_follow_the_registry_project_type_and_enablement_rules(): void
+    {
+        $server = new Server();
+        $server->forceFill(['id' => 42]);
+        $curseForge = Mockery::mock(ProjectSourceInterface::class);
+        $modrinth = Mockery::mock(ProjectSourceInterface::class);
+        $github = Mockery::mock(ProjectSourceInterface::class);
+        $curseForge->shouldReceive('supportsHashLookup')->once()->andReturnTrue();
+        $modrinth->shouldReceive('supportsHashLookup')->once()->andReturnTrue();
+        $github->shouldReceive('supportsHashLookup')->once()->andReturnFalse();
+        $registry = Mockery::mock(ProjectSourceRegistry::class);
+        $registry->shouldReceive('availableFor')
+            ->once()
+            ->with($server, ProjectType::Datapack)
+            ->andReturn([$curseForge, $modrinth, $github]);
+
+        $service = new TestableInstalledProjectService($registry);
+
+        self::assertSame(
+            [$curseForge, $modrinth],
+            $service->exposeHashLookupSources($server, ProjectType::Datapack),
+        );
+    }
+
     /** @param array<int, array<string, mixed>> $entries */
     private function document(array $entries): InstalledMetadataDocument
     {
@@ -72,7 +109,12 @@ class IncrementalInstalledScanTest extends TestCase
 
 class TestableInstalledProjectService extends InstalledProjectService
 {
-    public function __construct() {}
+    public function __construct(?ProjectSourceRegistry $sourceRegistry = null)
+    {
+        if ($sourceRegistry !== null) {
+            parent::__construct($sourceRegistry, Mockery::mock(InstalledMetadataRepository::class));
+        }
+    }
 
     /** @param array<string, mixed>|null $signature */
     public function exposeReusableHashes(array $entry, ?array $signature): ?array
@@ -87,5 +129,11 @@ class TestableInstalledProjectService extends InstalledProjectService
     public function exposeRebase(InstalledMetadataDocument $original, InstalledMetadataDocument $latest, array $installed, array $unresolved): InstalledMetadataDocument
     {
         return $this->rebaseScanDocument($original, $latest, $installed, $unresolved);
+    }
+
+    /** @return array<int, ProjectSourceInterface> */
+    public function exposeHashLookupSources(Server $server, ProjectType $type): array
+    {
+        return $this->getHashLookupSourcesInPriorityOrder($server, $type);
     }
 }

@@ -8,6 +8,7 @@ use Illuminate\Http\Client\Pool;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
 use Kazaminosuke\ModManager\Contracts\BatchLatestVersionSourceInterface;
+use Kazaminosuke\ModManager\Contracts\ProjectMetadataPeekManyInterface;
 use Kazaminosuke\ModManager\Contracts\ProjectSourceInterface;
 use Kazaminosuke\ModManager\Contracts\SourceFetchAuthoritativeInterface;
 use Kazaminosuke\ModManager\Contracts\SourceFetchHandlerInterface;
@@ -31,7 +32,7 @@ use Throwable;
  * non-draft release is returned as-is by getVersions() - the admin is responsible
  * for picking the right one, same as they would on the repo's Releases page.
  */
-class GitHubReleasesSource implements BatchLatestVersionSourceInterface, ProjectSourceInterface, SourceFetchAuthoritativeInterface, SourceFetchHandlerInterface
+class GitHubReleasesSource implements BatchLatestVersionSourceInterface, ProjectMetadataPeekManyInterface, ProjectSourceInterface, SourceFetchAuthoritativeInterface, SourceFetchHandlerInterface
 {
     protected const BASE_URL = 'https://api.github.com';
 
@@ -172,6 +173,39 @@ class GitHubReleasesSource implements BatchLatestVersionSourceInterface, Project
             'data' => is_array($peeked['data']) ? $peeked['data'] : null,
             'pending' => $peeked['pending'],
         ];
+    }
+
+    /** @return array<string, array{data: array<string, mixed>|null, pending: bool}> */
+    public function peekProjects(array $projectIds): array
+    {
+        $specs = [];
+        $results = [];
+
+        foreach (array_values(array_unique($projectIds)) as $projectId) {
+            $projectId = (string) $projectId;
+            $repo = $this->parseIdentifier($projectId);
+
+            if ($repo === null) {
+                $results[$projectId] = ['data' => null, 'pending' => false];
+
+                continue;
+            }
+
+            [$owner, $name] = array_map('strtolower', $repo);
+            $specs[$projectId] = $this->spec(self::OPERATION_PROJECT, [
+                'name' => $name,
+                'owner' => $owner,
+            ]);
+        }
+
+        foreach ($this->sourceCache->peekMany($specs) as $projectId => $peeked) {
+            $results[$projectId] = [
+                'data' => is_array($peeked['data']) ? $peeked['data'] : null,
+                'pending' => !$peeked['hit'],
+            ];
+        }
+
+        return $results;
     }
 
     public function primeProjects(array $dataByProjectId): void

@@ -104,6 +104,54 @@ class InstalledMetadataRepositoryTest extends TestCase
         self::assertSame('unknown.jar', $roundTrip->unresolvedFiles()[0]['filename']);
     }
 
+    public function test_mutate_skips_wings_write_and_hydration_bump_when_current_document_is_unchanged(): void
+    {
+        $server = $this->server();
+        $document = InstalledMetadataDocument::fromArray(['installed_mods' => [$this->legacyEntry()]]);
+        self::assertNotNull($document);
+        $files = Mockery::mock(DaemonFileRepository::class);
+        $files->shouldReceive('setServer')->once()->with($server)->andReturnSelf();
+        $files->shouldReceive('getContent')
+            ->once()
+            ->with('mods/.pelican-mod-manager.json')
+            ->andReturn(json_encode($document->toArray(), JSON_THROW_ON_ERROR));
+        $files->shouldNotReceive('putContent');
+        $repository = new SynchronousInstalledMetadataRepository();
+
+        self::assertTrue($repository->mutate($server, $files, 'mods', static fn (): InstalledMetadataDocument => $document));
+        self::assertSame(0, $repository->hydrationBumps);
+        self::assertSame(1, $repository->lockCalls);
+    }
+
+    public function test_mutate_still_migrates_an_unchanged_legacy_document(): void
+    {
+        $server = $this->server();
+        $legacy = $this->legacyEntry();
+        $document = InstalledMetadataDocument::fromArray(['installed_mods' => [$legacy]]);
+        self::assertNotNull($document);
+        $files = Mockery::mock(DaemonFileRepository::class);
+        $files->shouldReceive('setServer')->times(3)->with($server)->andReturnSelf();
+        $files->shouldReceive('getContent')
+            ->once()
+            ->with('mods/.pelican-mod-manager.json')
+            ->andThrow(new FileNotFoundException());
+        $files->shouldReceive('getContent')
+            ->once()
+            ->with('mods/.modrinth-metadata.json')
+            ->andReturn(json_encode(['installed_mods' => [$legacy]], JSON_THROW_ON_ERROR));
+        $response = Mockery::mock(Response::class);
+        $response->shouldReceive('failed')->once()->andReturnFalse();
+        $files->shouldReceive('putContent')
+            ->once()
+            ->with('mods/.pelican-mod-manager.json', Mockery::type('string'))
+            ->andReturn($response);
+        $repository = new SynchronousInstalledMetadataRepository();
+
+        self::assertTrue($repository->mutate($server, $files, 'mods', static fn (): InstalledMetadataDocument => $document));
+        self::assertSame(1, $repository->hydrationBumps);
+        self::assertSame(1, $repository->lockCalls);
+    }
+
     public function test_bulk_replace_writes_once_and_bumps_hydration_once(): void
     {
         $server = $this->server();

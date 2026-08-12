@@ -8,6 +8,7 @@ use Illuminate\Http\Client\Pool;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
 use Kazaminosuke\ModManager\Contracts\BatchLatestVersionSourceInterface;
+use Kazaminosuke\ModManager\Contracts\ProjectMetadataPeekManyInterface;
 use Kazaminosuke\ModManager\Contracts\ProjectSourceInterface;
 use Kazaminosuke\ModManager\Contracts\SourceFetchAuthoritativeInterface;
 use Kazaminosuke\ModManager\Contracts\SourceFetchHandlerInterface;
@@ -24,7 +25,7 @@ use Kazaminosuke\ModManager\Support\SourceCache;
 use Kazaminosuke\ModManager\Support\SourceFetchSpec;
 use Throwable;
 
-class HangarSource implements BatchLatestVersionSourceInterface, ProjectSourceInterface, SourceFetchAuthoritativeInterface, SourceFetchHandlerInterface
+class HangarSource implements BatchLatestVersionSourceInterface, ProjectMetadataPeekManyInterface, ProjectSourceInterface, SourceFetchAuthoritativeInterface, SourceFetchHandlerInterface
 {
     protected const BASE_URL = 'https://hangar.papermc.io/api/v1';
 
@@ -232,6 +233,26 @@ class HangarSource implements BatchLatestVersionSourceInterface, ProjectSourceIn
             'data' => is_array($peeked['data']) ? $peeked['data'] : null,
             'pending' => $peeked['pending'],
         ];
+    }
+
+    /** @return array<string, array{data: array<string, mixed>|null, pending: bool}> */
+    public function peekProjects(array $projectIds): array
+    {
+        $specs = [];
+        foreach (array_values(array_unique($projectIds)) as $projectId) {
+            $projectId = (string) $projectId;
+            $specs[$projectId] = $this->spec(self::OPERATION_PROJECT, ['project_id' => $projectId]);
+        }
+
+        $results = [];
+        foreach ($this->sourceCache->peekMany($specs) as $projectId => $peeked) {
+            $results[$projectId] = [
+                'data' => is_array($peeked['data']) ? $peeked['data'] : null,
+                'pending' => !$peeked['hit'],
+            ];
+        }
+
+        return $results;
     }
 
     public function primeProjects(array $dataByProjectId): void

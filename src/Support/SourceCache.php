@@ -130,6 +130,40 @@ final class SourceCache
     }
 
     /**
+     * Batched read-only counterpart to peek(). Cache stores such as Redis map
+     * this to one MGET, avoiding one network round trip per Installed row.
+     *
+     * @param array<string, SourceFetchSpec> $specs
+     * @return array<string, array{hit: bool, data: mixed, fresh: bool}>
+     */
+    public function peekMany(array $specs): array
+    {
+        if ($specs === []) {
+            return [];
+        }
+
+        $keys = [];
+        foreach ($specs as $key => $spec) {
+            $keys[$key] = $spec->cacheKey();
+        }
+
+        $payloads = $this->cache->many(array_values(array_unique($keys)));
+        $now = time();
+        $results = [];
+
+        foreach ($keys as $key => $cacheKey) {
+            $entry = $this->entryFromPayload($payloads[$cacheKey] ?? null);
+            $results[$key] = [
+                'hit' => $entry !== null,
+                'data' => $entry['data'] ?? null,
+                'fresh' => $entry !== null && $entry['fresh_until'] > $now,
+            ];
+        }
+
+        return $results;
+    }
+
+    /**
      * Queue a refresh without performing an inline fetch.
      */
     public function revalidateAsync(SourceFetchSpec $spec, CacheProfile $profile): bool
@@ -175,8 +209,12 @@ final class SourceCache
     /** @return array{v: int, data: mixed, fresh_until: int}|null */
     private function readEntry(SourceFetchSpec $spec): ?array
     {
-        $payload = $this->cache->get($spec->cacheKey());
+        return $this->entryFromPayload($this->cache->get($spec->cacheKey()));
+    }
 
+    /** @return array{v: int, data: mixed, fresh_until: int}|null */
+    private function entryFromPayload(mixed $payload): ?array
+    {
         if (!is_array($payload)
             || ($payload['v'] ?? null) !== self::SCHEMA_VERSION
             || !array_key_exists('data', $payload)

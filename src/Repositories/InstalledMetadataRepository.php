@@ -102,6 +102,15 @@ class InstalledMetadataRepository
 
                 $document = $callback($result->document);
 
+                // A cache-miss scan often rebases to the exact current
+                // document. Avoid a no-op Wings PUT and its hydration cache
+                // invalidation, but retain writes for legacy documents so
+                // they are migrated to the current metadata filename.
+                if ($result->status === InstalledMetadataReadStatus::Current
+                    && $document->toArray() === $result->document->toArray()) {
+                    return true;
+                }
+
                 return $this->write($server, $fileRepository, $folder, $document);
             }) === true;
         } catch (Exception $exception) {

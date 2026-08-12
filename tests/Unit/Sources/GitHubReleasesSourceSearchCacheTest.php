@@ -6,7 +6,6 @@ use App\Models\Server;
 use Illuminate\Cache\ArrayStore;
 use Illuminate\Cache\Repository as LaravelCacheRepository;
 use Illuminate\Config\Repository as LaravelConfigRepository;
-use Illuminate\Contracts\Bus\Dispatcher;
 use Kazaminosuke\ModManager\Contracts\SourceFetchExecutorInterface;
 use Kazaminosuke\ModManager\Enums\ProjectType;
 use Kazaminosuke\ModManager\Services\InstalledOperationManager;
@@ -30,7 +29,7 @@ class GitHubReleasesSourceSearchCacheTest extends TestCase
         // called - see below) stands in for one instead of a Mockery mock.
         $cache = new LaravelCacheRepository(new ArrayStore());
         $config = new LaravelConfigRepository(['queue' => ['default' => 'sync']]);
-        $operations = new InstalledOperationManager($cache, $config, Mockery::mock(Dispatcher::class));
+        $operations = new InstalledOperationManager($cache, $config);
         $sourceCache = new SourceCache($cache, $operations, Mockery::mock(SourceFetchExecutorInterface::class));
         $source = new GitHubReleasesSource($sourceCache);
 

@@ -7,6 +7,7 @@ use Exception;
 use Illuminate\Http\Client\Pool;
 use Illuminate\Support\Facades\Http;
 use Kazaminosuke\ModManager\Contracts\BatchLatestVersionSourceInterface;
+use Kazaminosuke\ModManager\Contracts\ProjectMetadataPeekManyInterface;
 use Kazaminosuke\ModManager\Contracts\ProjectSourceInterface;
 use Kazaminosuke\ModManager\Contracts\SourceFetchAuthoritativeInterface;
 use Kazaminosuke\ModManager\Contracts\SourceFetchHandlerInterface;
@@ -22,7 +23,7 @@ use Kazaminosuke\ModManager\Support\ProjectIconUrl;
 use Kazaminosuke\ModManager\Support\SourceCache;
 use Kazaminosuke\ModManager\Support\SourceFetchSpec;
 
-class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSourceInterface, SourceFetchAuthoritativeInterface, SourceFetchHandlerInterface
+class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectMetadataPeekManyInterface, ProjectSourceInterface, SourceFetchAuthoritativeInterface, SourceFetchHandlerInterface
 {
     protected const BASE_URL = 'https://api.curseforge.com/v1';
 
@@ -282,6 +283,36 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectSour
             'data' => is_array($peeked['data']) ? $peeked['data'] : null,
             'pending' => $peeked['pending'],
         ];
+    }
+
+    /** @return array<string, array{data: array<string, mixed>|null, pending: bool}> */
+    public function peekProjects(array $projectIds): array
+    {
+        $projectIds = array_values(array_unique($projectIds));
+
+        if (!$this->isConfigured()) {
+            return array_fill_keys($projectIds, ['data' => null, 'pending' => false]);
+        }
+
+        $specs = [];
+        foreach ($projectIds as $projectId) {
+            $projectId = (string) $projectId;
+            $specs[$projectId] = new SourceFetchSpec(
+                sourceKey: $this->getKey()->value,
+                operation: 'project',
+                arguments: ['project_id' => $projectId],
+            );
+        }
+
+        $results = [];
+        foreach ($this->cache()->peekMany($specs) as $projectId => $peeked) {
+            $results[$projectId] = [
+                'data' => is_array($peeked['data']) ? $peeked['data'] : null,
+                'pending' => !$peeked['hit'],
+            ];
+        }
+
+        return $results;
     }
 
     public function primeProjects(array $dataByProjectId): void

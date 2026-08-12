@@ -2,9 +2,14 @@
 
 namespace Kazaminosuke\ModManager\Tests\Unit\Services;
 
+use Illuminate\Config\Repository as LaravelConfigRepository;
+use Illuminate\Container\Container;
 use Illuminate\Contracts\Bus\Dispatcher;
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
 use Illuminate\Contracts\Config\Repository as ConfigRepository;
+use Illuminate\Contracts\Debug\ExceptionHandler;
+use Illuminate\Log\Context\Repository as ContextRepository;
+use Illuminate\Support\Facades\Facade;
 use Kazaminosuke\ModManager\Enums\ProjectType;
 use Kazaminosuke\ModManager\Jobs\BulkUpdateInstalledProjects;
 use Kazaminosuke\ModManager\Jobs\ScanInstalledProjects;
@@ -21,8 +26,22 @@ require_once dirname(__DIR__, 3).'/src/Services/InstalledOperationManager.php';
 
 class InstalledOperationManagerTest extends TestCase
 {
+    private ?Container $previousContainer = null;
+
+    private mixed $previousFacadeApplication = null;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $this->previousContainer = Container::getInstance();
+        $this->previousFacadeApplication = Facade::getFacadeApplication();
+    }
+
     protected function tearDown(): void
     {
+        Container::setInstance($this->previousContainer);
+        Facade::setFacadeApplication($this->previousFacadeApplication);
         Mockery::close();
 
         parent::tearDown();
@@ -34,10 +53,7 @@ class InstalledOperationManagerTest extends TestCase
         $cache->shouldReceive('get')->twice()->andReturnNull();
         $config = Mockery::mock(ConfigRepository::class);
         $config->shouldReceive('get')->once()->with('queue.default', 'sync')->andReturn('sync');
-        $dispatcher = Mockery::mock(Dispatcher::class);
-        $dispatcher->shouldNotReceive('dispatch');
-
-        $result = (new InstalledOperationManager($cache, $config, $dispatcher))
+        $result = (new InstalledOperationManager($cache, $config))
             ->dispatchScan(42, ProjectType::Mod);
 
         self::assertFalse($result['dispatched']);
@@ -56,7 +72,8 @@ class InstalledOperationManagerTest extends TestCase
                 && $payload['result']['force'] === true);
         $config = Mockery::mock(ConfigRepository::class);
         $config->shouldReceive('get')->once()->with('queue.default', 'sync')->andReturn('database');
-        $dispatcher = Mockery::mock(Dispatcher::class);
+        $dispatcher = $this->bindDispatcher($cache);
+        $this->expectUniqueLock($cache, 'mod-manager:scan:42:mod', 600);
         $dispatcher->shouldReceive('dispatch')
             ->once()
             ->withArgs(fn (ScanInstalledProjects $job): bool => $job->serverId === 42
@@ -64,7 +81,7 @@ class InstalledOperationManagerTest extends TestCase
                 && $job->force)
             ->andReturn(1);
 
-        $result = (new InstalledOperationManager($cache, $config, $dispatcher))
+        $result = (new InstalledOperationManager($cache, $config))
             ->dispatchScan(42, ProjectType::Mod, force: true);
 
         self::assertTrue($result['dispatched']);
@@ -83,14 +100,15 @@ class InstalledOperationManagerTest extends TestCase
                 && $payload['status'] === InstalledOperationState::STATUS_QUEUED);
         $config = Mockery::mock(ConfigRepository::class);
         $config->shouldReceive('get')->once()->with('queue.default', 'sync')->andReturn('database');
-        $dispatcher = Mockery::mock(Dispatcher::class);
+        $dispatcher = $this->bindDispatcher($cache);
+        $this->expectUniqueLock($cache, 'mod-manager:bulk-update:42:mod', 1200);
         $dispatcher->shouldReceive('dispatch')
             ->once()
             ->withArgs(fn (BulkUpdateInstalledProjects $job): bool => $job->serverId === 42
                 && $job->projectType === ProjectType::Mod->value)
             ->andReturn(1);
 
-        $result = (new InstalledOperationManager($cache, $config, $dispatcher))
+        $result = (new InstalledOperationManager($cache, $config))
             ->dispatchBulkUpdate(42, ProjectType::Mod);
 
         self::assertTrue($result['dispatched']);
@@ -111,10 +129,7 @@ class InstalledOperationManagerTest extends TestCase
         $cache->shouldNotReceive('put');
         $config = Mockery::mock(ConfigRepository::class);
         $config->shouldNotReceive('get');
-        $dispatcher = Mockery::mock(Dispatcher::class);
-        $dispatcher->shouldNotReceive('dispatch');
-
-        $result = (new InstalledOperationManager($cache, $config, $dispatcher))
+        $result = (new InstalledOperationManager($cache, $config))
             ->dispatchBulkUpdate(42, ProjectType::Mod);
 
         self::assertFalse($result['dispatched']);
@@ -137,15 +152,48 @@ class InstalledOperationManagerTest extends TestCase
         $cache->shouldNotReceive('put');
         $config = Mockery::mock(ConfigRepository::class);
         $config->shouldNotReceive('get');
-        $dispatcher = Mockery::mock(Dispatcher::class);
-        $dispatcher->shouldNotReceive('dispatch');
-
-        $result = (new InstalledOperationManager($cache, $config, $dispatcher))
+        $result = (new InstalledOperationManager($cache, $config))
             ->dispatchBulkUpdate(42, ProjectType::Mod);
 
         self::assertFalse($result['dispatched']);
         self::assertSame('already_active', $result['reason']);
         self::assertSame(InstalledOperationManager::OPERATION_SCAN, $result['state']->operation);
         self::assertTrue($result['state']->isActive());
+    }
+
+    private function bindDispatcher(CacheRepository $cache): Dispatcher
+    {
+        $dispatcher = Mockery::mock(Dispatcher::class);
+        $context = Mockery::mock(ContextRepository::class);
+        $exceptionHandler = Mockery::mock(ExceptionHandler::class);
+        $context->shouldReceive('addHidden')->zeroOrMoreTimes();
+        $context->shouldReceive('forgetHidden')->zeroOrMoreTimes();
+        $exceptionHandler->shouldReceive('report')->zeroOrMoreTimes();
+        $dispatchConfig = new LaravelConfigRepository([
+            'cache' => ['default' => 'array'],
+        ]);
+        $container = new Container();
+        $container->instance(CacheRepository::class, $cache);
+        $container->instance(ConfigRepository::class, $dispatchConfig);
+        $container->instance('config', $dispatchConfig);
+        $container->instance(Dispatcher::class, $dispatcher);
+        $container->instance(ContextRepository::class, $context);
+        $container->instance(ExceptionHandler::class, $exceptionHandler);
+        Container::setInstance($container);
+        Facade::setFacadeApplication($container);
+
+        return $dispatcher;
+    }
+
+    private function expectUniqueLock(CacheRepository $cache, string $uniqueId, int $uniqueFor): void
+    {
+        $lock = Mockery::mock();
+        $lock->shouldReceive('get')->once()->andReturnTrue();
+        $cache->shouldReceive('lock')
+            ->once()
+            ->withArgs(static fn (mixed $key, mixed $seconds): bool => is_string($key)
+                && str_ends_with($key, ':'.$uniqueId)
+                && $seconds === $uniqueFor)
+            ->andReturn($lock);
     }
 }

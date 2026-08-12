@@ -7,6 +7,7 @@ use App\Repositories\Daemon\DaemonFileRepository;
 use Illuminate\Container\Container;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Foundation\Queue\Queueable;
 use Kazaminosuke\ModManager\Enums\ProjectType;
 use Kazaminosuke\ModManager\Services\InstalledOperationManager;
@@ -15,6 +16,7 @@ use Throwable;
 
 final class BulkUpdateInstalledProjects implements ShouldBeUnique, ShouldQueue
 {
+    use Dispatchable;
     use Queueable;
 
     public int $tries = 1;

@@ -4,7 +4,6 @@ namespace Kazaminosuke\ModManager\Services;
 
 use App\Models\Server;
 use DateTimeImmutable;
-use Illuminate\Contracts\Bus\Dispatcher;
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
 use Illuminate\Contracts\Config\Repository as ConfigRepository;
 use Kazaminosuke\ModManager\Enums\ProjectType;
@@ -26,7 +25,6 @@ final class InstalledOperationManager
     public function __construct(
         private readonly CacheRepository $cache,
         private readonly ConfigRepository $config,
-        private readonly Dispatcher $dispatcher,
     ) {}
 
     public function supportsAsyncDispatch(): bool
@@ -73,11 +71,14 @@ final class InstalledOperationManager
         ]);
 
         try {
-            $this->dispatcher->dispatch(new ScanInstalledProjects(
+            // PendingDispatch acquires the ShouldBeUnique lock before the
+            // dispatcher sees the job. Calling Dispatcher::dispatch() here
+            // would queue duplicate scan jobs under concurrent requests.
+            ScanInstalledProjects::dispatch(
                 serverId: $serverId,
                 projectType: $projectType->value,
                 force: $force,
-            ));
+            );
         } catch (Throwable $exception) {
             report($exception);
 
@@ -294,10 +295,12 @@ final class InstalledOperationManager
         $state = $this->queue($serverId, $projectType, self::OPERATION_BULK_UPDATE);
 
         try {
-            $this->dispatcher->dispatch(new BulkUpdateInstalledProjects(
+            // See dispatchScan(): the static Dispatchable path is required
+            // for Laravel to acquire this job's ShouldBeUnique lock.
+            BulkUpdateInstalledProjects::dispatch(
                 serverId: $serverId,
                 projectType: $projectType->value,
-            ));
+            );
         } catch (Throwable $exception) {
             report($exception);
 

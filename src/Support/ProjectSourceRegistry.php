@@ -4,6 +4,7 @@ namespace Kazaminosuke\ModManager\Support;
 
 use App\Models\Server;
 use Exception;
+use Kazaminosuke\ModManager\Contracts\ProjectMetadataPeekManyInterface;
 use Kazaminosuke\ModManager\Contracts\ProjectSourceInterface;
 use Kazaminosuke\ModManager\Enums\ProjectSourceKey;
 use Kazaminosuke\ModManager\Enums\ProjectType;
@@ -186,6 +187,20 @@ class ProjectSourceRegistry
             $peekedByProjectId = [];
             $missingIds = [];
 
+            if ($source instanceof ProjectMetadataPeekManyInterface) {
+                $projectIds = array_values(array_unique(array_filter(
+                    array_column($mods, 'project_id'),
+                    static fn (mixed $projectId): bool => is_string($projectId) && $projectId !== '',
+                )));
+
+                try {
+                    $peekedByProjectId = $source->peekProjects($projectIds);
+                } catch (Exception $exception) {
+                    report($exception);
+                    $peekedByProjectId = [];
+                }
+            }
+
             foreach ($mods as $mod) {
                 $projectId = $mod['project_id'] ?? null;
 
@@ -193,14 +208,16 @@ class ProjectSourceRegistry
                     continue;
                 }
 
-                try {
-                    $peeked = $source->peekProject($projectId, dispatchOnMiss: false);
-                } catch (Exception $exception) {
-                    report($exception);
-                    $peeked = ['data' => null, 'pending' => true];
+                if (!array_key_exists($projectId, $peekedByProjectId)) {
+                    try {
+                        $peekedByProjectId[$projectId] = $source->peekProject($projectId, dispatchOnMiss: false);
+                    } catch (Exception $exception) {
+                        report($exception);
+                        $peekedByProjectId[$projectId] = ['data' => null, 'pending' => true];
+                    }
                 }
 
-                $peekedByProjectId[$projectId] = $peeked;
+                $peeked = $peekedByProjectId[$projectId];
 
                 // `pending` differentiates a genuine cache miss from a
                 // definitive negative cache hit (for example, a project that
