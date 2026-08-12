@@ -161,6 +161,44 @@ class InstalledOperationManagerTest extends TestCase
         self::assertTrue($result['state']->isActive());
     }
 
+    public function test_progress_persists_the_running_state_in_one_cache_write(): void
+    {
+        $queued = InstalledOperationState::queued(
+            InstalledOperationManager::OPERATION_BULK_UPDATE,
+            42,
+            ProjectType::Mod,
+        );
+        $cache = Mockery::mock(CacheRepository::class);
+        $cache->shouldReceive('get')
+            ->once()
+            ->with('mod_manager_operation:v1:42:mod:bulk_update')
+            ->andReturn($queued->toCachePayload());
+        $cache->shouldReceive('put')
+            ->once()
+            ->withArgs(function (string $key, array $payload): bool {
+                self::assertSame('mod_manager_operation:v1:42:mod:bulk_update', $key);
+                self::assertSame(InstalledOperationState::STATUS_RUNNING, $payload['status']);
+                self::assertSame(3, $payload['progress']);
+                self::assertSame(10, $payload['total']);
+                self::assertNotNull($payload['started_at']);
+
+                return true;
+            });
+        $config = Mockery::mock(ConfigRepository::class);
+
+        $state = (new InstalledOperationManager($cache, $config))->progress(
+            42,
+            ProjectType::Mod,
+            InstalledOperationManager::OPERATION_BULK_UPDATE,
+            3,
+            10,
+        );
+
+        self::assertSame(InstalledOperationState::STATUS_RUNNING, $state->status);
+        self::assertSame(3, $state->progress);
+        self::assertSame(10, $state->total);
+    }
+
     private function bindDispatcher(CacheRepository $cache): Dispatcher
     {
         $dispatcher = Mockery::mock(Dispatcher::class);

@@ -90,7 +90,7 @@ interface ProjectSourceInterface
      * later peekProject() for any of these ids is a hit instead of
      * queuing its own individual revalidation. See Jobs\WarmProjectMetadata.
      *
-     * @param array<string, array<string, mixed>> $dataByProjectId
+     * @param array<string, array<string, mixed>|null> $dataByProjectId
      */
     public function primeProjects(array $dataByProjectId): void;
 

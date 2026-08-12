@@ -638,15 +638,19 @@
                 const url = new URL(source, window.location.origin);
 
                 // Do not write signed or credential-bearing image URLs into
-                // sessionStorage. Omitting a stale icon is safe; retaining a
-                // credential is not.
+                // sessionStorage. Two public source CDNs use stable numeric
+                // cache-busting/size parameters, so allow only those exact
+                // shapes rather than rejecting an entire table projection.
                 if (
                     !['http:', 'https:'].includes(url.protocol)
                     || url.username
                     || url.password
-                    || url.search
                     || url.hash
                 ) {
+                    return null;
+                }
+
+                if (url.search && !isSafePublicImageQuery(url)) {
                     return null;
                 }
 
@@ -654,6 +658,38 @@
             } catch (_error) {
                 return null;
             }
+        };
+
+        const isSafePublicImageQuery = (url) => {
+            if (url.protocol !== 'https:' || url.port) {
+                return false;
+            }
+
+            const parameters = Array.from(url.searchParams.entries());
+            const numeric = (value) => /^\d+$/.test(value);
+
+            if (url.hostname === 'hangarcdn.papermc.io') {
+                return parameters.length === 1
+                    && parameters[0][0] === 'v'
+                    && numeric(parameters[0][1]);
+            }
+
+            if (url.hostname === 'avatars.githubusercontent.com') {
+                const names = new Set();
+
+                return parameters.length > 0
+                    && parameters.every(([name, value]) => {
+                        if (!['v', 's'].includes(name) || names.has(name) || !numeric(value)) {
+                            return false;
+                        }
+
+                        names.add(name);
+
+                        return true;
+                    });
+            }
+
+            return false;
         };
 
         const badgeColors = (badge) => Array.from(badge.classList)

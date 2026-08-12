@@ -6,6 +6,7 @@ use App\Models\Server;
 use Exception;
 use Illuminate\Http\Client\Pool;
 use Illuminate\Support\Facades\Http;
+use Kazaminosuke\ModManager\Contracts\AuthoritativeBatchProjectSourceInterface;
 use Kazaminosuke\ModManager\Contracts\BatchLatestVersionSourceInterface;
 use Kazaminosuke\ModManager\Contracts\ProjectMetadataPeekManyInterface;
 use Kazaminosuke\ModManager\Contracts\ProjectSourceInterface;
@@ -23,7 +24,7 @@ use Kazaminosuke\ModManager\Support\ProjectIconUrl;
 use Kazaminosuke\ModManager\Support\SourceCache;
 use Kazaminosuke\ModManager\Support\SourceFetchSpec;
 
-class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectMetadataPeekManyInterface, ProjectSourceInterface, SourceFetchAuthoritativeInterface, SourceFetchHandlerInterface
+class CurseForgeSource implements AuthoritativeBatchProjectSourceInterface, BatchLatestVersionSourceInterface, ProjectMetadataPeekManyInterface, ProjectSourceInterface, SourceFetchAuthoritativeInterface, SourceFetchHandlerInterface
 {
     protected const BASE_URL = 'https://api.curseforge.com/v1';
 
@@ -46,6 +47,11 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectMeta
     protected const CLASS_ID_DATAPACK = 12;
 
     protected const CATEGORY_ID_DATAPACK = 5193;
+
+    /** CurseForge rejects catalog requests whose index plus page size exceeds this. */
+    protected const MAX_SEARCH_RESULTS = 10_000;
+
+    protected const SEARCH_PAGE_SIZE = 20;
 
     /**
      * The API documentation does not publish a maximum for POST /mods/files.
@@ -128,9 +134,7 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectMeta
 
         $result = $this->cache()->swr($spec, CacheProfile::Search);
 
-        return is_array($result)
-            ? $result
-            : ['hits' => [], 'total_hits' => 0];
+        return $this->normalizeSearchResult($result);
     }
 
     public function hasCachedSearch(Server $server, ProjectType $type, int $page, ?string $search = null, array $filters = []): bool
@@ -152,12 +156,18 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectMeta
             return null;
         }
 
+        // CurseForge caps index + pageSize at 10,000. Keeping page 501+ on
+        // the final reachable offset gives the paginator a valid total to
+        // clamp against instead of turning an API validation error into an
+        // empty page with a zero range.
+        $page = min(max(1, $page), intdiv(self::MAX_SEARCH_RESULTS, self::SEARCH_PAGE_SIZE));
+
         $params = [
             'gameId' => self::GAME_ID,
             'classId' => $classId,
             'gameVersion' => MinecraftVersionResolver::resolve($server),
-            'index' => ($page - 1) * 20,
-            'pageSize' => 20,
+            'index' => ($page - 1) * self::SEARCH_PAGE_SIZE,
+            'pageSize' => self::SEARCH_PAGE_SIZE,
             'sortField' => match ($filters['sort'] ?? 'downloads') {
                 'updated' => self::SORT_FIELD_LAST_UPDATED,
                 'popularity' => self::SORT_FIELD_POPULARITY,
@@ -220,14 +230,14 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectMeta
                 throw new Exception('Invalid CurseForge search response');
             }
 
-            return [
+            return $this->normalizeSearchResult([
                 'hits' => collect($payload['data'] ?? [])
                     ->filter(fn ($mod) => is_array($mod))
                     ->map(fn (array $mod) => $this->normalizeProject($mod, $type))
                     ->values()
                     ->all(),
                 'total_hits' => (int) ($payload['pagination']['totalCount'] ?? 0),
-            ];
+            ]);
         } finally {
             if ($debugTiming) {
                 logger()->debug('Catalog search API timing', [
@@ -237,6 +247,19 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectMeta
                 ]);
             }
         }
+    }
+
+    /** @return array{hits: array<int, array<string, mixed>>, total_hits: int} */
+    private function normalizeSearchResult(mixed $result): array
+    {
+        if (!is_array($result)) {
+            return ['hits' => [], 'total_hits' => 0];
+        }
+
+        return [
+            'hits' => is_array($result['hits'] ?? null) ? $result['hits'] : [],
+            'total_hits' => min(max(0, (int) ($result['total_hits'] ?? 0)), self::MAX_SEARCH_RESULTS),
+        ];
     }
 
     /** @return array<string, mixed>|null */
@@ -349,11 +372,16 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectMeta
         return $this->getProjectsByIdsUsingCache($projectIds, authoritative: true);
     }
 
+    public function getProjectsByIdsForMetadataWarm(array $projectIds): array
+    {
+        return $this->getProjectsByIdsUsingCache($projectIds, authoritative: true, freshRequired: true);
+    }
+
     /**
      * @param array<int, string> $projectIds
      * @return array<string, mixed>
      */
-    protected function getProjectsByIdsUsingCache(array $projectIds, bool $authoritative): array
+    protected function getProjectsByIdsUsingCache(array $projectIds, bool $authoritative, bool $freshRequired = false): array
     {
         if (empty($projectIds) || !$this->isConfigured()) {
             return [];
@@ -367,9 +395,11 @@ class CurseForgeSource implements BatchLatestVersionSourceInterface, ProjectMeta
             operation: 'projects',
             arguments: ['project_ids' => $modIds],
         );
-        $projects = $authoritative
-            ? $this->cache()->swrRequired($spec, CacheProfile::ProjectMetadata)
-            : $this->cache()->swr($spec, CacheProfile::ProjectMetadata);
+        $projects = $freshRequired
+            ? $this->cache()->swrRequiredFresh($spec, CacheProfile::ProjectMetadata)
+            : ($authoritative
+                ? $this->cache()->swrRequired($spec, CacheProfile::ProjectMetadata)
+                : $this->cache()->swr($spec, CacheProfile::ProjectMetadata));
 
         return is_array($projects) ? $projects : [];
     }

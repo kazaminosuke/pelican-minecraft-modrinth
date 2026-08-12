@@ -2,6 +2,7 @@
 
 namespace Kazaminosuke\ModManager\Tests\Unit\Jobs;
 
+use Kazaminosuke\ModManager\Contracts\ProjectSourceInterface;
 use Kazaminosuke\ModManager\Jobs\WarmProjectMetadata;
 use Kazaminosuke\ModManager\Sources\ModrinthSource;
 use Kazaminosuke\ModManager\Support\ProjectSourceRegistry;
@@ -33,33 +34,35 @@ class WarmProjectMetadataTest extends TestCase
         self::assertNotSame($base->uniqueId(), (new WarmProjectMetadata('modrinth', ['a', 'c']))->uniqueId());
     }
 
-    public function test_handle_fetches_in_bulk_and_primes_every_returned_project(): void
+    public function test_handle_primes_confirmed_missing_projects_from_a_fresh_batch_response(): void
     {
         $modrinth = Mockery::mock(ModrinthSource::class);
-        $modrinth->shouldReceive('getProjectsByIds')
+        $modrinth->shouldReceive('isConfigured')->once()->andReturnTrue();
+        $modrinth->shouldReceive('getProjectsByIdsForMetadataWarm')
             ->once()
-            ->with(['a', 'b'])
-            ->andReturn(['a' => ['title' => 'A'], 'b' => ['title' => 'B']]);
+            ->with(['a', 'gone'])
+            ->andReturn(['a' => ['title' => 'A']]);
         $modrinth->shouldReceive('primeProjects')
             ->once()
-            ->with(['a' => ['title' => 'A'], 'b' => ['title' => 'B']]);
+            ->with(['a' => ['title' => 'A'], 'gone' => null]);
 
         $registry = Mockery::mock(ProjectSourceRegistry::class);
         $registry->shouldReceive('getByValue')->once()->with('modrinth')->andReturn($modrinth);
 
-        (new WarmProjectMetadata('modrinth', ['a', 'b']))->handle($registry);
+        (new WarmProjectMetadata('modrinth', ['a', 'gone']))->handle($registry);
 
         self::assertTrue(true);
     }
 
-    public function test_handle_does_not_prime_when_the_bulk_fetch_returns_nothing(): void
+    public function test_handle_keeps_positive_only_priming_for_non_batch_sources(): void
     {
-        $modrinth = Mockery::mock(ModrinthSource::class);
-        $modrinth->shouldReceive('getProjectsByIds')->once()->with(['a'])->andReturn([]);
-        $modrinth->shouldNotReceive('primeProjects');
+        $source = Mockery::mock(ProjectSourceInterface::class);
+        $source->shouldReceive('isConfigured')->once()->andReturnTrue();
+        $source->shouldReceive('getProjectsByIds')->once()->with(['a'])->andReturn([]);
+        $source->shouldNotReceive('primeProjects');
 
         $registry = Mockery::mock(ProjectSourceRegistry::class);
-        $registry->shouldReceive('getByValue')->once()->with('modrinth')->andReturn($modrinth);
+        $registry->shouldReceive('getByValue')->once()->with('modrinth')->andReturn($source);
 
         (new WarmProjectMetadata('modrinth', ['a']))->handle($registry);
 
@@ -74,6 +77,28 @@ class WarmProjectMetadataTest extends TestCase
         (new WarmProjectMetadata('modrinth', []))->handle($registry);
 
         self::assertTrue(true);
+    }
+
+    public function test_handle_does_not_negative_prime_when_the_source_was_disabled_after_dispatch(): void
+    {
+        $source = Mockery::mock(ProjectSourceInterface::class);
+        $source->shouldReceive('isConfigured')->once()->andReturnFalse();
+        $source->shouldNotReceive('getProjectsByIds');
+        $source->shouldNotReceive('primeProjects');
+        $registry = Mockery::mock(ProjectSourceRegistry::class);
+        $registry->shouldReceive('getByValue')->once()->with('curseforge')->andReturn($source);
+
+        (new WarmProjectMetadata('curseforge', ['123']))->handle($registry);
+
+        self::assertTrue(true);
+    }
+
+    public function test_unique_id_treats_duplicate_and_blank_ids_as_the_same_batch(): void
+    {
+        $left = new WarmProjectMetadata('modrinth', ['a', ' ', 'b', 'a']);
+        $right = new WarmProjectMetadata('modrinth', ['b', 'a']);
+
+        self::assertSame($left->uniqueId(), $right->uniqueId());
     }
 
     public function test_handle_skips_priming_when_the_source_is_unrecognized(): void

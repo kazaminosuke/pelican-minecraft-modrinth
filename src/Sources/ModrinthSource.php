@@ -6,6 +6,7 @@ use App\Models\Server;
 use Exception;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Support\Facades\Http;
+use Kazaminosuke\ModManager\Contracts\AuthoritativeBatchProjectSourceInterface;
 use Kazaminosuke\ModManager\Contracts\BatchLatestVersionSourceInterface;
 use Kazaminosuke\ModManager\Contracts\ProjectMetadataPeekManyInterface;
 use Kazaminosuke\ModManager\Contracts\ProjectSourceInterface;
@@ -20,7 +21,7 @@ use Kazaminosuke\ModManager\Support\MinecraftVersionResolver;
 use Kazaminosuke\ModManager\Support\SourceCache;
 use Kazaminosuke\ModManager\Support\SourceFetchSpec;
 
-class ModrinthSource implements BatchLatestVersionSourceInterface, ProjectMetadataPeekManyInterface, ProjectSourceInterface, SourceFetchAuthoritativeInterface, SourceFetchHandlerInterface
+class ModrinthSource implements AuthoritativeBatchProjectSourceInterface, BatchLatestVersionSourceInterface, ProjectMetadataPeekManyInterface, ProjectSourceInterface, SourceFetchAuthoritativeInterface, SourceFetchHandlerInterface
 {
     protected const BASE_URL = 'https://api.modrinth.com/v2';
 
@@ -413,11 +414,16 @@ class ModrinthSource implements BatchLatestVersionSourceInterface, ProjectMetada
         return $this->getProjectsByIdsUsingCache($projectIds, authoritative: true);
     }
 
+    public function getProjectsByIdsForMetadataWarm(array $projectIds): array
+    {
+        return $this->getProjectsByIdsUsingCache($projectIds, authoritative: true, freshRequired: true);
+    }
+
     /**
      * @param array<int, string> $projectIds
      * @return array<string, mixed>
      */
-    private function getProjectsByIdsUsingCache(array $projectIds, bool $authoritative): array
+    private function getProjectsByIdsUsingCache(array $projectIds, bool $authoritative, bool $freshRequired = false): array
     {
         if (empty($projectIds)) {
             return [];
@@ -426,9 +432,11 @@ class ModrinthSource implements BatchLatestVersionSourceInterface, ProjectMetada
         $projectIds = array_values(array_unique($projectIds));
         sort($projectIds);
         $spec = $this->spec(self::OPERATION_PROJECTS, ['project_ids' => $projectIds]);
-        $projects = $authoritative
-            ? $this->sourceCache->swrRequired($spec, CacheProfile::ProjectMetadata)
-            : $this->sourceCache->swr($spec, CacheProfile::ProjectMetadata);
+        $projects = $freshRequired
+            ? $this->sourceCache->swrRequiredFresh($spec, CacheProfile::ProjectMetadata)
+            : ($authoritative
+                ? $this->sourceCache->swrRequired($spec, CacheProfile::ProjectMetadata)
+                : $this->sourceCache->swr($spec, CacheProfile::ProjectMetadata));
 
         return is_array($projects) ? $projects : [];
     }

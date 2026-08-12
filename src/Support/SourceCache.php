@@ -98,6 +98,43 @@ final class SourceCache
     }
 
     /**
+     * Fetch a value that is both authoritative and fresh.
+     *
+     * This is intentionally narrower than swrRequired(): Installed metadata
+     * warming may write a negative per-project entry for an id missing from a
+     * successful batch response, so a stale batch result is not sufficient
+     * evidence that the project is still absent. Fresh entries retain the
+     * ordinary cache fast path; stale entries are revalidated synchronously.
+     */
+    public function swrRequiredFresh(SourceFetchSpec $spec, CacheProfile $profile): mixed
+    {
+        $entry = $this->readEntry($spec);
+
+        if ($entry !== null && $entry['fresh_until'] > time()) {
+            return $entry['data'];
+        }
+
+        if ($this->hasFailureMarker($spec)) {
+            throw new RuntimeException("Source [{$spec->sourceKey}] operation [{$spec->operation}] is temporarily unavailable.");
+        }
+
+        try {
+            return $this->fetchAndStore($spec, $profile, $profile->backgroundTimeoutSeconds());
+        } catch (Throwable $exception) {
+            $this->markFailure($spec, $profile, $exception);
+
+            // A stale entry remains available to ordinary render-path SWR
+            // reads. Do not queue another attempt from this already-queued
+            // metadata warming job.
+            if ($entry === null && $this->supportsAsyncDispatch()) {
+                $this->dispatchRevalidation($spec, $profile, ignoreFailureMarker: true);
+            }
+
+            throw $exception;
+        }
+    }
+
+    /**
      * Execute a queued refresh. Failures intentionally leave any stale entry
      * untouched and are absorbed after recording a short-lived marker.
      */
@@ -252,8 +289,41 @@ final class SourceCache
      */
     public function primeMany(array $entries, CacheProfile $profile): void
     {
+        $staleTtl = $profile->staleTtlSeconds();
+
+        if ($staleTtl === null) {
+            foreach ($entries as $entry) {
+                $this->storeEntry($entry['spec'], $entry['data'], $profile);
+            }
+
+            return;
+        }
+
+        $payloads = [];
+        $failureMarkers = [];
+        $freshUntil = time() + $profile->freshTtlSeconds();
+
         foreach ($entries as $entry) {
-            $this->storeEntry($entry['spec'], $entry['data'], $profile);
+            $cacheKey = $entry['spec']->cacheKey();
+            $payloads[$cacheKey] = [
+                'v' => self::SCHEMA_VERSION,
+                'data' => $entry['data'],
+                'fresh_until' => $freshUntil,
+            ];
+            $failureMarkers[$this->failureMarkerKey($entry['spec'])] = true;
+        }
+
+        if ($payloads === []) {
+            return;
+        }
+
+        // Laravel's Redis store writes putMany() as one MULTI/EXEC
+        // transaction. Project metadata warming therefore avoids one network
+        // write per row while retaining each entry's existing TTL semantics.
+        $this->cache->putMany($payloads, $staleTtl);
+
+        foreach (array_keys($failureMarkers) as $failureMarker) {
+            $this->cache->forget($failureMarker);
         }
     }
 

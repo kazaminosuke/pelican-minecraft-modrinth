@@ -6,6 +6,7 @@ use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Foundation\Queue\Queueable;
+use Kazaminosuke\ModManager\Contracts\AuthoritativeBatchProjectSourceInterface;
 use Kazaminosuke\ModManager\Support\ProjectSourceRegistry;
 use Throwable;
 
@@ -54,7 +55,7 @@ final class WarmProjectMetadata implements ShouldBeUnique, ShouldQueue
 
     public function uniqueId(): string
     {
-        $ids = $this->projectIds;
+        $ids = $this->normalizedProjectIds();
         sort($ids);
 
         return "warm_project_metadata:{$this->sourceKey}:".hash('sha256', implode(',', $ids));
@@ -62,7 +63,9 @@ final class WarmProjectMetadata implements ShouldBeUnique, ShouldQueue
 
     public function handle(ProjectSourceRegistry $registry): void
     {
-        if ($this->projectIds === []) {
+        $projectIds = $this->normalizedProjectIds();
+
+        if ($projectIds === []) {
             return;
         }
 
@@ -72,8 +75,25 @@ final class WarmProjectMetadata implements ShouldBeUnique, ShouldQueue
             return;
         }
 
+        // Configuration may have changed between the browser's miss and this
+        // queued job. An unavailable source is not evidence that its projects
+        // were removed, so retain the previous positive-only no-op behavior.
+        if (!$source->isConfigured()) {
+            return;
+        }
+
         try {
-            $map = $source->getProjectsByIds($this->projectIds);
+            if ($source instanceof AuthoritativeBatchProjectSourceInterface) {
+                // Only the sources with a real batch endpoint make a missing
+                // id conclusive. Their fresh-only method prevents stale batch
+                // cache data from becoming a newly fresh negative entry.
+                $map = $source->getProjectsByIdsForMetadataWarm($projectIds);
+                $source->primeProjects($this->includeConfirmedMissingProjects($projectIds, $map));
+
+                return;
+            }
+
+            $map = $source->getProjectsByIds($projectIds);
         } catch (Throwable $exception) {
             report($exception);
 
@@ -83,5 +103,41 @@ final class WarmProjectMetadata implements ShouldBeUnique, ShouldQueue
         if ($map !== []) {
             $source->primeProjects($map);
         }
+    }
+
+    /** @return array<int, string> */
+    private function normalizedProjectIds(): array
+    {
+        return array_values(array_unique(array_filter(
+            array_map(static fn (mixed $projectId): string => trim((string) $projectId), $this->projectIds),
+            static fn (string $projectId): bool => $projectId !== '',
+        )));
+    }
+
+    /**
+     * @param array<int, string> $projectIds
+     * @param array<string, mixed> $projects
+     * @return array<string, array<string, mixed>|null>
+     */
+    private function includeConfirmedMissingProjects(array $projectIds, array $projects): array
+    {
+        $primed = [];
+
+        foreach ($projectIds as $projectId) {
+            if (array_key_exists($projectId, $projects)) {
+                $primed[$projectId] = $projects[$projectId];
+
+                continue;
+            }
+
+            // CurseForge canonicalizes numeric ids for its batch endpoint;
+            // retain the id used by the per-project cache spec on the left.
+            $canonicalNumericId = ctype_digit($projectId) ? (string) (int) $projectId : null;
+            $primed[$projectId] = $canonicalNumericId !== null && array_key_exists($canonicalNumericId, $projects)
+                ? $projects[$canonicalNumericId]
+                : null;
+        }
+
+        return $primed;
     }
 }

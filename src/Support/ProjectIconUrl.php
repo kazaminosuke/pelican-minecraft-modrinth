@@ -12,11 +12,6 @@ final class ProjectIconUrl
         return self::PLACEHOLDER_DATA_URI;
     }
 
-    public static function fallbackHandler(): string
-    {
-        return "this.onerror=null;this.dataset.mmrIconFallbackApplied='true';this.src='".self::PLACEHOLDER_DATA_URI."';";
-    }
-
     /**
      * CurseForge's logo.thumbnailUrl is already a CDN rendition. Request its
      * small square variant for a dense catalog instead of transferring the

@@ -150,7 +150,9 @@ final class InstalledOperationManager
         int $progress,
         ?int $total = null,
     ): InstalledOperationState {
-        $state = $this->start($server, $projectType, $operation, $total);
+        $serverId = $this->serverId($server);
+        $state = $this->state($serverId, $projectType, $operation)
+            ?? InstalledOperationState::queued($operation, $serverId, $projectType);
 
         return $this->put($state->withProgress($progress, $total));
     }

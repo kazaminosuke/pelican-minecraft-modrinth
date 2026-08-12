@@ -89,6 +89,27 @@ class CurseForgeSourceSearchCacheTest extends TestCase
         self::assertSame(['hits' => [], 'total_hits' => 0], $source->search($this->server(), ProjectType::Datapack));
     }
 
+    public function test_search_clamps_an_unreachable_page_to_curseforges_final_supported_offset(): void
+    {
+        $this->bindApiKey('test-key');
+        $executor = Mockery::mock(SourceFetchExecutorInterface::class);
+        $executor->shouldReceive('fetch')
+            ->once()
+            ->withArgs(function (SourceFetchSpec $spec): bool {
+                self::assertSame(9980, $spec->arguments['params']['index']);
+                self::assertSame(20, $spec->arguments['params']['pageSize']);
+
+                return true;
+            })
+            ->andReturn(['hits' => [], 'total_hits' => 12_000]);
+        $source = new CurseForgeSource($this->sourceCache($this->cache(), $executor));
+
+        self::assertSame(
+            ['hits' => [], 'total_hits' => 10_000],
+            $source->search($this->server(), ProjectType::Datapack, 501),
+        );
+    }
+
     private function bindApiKey(?string $key): void
     {
         $container = new Container();

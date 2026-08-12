@@ -531,9 +531,7 @@ class InstalledProjectService
             $remainingFilenames = array_values(array_diff($remainingFilenames, array_keys($matchedEntries)));
         }
 
-        foreach ($matchedEntries as $entry) {
-            $scannedInstalled = $this->upsertInstalledEntry($scannedInstalled, $entry);
-        }
+        $scannedInstalled = $this->upsertInstalledEntries($scannedInstalled, array_values($matchedEntries));
 
         $scannedUnresolved = [];
         foreach ($remainingFilenames as $filename) {
@@ -750,6 +748,72 @@ class InstalledProjectService
                 && strtolower((string) ($candidate['filename'] ?? '')) !== $filename,
         ));
         $entries[] = $entry;
+
+        return $entries;
+    }
+
+    /**
+     * Add a scan batch while preserving upsertInstalledEntry()'s semantics:
+     * every incoming entry removes a pre-existing identity/filename, and a
+     * later incoming filename wins over an earlier one. Doing that in one
+     * filter avoids repeatedly walking all prior scan results for every file.
+     *
+     * @param array<int, array<string, mixed>> $entries
+     * @param array<int, array<string, mixed>> $incoming
+     * @return array<int, array<string, mixed>>
+     */
+    protected function upsertInstalledEntries(array $entries, array $incoming): array
+    {
+        if ($incoming === []) {
+            return $entries;
+        }
+
+        $removedIdentities = [];
+        $removedFilenames = [];
+        $winners = [];
+        $winnerByIdentity = [];
+        $winnerByFilename = [];
+
+        foreach ($incoming as $position => $entry) {
+            $identity = $this->installedEntryIdentity($entry);
+            $filename = strtolower((string) ($entry['filename'] ?? ''));
+            $removedIdentities[$identity] = true;
+            $removedFilenames[$filename] = true;
+
+            foreach ([$winnerByIdentity[$identity] ?? null, $winnerByFilename[$filename] ?? null] as $winnerPosition) {
+                if ($winnerPosition === null || !isset($winners[$winnerPosition])) {
+                    continue;
+                }
+
+                $winner = $winners[$winnerPosition];
+                unset($winners[$winnerPosition]);
+
+                if (($winnerByIdentity[$winner['identity']] ?? null) === $winnerPosition) {
+                    unset($winnerByIdentity[$winner['identity']]);
+                }
+                if (($winnerByFilename[$winner['filename']] ?? null) === $winnerPosition) {
+                    unset($winnerByFilename[$winner['filename']]);
+                }
+            }
+
+            $winners[$position] = [
+                'entry' => $entry,
+                'identity' => $identity,
+                'filename' => $filename,
+            ];
+            $winnerByIdentity[$identity] = $position;
+            $winnerByFilename[$filename] = $position;
+        }
+
+        $entries = array_values(array_filter(
+            $entries,
+            fn (array $candidate): bool => !isset($removedIdentities[$this->installedEntryIdentity($candidate)])
+                && !isset($removedFilenames[strtolower((string) ($candidate['filename'] ?? ''))]),
+        ));
+
+        foreach ($winners as $winner) {
+            $entries[] = $winner['entry'];
+        }
 
         return $entries;
     }

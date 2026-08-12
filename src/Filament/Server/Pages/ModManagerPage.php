@@ -1629,10 +1629,8 @@ class ModManagerPage extends Page implements HasTable
                     // Filament's generated HTML below the cell.
                     ->extraCellAttributes(['data-mmr-swr-cell' => 'icon', 'class' => 'mmr-project-icon-cell'])
                     ->extraImgAttributes([
-                        'data-mmr-project-icon' => 'true',
                         'loading' => 'lazy',
                         'decoding' => 'async',
-                        'onerror' => ProjectIconUrl::fallbackHandler(),
                     ]),
                 TextColumn::make('title')
                     ->label(trans('pelican-minecraft-modrinth::strings.table.columns.title'))

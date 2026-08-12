@@ -82,6 +82,27 @@ class IncrementalInstalledScanTest extends TestCase
         );
     }
 
+    public function test_scan_batch_upsert_removes_each_conflict_once_and_keeps_the_last_filename_winner(): void
+    {
+        $service = new TestableInstalledProjectService();
+        $existing = [
+            $this->entry('old', 'same.jar', '1'),
+            $this->entry('keep', 'keep.jar', '1'),
+            $this->entry('case', 'CASE.jar', '1'),
+        ];
+        $first = $this->entry('first', 'same.jar', '2');
+        $last = $this->entry('last', 'SAME.JAR', '3');
+
+        $result = $service->exposeBatchUpsert($existing, [$first, $last]);
+
+        $expected = $service->exposeSingleUpsert($existing, $first);
+        $expected = $service->exposeSingleUpsert($expected, $last);
+
+        self::assertSame(['keep.jar', 'CASE.jar', 'SAME.JAR'], array_column($result, 'filename'));
+        self::assertSame(['keep', 'case', 'last'], array_column($result, 'project_id'));
+        self::assertSame($expected, $result);
+    }
+
     /** @param array<int, array<string, mixed>> $entries */
     private function document(array $entries): InstalledMetadataDocument
     {
@@ -135,5 +156,25 @@ class TestableInstalledProjectService extends InstalledProjectService
     public function exposeHashLookupSources(Server $server, ProjectType $type): array
     {
         return $this->getHashLookupSourcesInPriorityOrder($server, $type);
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $entries
+     * @param array<int, array<string, mixed>> $incoming
+     * @return array<int, array<string, mixed>>
+     */
+    public function exposeBatchUpsert(array $entries, array $incoming): array
+    {
+        return $this->upsertInstalledEntries($entries, $incoming);
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $entries
+     * @param array<string, mixed> $incoming
+     * @return array<int, array<string, mixed>>
+     */
+    public function exposeSingleUpsert(array $entries, array $incoming): array
+    {
+        return $this->upsertInstalledEntry($entries, $incoming);
     }
 }

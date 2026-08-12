@@ -121,6 +121,76 @@ class SourceCacheTest extends TestCase
         self::assertFalse($result['second']['fresh']);
     }
 
+    public function test_prime_many_batches_finite_ttl_entries_and_clears_failure_markers(): void
+    {
+        $first = new SourceFetchSpec('modrinth', 'project', ['project_id' => 'first']);
+        $second = new SourceFetchSpec('modrinth', 'project', ['project_id' => 'second']);
+        $cache = Mockery::mock(CacheRepository::class);
+        $cache->shouldReceive('putMany')
+            ->once()
+            ->withArgs(function (array $payloads, int $ttl) use ($first, $second): bool {
+                self::assertSame(CacheProfile::ProjectMetadata->staleTtlSeconds(), $ttl);
+                self::assertSame(['title' => 'First'], $payloads[$first->cacheKey()]['data']);
+                self::assertNull($payloads[$second->cacheKey()]['data']);
+                self::assertSame(SourceCache::SCHEMA_VERSION, $payloads[$first->cacheKey()]['v']);
+                self::assertIsInt($payloads[$first->cacheKey()]['fresh_until']);
+
+                return true;
+            });
+        $cache->shouldReceive('forget')
+            ->once()
+            ->with($first->cacheKey().':failure:v1');
+        $cache->shouldReceive('forget')
+            ->once()
+            ->with($second->cacheKey().':failure:v1');
+        $executor = Mockery::mock(SourceFetchExecutorInterface::class);
+        $executor->shouldNotReceive('fetch');
+        $executor->shouldNotReceive('emptyResult');
+
+        $this->sourceCache($cache, 'sync', $executor)->primeMany([
+            ['spec' => $first, 'data' => ['title' => 'First']],
+            ['spec' => $second, 'data' => null],
+        ], CacheProfile::ProjectMetadata);
+    }
+
+    public function test_prime_many_persists_a_negative_project_cache_hit(): void
+    {
+        $cache = $this->cache();
+        $spec = new SourceFetchSpec('modrinth', 'project', ['project_id' => 'gone']);
+        $executor = Mockery::mock(SourceFetchExecutorInterface::class);
+        $executor->shouldNotReceive('fetch');
+        $executor->shouldNotReceive('emptyResult');
+        $sourceCache = $this->sourceCache($cache, 'sync', $executor);
+
+        $sourceCache->primeMany([
+            ['spec' => $spec, 'data' => null],
+        ], CacheProfile::ProjectMetadata);
+
+        $peeked = $sourceCache->peek($spec);
+        self::assertTrue($peeked['hit']);
+        self::assertTrue($peeked['fresh']);
+        self::assertNull($peeked['data']);
+    }
+
+    public function test_fresh_required_fetch_revalidates_a_stale_entry_instead_of_using_it_as_authoritative(): void
+    {
+        $cache = $this->cache();
+        $spec = $this->spec();
+        $cache->put($spec->cacheKey(), $this->entry(['old'], time() - 1), 300);
+        $executor = Mockery::mock(SourceFetchExecutorInterface::class);
+        $executor->shouldReceive('fetch')
+            ->once()
+            ->with($spec, CacheProfile::Search->backgroundTimeoutSeconds())
+            ->andReturn(['new']);
+        $executor->shouldNotReceive('emptyResult');
+
+        self::assertSame(
+            ['new'],
+            $this->sourceCache($cache, 'sync', $executor)->swrRequiredFresh($spec, CacheProfile::Search),
+        );
+        self::assertSame(['new'], $cache->get($spec->cacheKey())['data']);
+    }
+
     public function test_stale_hit_returns_immediately_and_dispatches_one_unique_job_for_repeated_reads(): void
     {
         $cache = $this->cache();

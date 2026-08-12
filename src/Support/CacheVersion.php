@@ -28,7 +28,7 @@ class CacheVersion
 
     public static function bumpHydration(Server $server): void
     {
-        cache()->forever(self::HYDRATION_KEY_PREFIX.$server->id, now()->timestamp);
+        self::bump(self::HYDRATION_KEY_PREFIX.$server->id);
     }
 
     /**
@@ -40,11 +40,10 @@ class CacheVersion
      */
     public static function bumpAllHydration(): int
     {
-        $timestamp = now()->timestamp;
         $ids = Server::query()->pluck('id');
 
         foreach ($ids as $id) {
-            cache()->forever(self::HYDRATION_KEY_PREFIX.$id, $timestamp);
+            self::bump(self::HYDRATION_KEY_PREFIX.$id);
         }
 
         return $ids->count();
@@ -57,6 +56,17 @@ class CacheVersion
 
     public static function bumpHangarHash(): void
     {
-        cache()->forever(self::HANGAR_HASH_KEY, now()->timestamp);
+        self::bump(self::HANGAR_HASH_KEY);
+    }
+
+    private static function bump(string $key): void
+    {
+        // A timestamp has only second precision, so several metadata writes in
+        // one bulk update could otherwise retain the same display-cache key.
+        // Redis INCR creates a missing key atomically; the fallback preserves
+        // compatibility with cache drivers that cannot increment values.
+        if (cache()->increment($key) === false) {
+            cache()->forever($key, 1);
+        }
     }
 }

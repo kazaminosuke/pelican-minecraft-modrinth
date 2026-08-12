@@ -30,6 +30,7 @@ use Kazaminosuke\ModManager\Services\InstalledOperationManager;
 use Kazaminosuke\ModManager\Services\InstalledProjectService;
 use Kazaminosuke\ModManager\Support\CacheVersion;
 use Kazaminosuke\ModManager\Support\EggProfileResolver;
+use Kazaminosuke\ModManager\Support\ProjectIconUrl;
 
 class ModManagerPlugin implements HasPluginSettings, Plugin
 {
@@ -60,6 +61,10 @@ class ModManagerPlugin implements HasPluginSettings, Plugin
         // that targets this page's own table chrome must list every
         // concrete page class it needs to appear on.
         $pageClasses = [ModManagerPage::class, MinecraftDatapackPage::class];
+        $projectIconPlaceholder = json_encode(
+            ProjectIconUrl::placeholderDataUri(),
+            JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_TAG | JSON_THROW_ON_ERROR,
+        );
 
         $panel->renderHook(
             TablesRenderHook::TOOLBAR_SEARCH_AFTER,
@@ -205,6 +210,24 @@ class ModManagerPlugin implements HasPluginSettings, Plugin
                 .'@keyframes mmr-spin{to{transform:rotate(360deg);}}'
                 .'@media (prefers-reduced-motion: no-preference){.mmr-installed-operation-spinning .fi-icon{animation:mmr-spin 1s linear infinite;}}'
                 .'</style>'
+                // Capture-phase error events reach this listener even though
+                // image errors do not bubble. Keeping it once in HEAD removes
+                // a large inline onerror attribute from every table row and
+                // also works when Livewire changes the src on the same node.
+                .'<script data-navigate-once>'
+                    .'(()=>{'
+                        .'if(window.__mmrProjectIconFallbackListener){return;}'
+                        .'window.__mmrProjectIconFallbackListener=true;'
+                        .'const placeholder='.$projectIconPlaceholder.';'
+                        .'document.addEventListener("error",(event)=>{'
+                            .'const image=event.target;'
+                            .'if(!(image instanceof HTMLImageElement)||!image.matches(".mmr-table-scroll-ctn .mmr-project-icon-cell .fi-ta-image img")){return;}'
+                            .'const source=image.currentSrc||image.src;'
+                            .'if(!source||source===placeholder){return;}'
+                            .'image.src=placeholder;'
+                        .'},true);'
+                    .'})();'
+                .'</script>'
             ),
             $pageClasses,
         );

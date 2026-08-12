@@ -7,15 +7,11 @@ use PHPUnit\Framework\TestCase;
 
 class ProjectIconUrlTest extends TestCase
 {
-    public function test_the_local_placeholder_and_error_handler_are_deterministic(): void
+    public function test_the_local_placeholder_is_deterministic(): void
     {
         $placeholder = ProjectIconUrl::placeholderDataUri();
 
         self::assertStringStartsWith('data:image/svg+xml;base64,', $placeholder);
-        self::assertSame(
-            "this.onerror=null;this.dataset.mmrIconFallbackApplied='true';this.src='{$placeholder}';",
-            ProjectIconUrl::fallbackHandler(),
-        );
     }
 
     public function test_curseforge_catalog_icons_use_the_cdn_small_rendition(): void
