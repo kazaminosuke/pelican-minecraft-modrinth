@@ -94,6 +94,18 @@ class ModrinthSourceSearchCacheTest extends TestCase
         self::assertFalse($source->hasCachedSearch($server, ProjectType::Datapack, 2, null, []));
     }
 
+    public function test_project_metadata_retry_cooldown_is_visible_to_the_batched_peek_without_becoming_pending(): void
+    {
+        $source = new ModrinthSource($this->sourceCache($this->cache()));
+
+        $source->deferProjectMetadataRetries(['offline']);
+        $peeked = $source->peekProjects(['offline']);
+
+        self::assertNull($peeked['offline']['data']);
+        self::assertFalse($peeked['offline']['pending']);
+        self::assertTrue($peeked['offline']['retry_delayed']);
+    }
+
     private function cache(): LaravelCacheRepository
     {
         return new LaravelCacheRepository(new ArrayStore());

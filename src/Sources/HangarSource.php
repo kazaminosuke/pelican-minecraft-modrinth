@@ -213,7 +213,7 @@ class HangarSource implements BatchLatestVersionSourceInterface, ProjectMetadata
         return is_array($project) ? $project : null;
     }
 
-    /** @return array{data: array<string, mixed>|null, pending: bool} */
+    /** @return array{data: array<string, mixed>|null, pending: bool, retry_delayed: bool} */
     public function peekProject(string $projectId, bool $dispatchOnMiss = true): array
     {
         $spec = $this->spec(self::OPERATION_PROJECT, ['project_id' => $projectId]);
@@ -223,7 +223,8 @@ class HangarSource implements BatchLatestVersionSourceInterface, ProjectMetadata
 
             return [
                 'data' => is_array($peeked['data']) ? $peeked['data'] : null,
-                'pending' => !$peeked['hit'],
+                'pending' => !$peeked['hit'] && !$peeked['retry_delayed'],
+                'retry_delayed' => $peeked['retry_delayed'],
             ];
         }
 
@@ -232,10 +233,11 @@ class HangarSource implements BatchLatestVersionSourceInterface, ProjectMetadata
         return [
             'data' => is_array($peeked['data']) ? $peeked['data'] : null,
             'pending' => $peeked['pending'],
+            'retry_delayed' => $peeked['retry_delayed'],
         ];
     }
 
-    /** @return array<string, array{data: array<string, mixed>|null, pending: bool}> */
+    /** @return array<string, array{data: array<string, mixed>|null, pending: bool, retry_delayed: bool}> */
     public function peekProjects(array $projectIds): array
     {
         $specs = [];
@@ -248,7 +250,8 @@ class HangarSource implements BatchLatestVersionSourceInterface, ProjectMetadata
         foreach ($this->sourceCache->peekMany($specs) as $projectId => $peeked) {
             $results[$projectId] = [
                 'data' => is_array($peeked['data']) ? $peeked['data'] : null,
-                'pending' => !$peeked['hit'],
+                'pending' => !$peeked['hit'] && !$peeked['retry_delayed'],
+                'retry_delayed' => $peeked['retry_delayed'],
             ];
         }
 
@@ -455,20 +458,30 @@ class HangarSource implements BatchLatestVersionSourceInterface, ProjectMetadata
         $unresolvedProjects = is_array($payload) && is_array($payload['unresolved'] ?? null)
             ? array_fill_keys($payload['unresolved'], true)
             : [];
+        $failuresByProject = is_array($payload) && is_array($payload['failures'] ?? null)
+            ? $payload['failures']
+            : [];
         $versions = [];
         $unresolved = [];
+        $failures = [];
 
         foreach ($requestsByProject as $projectId => $projectRequests) {
             foreach ($projectRequests as $request) {
                 if (is_array($resolved[$projectId] ?? null)) {
                     $versions[$request->key()] = $resolved[$projectId];
+                } elseif (is_string($failuresByProject[$projectId] ?? null) && $failuresByProject[$projectId] !== '') {
+                    $failures[$request->key()] = $failuresByProject[$projectId];
                 } elseif (isset($unresolvedProjects[$projectId]) || !isset($resolved[$projectId])) {
                     $unresolved[] = $request->key();
                 }
             }
         }
 
-        return new LatestVersionLookupResult(versionsByKey: $versions, unresolvedKeys: $unresolved);
+        return new LatestVersionLookupResult(
+            versionsByKey: $versions,
+            unresolvedKeys: $unresolved,
+            failuresByKey: $failures,
+        );
     }
 
     /**
@@ -593,7 +606,7 @@ class HangarSource implements BatchLatestVersionSourceInterface, ProjectMetadata
     }
 
     /**
-     * @return array{versions: array<string, array<string, mixed>>, unresolved: array<int, string>}
+     * @return array{versions: array<string, array<string, mixed>>, unresolved: array<int, string>, failures?: array<string, string>}
      */
     protected function fetchLatestVersions(SourceFetchSpec $spec, float $timeoutSeconds): array
     {
@@ -652,6 +665,8 @@ class HangarSource implements BatchLatestVersionSourceInterface, ProjectMetadata
         $result = ['versions' => $resolved, 'unresolved' => $unresolved];
 
         if ($failures !== []) {
+            $result['failures'] = $failures;
+
             throw new PartialSourceFetchException(
                 'Hangar latest-version batch completed with partial failures: '.implode('; ', $failures),
                 $result,

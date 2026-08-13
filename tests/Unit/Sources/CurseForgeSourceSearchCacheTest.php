@@ -110,6 +110,19 @@ class CurseForgeSourceSearchCacheTest extends TestCase
         );
     }
 
+    public function test_project_metadata_retry_cooldown_is_visible_to_the_batched_peek_without_becoming_pending(): void
+    {
+        $this->bindApiKey('test-key');
+        $source = new CurseForgeSource($this->sourceCache($this->cache()));
+
+        $source->deferProjectMetadataRetries(['123']);
+        $peeked = $source->peekProjects(['123']);
+
+        self::assertNull($peeked['123']['data']);
+        self::assertFalse($peeked['123']['pending']);
+        self::assertTrue($peeked['123']['retry_delayed']);
+    }
+
     private function bindApiKey(?string $key): void
     {
         $container = new Container();

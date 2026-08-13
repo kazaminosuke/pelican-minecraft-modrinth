@@ -270,6 +270,17 @@ class ProjectSourceRegistry
                     continue;
                 }
 
+                if ($peeked['retry_delayed'] ?? false) {
+                    // The source-cache failure cooldown is not evidence that
+                    // this installed project disappeared. Keep the locally
+                    // known metadata visible, but do not keep the 500 ms
+                    // enrichment poll or warm job alive until the cooldown
+                    // expires.
+                    $results[] = $this->metadataOnlyEntry($mod, $sourceKey);
+
+                    continue;
+                }
+
                 $results[] = $this->unavailableEntry($mod, $sourceKey);
             }
         }
@@ -338,6 +349,21 @@ class ProjectSourceRegistry
      */
     protected function pendingEntry(array $mod, string $sourceKey): array
     {
+        $entry = $this->metadataOnlyEntry($mod, $sourceKey);
+        $entry['enrichment_pending'] = true;
+
+        return $entry;
+    }
+
+    /**
+     * A metadata-document-only row for either a pending enrichment or a
+     * short retry cooldown. The latter must not set enrichment_pending, since
+     * no job can make progress until SourceCache's failure marker expires.
+     *
+     * @param  array<string, mixed>  $mod
+     */
+    protected function metadataOnlyEntry(array $mod, string $sourceKey): array
+    {
         return [
             'project_id' => $mod['project_id'] ?? '',
             'slug' => $mod['project_slug'] ?? '',
@@ -349,7 +375,6 @@ class ProjectSourceRegistry
             'date_modified' => null,
             'project_type' => '',
             'source' => $sourceKey,
-            'enrichment_pending' => true,
         ];
     }
 }

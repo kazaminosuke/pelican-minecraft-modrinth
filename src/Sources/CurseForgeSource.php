@@ -278,11 +278,11 @@ class CurseForgeSource implements AuthoritativeBatchProjectSourceInterface, Batc
         return is_array($project) ? $project : null;
     }
 
-    /** @return array{data: array<string, mixed>|null, pending: bool} */
+    /** @return array{data: array<string, mixed>|null, pending: bool, retry_delayed: bool} */
     public function peekProject(string $projectId, bool $dispatchOnMiss = true): array
     {
         if (!$this->isConfigured()) {
-            return ['data' => null, 'pending' => false];
+            return ['data' => null, 'pending' => false, 'retry_delayed' => false];
         }
 
         $spec = new SourceFetchSpec(
@@ -296,7 +296,8 @@ class CurseForgeSource implements AuthoritativeBatchProjectSourceInterface, Batc
 
             return [
                 'data' => is_array($peeked['data']) ? $peeked['data'] : null,
-                'pending' => !$peeked['hit'],
+                'pending' => !$peeked['hit'] && !$peeked['retry_delayed'],
+                'retry_delayed' => $peeked['retry_delayed'],
             ];
         }
 
@@ -305,16 +306,17 @@ class CurseForgeSource implements AuthoritativeBatchProjectSourceInterface, Batc
         return [
             'data' => is_array($peeked['data']) ? $peeked['data'] : null,
             'pending' => $peeked['pending'],
+            'retry_delayed' => $peeked['retry_delayed'],
         ];
     }
 
-    /** @return array<string, array{data: array<string, mixed>|null, pending: bool}> */
+    /** @return array<string, array{data: array<string, mixed>|null, pending: bool, retry_delayed: bool}> */
     public function peekProjects(array $projectIds): array
     {
         $projectIds = array_values(array_unique($projectIds));
 
         if (!$this->isConfigured()) {
-            return array_fill_keys($projectIds, ['data' => null, 'pending' => false]);
+            return array_fill_keys($projectIds, ['data' => null, 'pending' => false, 'retry_delayed' => false]);
         }
 
         $specs = [];
@@ -331,7 +333,8 @@ class CurseForgeSource implements AuthoritativeBatchProjectSourceInterface, Batc
         foreach ($this->cache()->peekMany($specs) as $projectId => $peeked) {
             $results[$projectId] = [
                 'data' => is_array($peeked['data']) ? $peeked['data'] : null,
-                'pending' => !$peeked['hit'],
+                'pending' => !$peeked['hit'] && !$peeked['retry_delayed'],
+                'retry_delayed' => $peeked['retry_delayed'],
             ];
         }
 
@@ -375,6 +378,29 @@ class CurseForgeSource implements AuthoritativeBatchProjectSourceInterface, Batc
     public function getProjectsByIdsForMetadataWarm(array $projectIds): array
     {
         return $this->getProjectsByIdsUsingCache($projectIds, authoritative: true, freshRequired: true);
+    }
+
+    public function deferProjectMetadataRetries(array $projectIds): void
+    {
+        if (!$this->isConfigured()) {
+            return;
+        }
+
+        $specs = [];
+
+        foreach (array_values(array_unique($projectIds)) as $projectId) {
+            $projectId = trim((string) $projectId);
+
+            if ($projectId !== '') {
+                $specs[] = new SourceFetchSpec(
+                    sourceKey: $this->getKey()->value,
+                    operation: 'project',
+                    arguments: ['project_id' => $projectId],
+                );
+            }
+        }
+
+        $this->cache()->markRetryDelayedMany($specs, CacheProfile::ProjectMetadata);
     }
 
     /**

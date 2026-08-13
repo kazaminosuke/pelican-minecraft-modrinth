@@ -18,4 +18,13 @@ interface AuthoritativeBatchProjectSourceInterface
      * @return array<string, mixed> [projectId => normalized project data]
      */
     public function getProjectsByIdsForMetadataWarm(array $projectIds): array;
+
+    /**
+     * Mark the normal per-project metadata entries for a short retry delay
+     * after an authoritative batch request failed. This must not negative-cache
+     * the ids: the failure says nothing about whether they still exist.
+     *
+     * @param array<int, string> $projectIds
+     */
+    public function deferProjectMetadataRetries(array $projectIds): void;
 }

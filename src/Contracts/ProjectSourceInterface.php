@@ -77,7 +77,12 @@ interface ProjectSourceInterface
      * ProjectSourceRegistry::peekInstalled() / Jobs\WarmProjectMetadata) -
      * a miss still comes back with pending true either way.
      *
-     * @return array{data: array<string, mixed>|null, pending: bool}
+     * retry_delayed is true only when a recent upstream failure has put this
+     * entry into SourceCache's short retry cooldown. It is not a negative
+     * cache hit, so callers should retain known installed metadata rather
+     * than present the project as unavailable.
+     *
+     * @return array{data: array<string, mixed>|null, pending: bool, retry_delayed?: bool}
      */
     public function peekProject(string $projectId, bool $dispatchOnMiss = true): array;
 

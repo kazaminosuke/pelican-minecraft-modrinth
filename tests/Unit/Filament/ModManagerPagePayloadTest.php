@@ -12,6 +12,10 @@ use Kazaminosuke\ModManager\Enums\ProjectSourceKey;
 use Kazaminosuke\ModManager\Enums\ProjectType;
 use Kazaminosuke\ModManager\Filament\Server\Pages\ModManagerPage;
 use Kazaminosuke\ModManager\Services\InstalledOperationManager;
+use Kazaminosuke\ModManager\Services\InstalledProjectService;
+use Kazaminosuke\ModManager\Support\InstalledMetadataDocument;
+use Kazaminosuke\ModManager\Support\InstalledMetadataReadResult;
+use Kazaminosuke\ModManager\Support\InstalledMetadataReadStatus;
 use Kazaminosuke\ModManager\Support\InstalledOperationState;
 use Kazaminosuke\ModManager\Support\InstalledScanResult;
 use Livewire\Attributes\Locked;
@@ -21,6 +25,10 @@ use ReflectionProperty;
 
 final class TestableModManagerPage extends ModManagerPage
 {
+    public bool $returnNullInstalledOperationForTest = false;
+
+    public int $installedScanRefreshesForTest = 0;
+
     /** @param array<int, ProjectSourceInterface> $sources */
     public function __construct(private readonly array $sources = []) {}
 
@@ -88,6 +96,50 @@ final class TestableModManagerPage extends ModManagerPage
     public function operationStatusAttributesForTest(): array
     {
         return $this->installedOperationStatusExtraAttributes();
+    }
+
+    public function formatExternalProjectDateForTest(mixed $value): string
+    {
+        return $this->formatExternalProjectDate($value);
+    }
+
+    public function truncateProjectDescriptionForTest(string $value): string
+    {
+        return $this->truncateProjectDescription($value);
+    }
+
+    public function lowercaseInstalledSearchValueForTest(string $value): string
+    {
+        return $this->lowercaseInstalledSearchValue($value);
+    }
+
+    public function currentInstalledModForOperationForTest(Server $server, DaemonFileRepository $files, ProjectType $type, string $projectId, ProjectSourceKey $source): ?array
+    {
+        return $this->getCurrentInstalledModForOperation($server, $files, $type, $projectId, $source);
+    }
+
+    protected function refreshInstalledOperationState(): ?InstalledOperationState
+    {
+        if ($this->returnNullInstalledOperationForTest) {
+            $this->installedOperation = null;
+
+            return null;
+        }
+
+        return parent::refreshInstalledOperationState();
+    }
+
+    protected function refreshInstalledScanDataReady(): void
+    {
+        if ($this->returnNullInstalledOperationForTest) {
+            $this->installedScanRefreshesForTest++;
+            $this->installedFilesCount = 4;
+            $this->installedScanDataReady = true;
+
+            return;
+        }
+
+        parent::refreshInstalledScanDataReady();
     }
 }
 
@@ -309,6 +361,130 @@ class ModManagerPagePayloadTest extends TestCase
             ProjectType::Datapack,
         )->toCachePayload();
         self::assertTrue($page->shouldShowOperationStatusForTest());
+    }
+
+    public function test_finished_bulk_update_status_is_not_left_visible(): void
+    {
+        $page = new TestableModManagerPage();
+        $page->installedOperation = InstalledOperationState::queued(
+            InstalledOperationManager::OPERATION_BULK_UPDATE,
+            42,
+            ProjectType::Datapack,
+        )->failed('failed')->toCachePayload();
+
+        self::assertFalse($page->shouldShowOperationStatusForTest());
+    }
+
+    public function test_missing_shared_terminal_operation_refreshes_the_durable_scan_badge(): void
+    {
+        $page = new TestableModManagerPage();
+        $page->returnNullInstalledOperationForTest = true;
+        $page->pollInstalledOperations = true;
+
+        $page->pollInstalledOperation();
+
+        self::assertSame(1, $page->installedScanRefreshesForTest);
+        self::assertSame(4, $page->installedFilesCount);
+        self::assertTrue($page->installedScanDataReady);
+        self::assertFalse($page->pollInstalledOperations);
+    }
+
+    public function test_malformed_external_dates_do_not_break_table_state_formatting(): void
+    {
+        $page = new TestableModManagerPage();
+
+        self::assertSame('', $page->formatExternalProjectDateForTest('not-a-date'));
+        self::assertSame('', $page->formatExternalProjectDateForTest(''));
+        self::assertNotSame('', $page->formatExternalProjectDateForTest('2026-08-01T00:00:00Z'));
+    }
+
+    public function test_installed_search_and_description_helpers_are_unicode_safe(): void
+    {
+        $page = new TestableModManagerPage();
+        $description = str_repeat('あ', 61);
+        $truncated = $page->truncateProjectDescriptionForTest($description);
+
+        self::assertSame(function_exists('mb_strtolower') ? 'éclair' : 'Éclair', $page->lowercaseInstalledSearchValueForTest('ÉCLAIR'));
+        self::assertStringEndsWith('...', $truncated);
+        self::assertSame(1, preg_match('//u', $truncated));
+    }
+
+    public function test_mutating_operation_reads_current_authoritative_metadata(): void
+    {
+        $previousContainer = Container::getInstance();
+        $previousFacadeApplication = Facade::getFacadeApplication();
+        $container = new Container();
+        $service = Mockery::mock(InstalledProjectService::class);
+        $server = new Server();
+        $files = Mockery::mock(DaemonFileRepository::class);
+        $document = InstalledMetadataDocument::fromArray(['installed_mods' => [[
+            'project_id' => 'project',
+            'project_slug' => 'project',
+            'project_title' => 'Project',
+            'version_id' => 'old',
+            'version_number' => '1.0.0',
+            'filename' => 'old.jar',
+            'installed_at' => '2026-08-01T00:00:00Z',
+            'source' => ProjectSourceKey::GitHubReleases->value,
+        ]]]);
+        self::assertNotNull($document);
+        $service->shouldReceive('getInstalledMetadataReadResult')
+            ->once()
+            ->with($server, $files, ProjectType::Plugin)
+            ->andReturn(new InstalledMetadataReadResult($document, InstalledMetadataReadStatus::Current));
+        $container->instance(InstalledProjectService::class, $service);
+        Container::setInstance($container);
+        Facade::setFacadeApplication($container);
+
+        try {
+            $installed = (new TestableModManagerPage())->currentInstalledModForOperationForTest(
+                $server,
+                $files,
+                ProjectType::Plugin,
+                'project',
+                ProjectSourceKey::GitHubReleases,
+            );
+
+            self::assertSame('old.jar', $installed['filename']);
+        } finally {
+            Facade::clearResolvedInstance(InstalledProjectService::class);
+            Container::setInstance($previousContainer);
+            Facade::setFacadeApplication($previousFacadeApplication);
+        }
+    }
+
+    public function test_mutating_operation_accepts_missing_metadata_as_an_empty_install(): void
+    {
+        $previousContainer = Container::getInstance();
+        $previousFacadeApplication = Facade::getFacadeApplication();
+        $container = new Container();
+        $service = Mockery::mock(InstalledProjectService::class);
+        $server = new Server();
+        $files = Mockery::mock(DaemonFileRepository::class);
+        $service->shouldReceive('getInstalledMetadataReadResult')
+            ->once()
+            ->with($server, $files, ProjectType::Plugin)
+            ->andReturn(new InstalledMetadataReadResult(
+                InstalledMetadataDocument::empty(),
+                InstalledMetadataReadStatus::Missing,
+            ));
+        $container->instance(InstalledProjectService::class, $service);
+        Container::setInstance($container);
+        Facade::setFacadeApplication($container);
+
+        try {
+            self::assertNull((new TestableModManagerPage())->currentInstalledModForOperationForTest(
+                $server,
+                $files,
+                ProjectType::Plugin,
+                'project',
+                ProjectSourceKey::GitHubReleases,
+            ));
+        } finally {
+            Facade::clearResolvedInstance(InstalledProjectService::class);
+            Container::setInstance($previousContainer);
+            Facade::setFacadeApplication($previousFacadeApplication);
+        }
     }
 
     public function test_catalog_tabs_exclude_sources_without_search_capability(): void

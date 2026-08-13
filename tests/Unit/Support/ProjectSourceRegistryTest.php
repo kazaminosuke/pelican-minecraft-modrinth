@@ -145,6 +145,29 @@ class ProjectSourceRegistryTest extends TestCase
         self::assertArrayNotHasKey('enrichment_pending', $rows[0]);
     }
 
+    public function test_peek_installed_keeps_known_metadata_without_polling_or_dispatching_during_a_retry_cooldown(): void
+    {
+        $modrinth = Mockery::mock(ModrinthSource::class);
+        $modrinth->shouldReceive('peekProjects')
+            ->once()
+            ->with(['offline'])
+            ->andReturn(['offline' => ['data' => null, 'pending' => false, 'retry_delayed' => true]]);
+
+        $registry = $this->registryWith(modrinth: $modrinth, supportsAsyncDispatch: true);
+        $dispatcher = $this->bindDispatcher();
+        $dispatcher->shouldNotReceive('dispatch');
+
+        $rows = $registry->peekInstalled([
+            ['source' => 'modrinth', 'project_id' => 'offline', 'project_title' => 'Stored Project', 'project_slug' => 'stored-project'],
+        ], $this->server());
+
+        self::assertCount(1, $rows);
+        self::assertSame('Stored Project', $rows[0]['title']);
+        self::assertSame('stored-project', $rows[0]['slug']);
+        self::assertArrayNotHasKey('enrichment_pending', $rows[0]);
+        self::assertArrayNotHasKey('unavailable', $rows[0]);
+    }
+
     public function test_peek_installed_returns_an_unavailable_placeholder_for_an_unrecognized_source(): void
     {
         $registry = $this->registryWith(supportsAsyncDispatch: false);

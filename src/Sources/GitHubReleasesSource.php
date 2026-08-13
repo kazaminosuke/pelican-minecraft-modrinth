@@ -143,13 +143,13 @@ class GitHubReleasesSource implements BatchLatestVersionSourceInterface, Project
         return $this->resolveProjectByIdentifier($projectId);
     }
 
-    /** @return array{data: array<string, mixed>|null, pending: bool} */
+    /** @return array{data: array<string, mixed>|null, pending: bool, retry_delayed: bool} */
     public function peekProject(string $projectId, bool $dispatchOnMiss = true): array
     {
         $repo = $this->parseIdentifier($projectId);
 
         if ($repo === null) {
-            return ['data' => null, 'pending' => false];
+            return ['data' => null, 'pending' => false, 'retry_delayed' => false];
         }
 
         [$owner, $name] = array_map('strtolower', $repo);
@@ -163,7 +163,8 @@ class GitHubReleasesSource implements BatchLatestVersionSourceInterface, Project
 
             return [
                 'data' => is_array($peeked['data']) ? $peeked['data'] : null,
-                'pending' => !$peeked['hit'],
+                'pending' => !$peeked['hit'] && !$peeked['retry_delayed'],
+                'retry_delayed' => $peeked['retry_delayed'],
             ];
         }
 
@@ -172,10 +173,11 @@ class GitHubReleasesSource implements BatchLatestVersionSourceInterface, Project
         return [
             'data' => is_array($peeked['data']) ? $peeked['data'] : null,
             'pending' => $peeked['pending'],
+            'retry_delayed' => $peeked['retry_delayed'],
         ];
     }
 
-    /** @return array<string, array{data: array<string, mixed>|null, pending: bool}> */
+    /** @return array<string, array{data: array<string, mixed>|null, pending: bool, retry_delayed: bool}> */
     public function peekProjects(array $projectIds): array
     {
         $specs = [];
@@ -186,7 +188,7 @@ class GitHubReleasesSource implements BatchLatestVersionSourceInterface, Project
             $repo = $this->parseIdentifier($projectId);
 
             if ($repo === null) {
-                $results[$projectId] = ['data' => null, 'pending' => false];
+                $results[$projectId] = ['data' => null, 'pending' => false, 'retry_delayed' => false];
 
                 continue;
             }
@@ -201,7 +203,8 @@ class GitHubReleasesSource implements BatchLatestVersionSourceInterface, Project
         foreach ($this->sourceCache->peekMany($specs) as $projectId => $peeked) {
             $results[$projectId] = [
                 'data' => is_array($peeked['data']) ? $peeked['data'] : null,
-                'pending' => !$peeked['hit'],
+                'pending' => !$peeked['hit'] && !$peeked['retry_delayed'],
+                'retry_delayed' => $peeked['retry_delayed'],
             ];
         }
 
@@ -312,6 +315,7 @@ class GitHubReleasesSource implements BatchLatestVersionSourceInterface, Project
 
         [$requestsByRepository, $repositories, $unresolved] = $this->groupRequestsByRepository($requests);
         $versions = [];
+        $failures = [];
 
         if ($repositories !== []) {
             ksort($repositories);
@@ -324,11 +328,13 @@ class GitHubReleasesSource implements BatchLatestVersionSourceInterface, Project
             $result = $this->distributeLatestPayload($requestsByRepository, $payload);
             $versions = $result->versions();
             $unresolved = array_merge($unresolved, $result->unresolvedKeys());
+            $failures = $result->failures();
         }
 
         return new LatestVersionLookupResult(
             versionsByKey: $versions,
             unresolvedKeys: $unresolved,
+            failuresByKey: $failures,
         );
     }
 
@@ -434,20 +440,30 @@ class GitHubReleasesSource implements BatchLatestVersionSourceInterface, Project
         $unresolvedRepositories = is_array($payload) && is_array($payload['unresolved'] ?? null)
             ? array_fill_keys($payload['unresolved'], true)
             : [];
+        $failuresByKey = is_array($payload) && is_array($payload['failures'] ?? null)
+            ? $payload['failures']
+            : [];
         $versions = [];
         $unresolved = [];
+        $failures = [];
 
         foreach ($requestsByRepository as $repositoryKey => $repositoryRequests) {
             foreach ($repositoryRequests as $request) {
                 if (is_array($versionsByRepository[$repositoryKey] ?? null)) {
                     $versions[$request->key()] = $versionsByRepository[$repositoryKey];
+                } elseif (is_string($failuresByKey[$request->key()] ?? null) && $failuresByKey[$request->key()] !== '') {
+                    $failures[$request->key()] = $failuresByKey[$request->key()];
                 } elseif (isset($unresolvedRepositories[$repositoryKey]) || !isset($versionsByRepository[$repositoryKey])) {
                     $unresolved[] = $request->key();
                 }
             }
         }
 
-        return new LatestVersionLookupResult(versionsByKey: $versions, unresolvedKeys: $unresolved);
+        return new LatestVersionLookupResult(
+            versionsByKey: $versions,
+            unresolvedKeys: $unresolved,
+            failuresByKey: $failures,
+        );
     }
 
     /**
@@ -522,7 +538,7 @@ class GitHubReleasesSource implements BatchLatestVersionSourceInterface, Project
     }
 
     /**
-     * @return array{versions: array<string, array<string, mixed>>, unresolved: array<int, string>}
+     * @return array{versions: array<string, array<string, mixed>>, unresolved: array<int, string>, failures?: array<string, string>}
      */
     protected function fetchLatestReleases(SourceFetchSpec $spec, float $timeoutSeconds): array
     {
@@ -563,6 +579,8 @@ class GitHubReleasesSource implements BatchLatestVersionSourceInterface, Project
         $result = ['versions' => $versions, 'unresolved' => $unresolved];
 
         if ($resolved->failures() !== []) {
+            $result['failures'] = $resolved->failures();
+
             throw new PartialSourceFetchException(
                 'GitHub latest-release batch completed with partial failures: '.implode('; ', $resolved->failures()),
                 $result,

@@ -419,6 +419,21 @@ class ModrinthSource implements AuthoritativeBatchProjectSourceInterface, BatchL
         return $this->getProjectsByIdsUsingCache($projectIds, authoritative: true, freshRequired: true);
     }
 
+    public function deferProjectMetadataRetries(array $projectIds): void
+    {
+        $specs = [];
+
+        foreach (array_values(array_unique($projectIds)) as $projectId) {
+            $projectId = trim((string) $projectId);
+
+            if ($projectId !== '') {
+                $specs[] = $this->spec(self::OPERATION_PROJECT, ['project_id' => $projectId]);
+            }
+        }
+
+        $this->sourceCache->markRetryDelayedMany($specs, CacheProfile::ProjectMetadata);
+    }
+
     /**
      * @param array<int, string> $projectIds
      * @return array<string, mixed>
@@ -452,7 +467,7 @@ class ModrinthSource implements AuthoritativeBatchProjectSourceInterface, BatchL
         return is_array($project) ? $project : null;
     }
 
-    /** @return array{data: array<string, mixed>|null, pending: bool} */
+    /** @return array{data: array<string, mixed>|null, pending: bool, retry_delayed: bool} */
     public function peekProject(string $projectId, bool $dispatchOnMiss = true): array
     {
         $spec = $this->spec(self::OPERATION_PROJECT, ['project_id' => $projectId]);
@@ -462,7 +477,8 @@ class ModrinthSource implements AuthoritativeBatchProjectSourceInterface, BatchL
 
             return [
                 'data' => is_array($peeked['data']) ? $peeked['data'] : null,
-                'pending' => !$peeked['hit'],
+                'pending' => !$peeked['hit'] && !$peeked['retry_delayed'],
+                'retry_delayed' => $peeked['retry_delayed'],
             ];
         }
 
@@ -471,10 +487,11 @@ class ModrinthSource implements AuthoritativeBatchProjectSourceInterface, BatchL
         return [
             'data' => is_array($peeked['data']) ? $peeked['data'] : null,
             'pending' => $peeked['pending'],
+            'retry_delayed' => $peeked['retry_delayed'],
         ];
     }
 
-    /** @return array<string, array{data: array<string, mixed>|null, pending: bool}> */
+    /** @return array<string, array{data: array<string, mixed>|null, pending: bool, retry_delayed: bool}> */
     public function peekProjects(array $projectIds): array
     {
         $specs = [];
@@ -487,7 +504,8 @@ class ModrinthSource implements AuthoritativeBatchProjectSourceInterface, BatchL
         foreach ($this->sourceCache->peekMany($specs) as $projectId => $peeked) {
             $results[$projectId] = [
                 'data' => is_array($peeked['data']) ? $peeked['data'] : null,
-                'pending' => !$peeked['hit'],
+                'pending' => !$peeked['hit'] && !$peeked['retry_delayed'],
+                'retry_delayed' => $peeked['retry_delayed'],
             ];
         }
 

@@ -2,17 +2,30 @@
 
 namespace Kazaminosuke\ModManager\Tests\Unit\Jobs;
 
+use Illuminate\Container\Container;
+use Illuminate\Contracts\Debug\ExceptionHandler;
 use Kazaminosuke\ModManager\Contracts\ProjectSourceInterface;
 use Kazaminosuke\ModManager\Jobs\WarmProjectMetadata;
 use Kazaminosuke\ModManager\Sources\ModrinthSource;
 use Kazaminosuke\ModManager\Support\ProjectSourceRegistry;
 use Mockery;
 use PHPUnit\Framework\TestCase;
+use RuntimeException;
 
 class WarmProjectMetadataTest extends TestCase
 {
+    private ?Container $previousContainer = null;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $this->previousContainer = Container::getInstance();
+    }
+
     protected function tearDown(): void
     {
+        Container::setInstance($this->previousContainer);
         Mockery::close();
 
         parent::tearDown();
@@ -67,6 +80,38 @@ class WarmProjectMetadataTest extends TestCase
         (new WarmProjectMetadata('modrinth', ['a']))->handle($registry);
 
         self::assertTrue(true);
+    }
+
+    public function test_handle_marks_individual_metadata_entries_for_a_short_retry_delay_when_an_authoritative_batch_fails(): void
+    {
+        $exception = new RuntimeException('upstream unavailable');
+        $exceptionHandler = Mockery::mock(ExceptionHandler::class);
+        $exceptionHandler->shouldReceive('report')->once()->with($exception);
+        $container = new Container();
+        $container->instance(ExceptionHandler::class, $exceptionHandler);
+        Container::setInstance($container);
+
+        $modrinth = Mockery::mock(ModrinthSource::class);
+        $modrinth->shouldReceive('isConfigured')->once()->andReturnTrue();
+        $modrinth->shouldReceive('getProjectsByIdsForMetadataWarm')
+            ->once()
+            ->with(['a', 'b'])
+            ->andThrow($exception);
+        $deferredIds = null;
+        $modrinth->shouldReceive('deferProjectMetadataRetries')
+            ->once()
+            ->with(['a', 'b'])
+            ->andReturnUsing(function (array $ids) use (&$deferredIds): void {
+                $deferredIds = $ids;
+            });
+        $modrinth->shouldNotReceive('primeProjects');
+
+        $registry = Mockery::mock(ProjectSourceRegistry::class);
+        $registry->shouldReceive('getByValue')->once()->with('modrinth')->andReturn($modrinth);
+
+        (new WarmProjectMetadata('modrinth', ['a', 'b']))->handle($registry);
+
+        self::assertSame(['a', 'b'], $deferredIds);
     }
 
     public function test_handle_does_nothing_for_an_empty_id_list(): void

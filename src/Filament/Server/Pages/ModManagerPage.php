@@ -36,6 +36,7 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use Kazaminosuke\ModManager\Contracts\ProjectSourceInterface;
 use Kazaminosuke\ModManager\Enums\MinecraftLoader;
 use Kazaminosuke\ModManager\Enums\ProjectOperation;
@@ -48,6 +49,7 @@ use Kazaminosuke\ModManager\Services\InstalledOperationManager;
 use Kazaminosuke\ModManager\Services\VersionLookupCoordinator;
 use Kazaminosuke\ModManager\Support\CacheVersion;
 use Kazaminosuke\ModManager\Support\EggProfileResolver;
+use Kazaminosuke\ModManager\Support\InstalledMetadataReadStatus;
 use Kazaminosuke\ModManager\Support\InstalledOperationState;
 use Kazaminosuke\ModManager\Support\InstalledScanResult;
 use Kazaminosuke\ModManager\Support\ProjectIconUrl;
@@ -876,6 +878,41 @@ class ModManagerPage extends Page implements HasTable
         return $this->installedModsIndex[$sourceKey.':'.$projectId] ?? null;
     }
 
+    /**
+     * Read the metadata document directly before a mutating operation. The
+     * component-local metadata cache is deliberately suitable for rendering,
+     * but it must not decide whether a concurrent install is an Install or
+     * Update operation (nor which old archive needs removing).
+     *
+     * @return array<string, mixed>|null
+     *
+     * @throws Exception
+     */
+    protected function getCurrentInstalledModForOperation(
+        Server $server,
+        DaemonFileRepository $fileRepository,
+        ProjectType $type,
+        string $projectId,
+        ProjectSourceKey $sourceKey,
+    ): ?array {
+        $metadataResult = ModManager::getInstalledMetadataReadResult($server, $fileRepository, $type);
+
+        // Treat a failed direct read as an error, rather than accidentally
+        // treating an existing project as a fresh install.
+        if (!$metadataResult->isAuthoritative() && $metadataResult->status !== InstalledMetadataReadStatus::Missing) {
+            throw new Exception('Unable to verify installed project metadata');
+        }
+
+        foreach ($metadataResult->document->installedMods() as $installedMod) {
+            if (($installedMod['project_id'] ?? null) === $projectId
+                && ($installedMod['source'] ?? ProjectSourceKey::Modrinth->value) === $sourceKey->value) {
+                return $installedMod;
+            }
+        }
+
+        return null;
+    }
+
     protected function forgetInstalledModsMetadata(): void
     {
         $this->installedModsMetadata = null;
@@ -1202,6 +1239,20 @@ class ModManagerPage extends Page implements HasTable
         return $this->canManageProjectOperation($server, $operation);
     }
 
+    protected function canManageInstallOrUpdate(Server $server): bool
+    {
+        return $this->canManageProjectOperation($server, ProjectOperation::Install)
+            || $this->canManageProjectOperation($server, ProjectOperation::Update);
+    }
+
+    protected function canManageCurrentInstallOrUpdate(): bool
+    {
+        /** @var Server $server */
+        $server = Filament::getTenant();
+
+        return $this->canManageInstallOrUpdate($server);
+    }
+
     protected function authorizeProjectOperation(Server $server, ProjectOperation $operation): void
     {
         abort_unless($this->canManageProjectOperation($server, $operation), 403);
@@ -1394,6 +1445,36 @@ class ModManagerPage extends Page implements HasTable
         );
     }
 
+    protected function lowercaseInstalledSearchValue(string $value): string
+    {
+        return function_exists('mb_strtolower')
+            ? mb_strtolower($value, 'UTF-8')
+            : strtolower($value);
+    }
+
+    protected function truncateProjectDescription(string $description): string
+    {
+        return Str::limit($description, 120, '...');
+    }
+
+    protected function parseExternalProjectDate(mixed $value): ?Carbon
+    {
+        if (!is_string($value) || trim($value) === '') {
+            return null;
+        }
+
+        try {
+            return Carbon::parse(trim($value), 'UTC');
+        } catch (Exception) {
+            return null;
+        }
+    }
+
+    protected function formatExternalProjectDate(mixed $value): string
+    {
+        return $this->parseExternalProjectDate($value)?->diffForHumans() ?? '';
+    }
+
     /**
      * @throws Exception
      */
@@ -1444,13 +1525,13 @@ class ModManagerPage extends Page implements HasTable
                     }
 
                     if ($search) {
-                        $searchLower = strtolower($search);
+                        $searchLower = $this->lowercaseInstalledSearchValue($search);
                         $installedMods = array_values(array_filter($installedMods, function (array $mod) use ($searchLower) {
-                            return str_contains(strtolower($mod['project_title']), $searchLower)
-                                || str_contains(strtolower($mod['project_slug']), $searchLower);
+                            return str_contains($this->lowercaseInstalledSearchValue($mod['project_title']), $searchLower)
+                                || str_contains($this->lowercaseInstalledSearchValue($mod['project_slug']), $searchLower);
                         }));
 
-                        $unknownFiles = array_values(array_filter($unknownFiles, fn (string $filename) => str_contains(strtolower($filename), $searchLower)));
+                        $unknownFiles = array_values(array_filter($unknownFiles, fn (string $filename) => str_contains($this->lowercaseInstalledSearchValue($filename), $searchLower)));
                     }
 
                     // hydrateInstalled()/peekInstalled() group records by source.
@@ -1648,7 +1729,7 @@ class ModManagerPage extends Page implements HasTable
                             return null;
                         }
 
-                        return (strlen($description) > 120) ? substr($description, 0, 120).'...' : $description;
+                        return $this->truncateProjectDescription($description);
                     }),
                 TextColumn::make('source')
                     ->label(trans('pelican-minecraft-modrinth::strings.table.columns.source'))
@@ -1678,8 +1759,12 @@ class ModManagerPage extends Page implements HasTable
                 TextColumn::make('date_modified')
                     ->label(trans('pelican-minecraft-modrinth::strings.table.columns.date_modified'))
                     ->icon('tabler-calendar')
-                    ->formatStateUsing(fn ($state) => $state ? Carbon::parse($state, 'UTC')->diffForHumans() : '')
-                    ->tooltip(fn ($state) => $state ? Carbon::parse($state, 'UTC')->timezone(user()->timezone ?? 'UTC')->format($table->getDefaultDateTimeDisplayFormat()) : '')
+                    ->formatStateUsing(fn ($state): string => $this->formatExternalProjectDate($state))
+                    ->tooltip(function ($state) use ($table): string {
+                        $date = $this->parseExternalProjectDate($state);
+
+                        return $date?->timezone(user()->timezone ?? 'UTC')->format($table->getDefaultDateTimeDisplayFormat()) ?? '';
+                    })
                     ->extraCellAttributes(['data-mmr-swr-cell' => 'date_modified'])
                     ->toggleable(),
             ])
@@ -1732,7 +1817,7 @@ class ModManagerPage extends Page implements HasTable
                                     ->numeric(),
                                 TextEntry::make('published_' . $versionIndex)
                                     ->label(trans('pelican-minecraft-modrinth::strings.version.published'))
-                                    ->state(fn () => isset($versionData['date_published']) ? Carbon::parse($versionData['date_published'], 'UTC')->diffForHumans() : ''),
+                                    ->state(fn (): string => $this->formatExternalProjectDate($versionData['date_published'] ?? null)),
                             ];
 
                             if (!empty($versionData['changelog'])) {
@@ -1754,9 +1839,7 @@ class ModManagerPage extends Page implements HasTable
                                 $headerAction = Action::make('install_version_' . $versionIndex)
                                     ->label(trans('pelican-minecraft-modrinth::strings.actions.install'))
                                     ->icon('tabler-download')
-                                    ->authorize(fn () => $this->canManageCurrentProjectOperation(
-                                        $installedMod === null ? ProjectOperation::Install : ProjectOperation::Update,
-                                    ))
+                                    ->authorize(fn (): bool => $this->canManageCurrentInstallOrUpdate())
                                     ->action(function (DaemonFileRepository $fileRepository) use ($record, $versionData, $primaryFile, $sourceKey) {
                                         try {
                                             /** @var Server $server */
@@ -1770,7 +1853,18 @@ class ModManagerPage extends Page implements HasTable
                                                 throw new Exception('No downloadable file found');
                                             }
 
-                                            $installedMod = $this->getInstalledMod($record['project_id'], $sourceKey);
+                                            $type = static::detectProjectType($server);
+                                            if (!$type) {
+                                                throw new Exception('Server does not support managed mods or plugins');
+                                            }
+
+                                            $installedMod = $this->getCurrentInstalledModForOperation(
+                                                $server,
+                                                $fileRepository,
+                                                $type,
+                                                $record['project_id'],
+                                                ProjectSourceKey::tryFrom($sourceKey) ?? ProjectSourceKey::Modrinth,
+                                            );
 
                                             $this->performInstallOrUpdate($server, $fileRepository, $record, $versionData, $primaryFile, $installedMod);
 
@@ -1829,7 +1923,7 @@ class ModManagerPage extends Page implements HasTable
                     ->icon('tabler-download')
                     ->color('success')
                     ->tooltip(trans('pelican-minecraft-modrinth::strings.actions.install_latest'))
-                    ->authorize(fn (): bool => $this->canManageCurrentProjectOperation(ProjectOperation::Install))
+                    ->authorize(fn (): bool => $this->canManageCurrentInstallOrUpdate())
                     ->hidden(fn (array $record): bool => $record['untracked'] ?? false)
                     ->visible(function (array $record) {
                         if (empty($record['project_id'])) {
@@ -1869,7 +1963,15 @@ class ModManagerPage extends Page implements HasTable
                                 throw new Exception('No downloadable file found');
                             }
 
-                            $this->performInstallOrUpdate($server, $fileRepository, $record, $latestVersion, $primaryFile);
+                            $installedMod = $this->getCurrentInstalledModForOperation(
+                                $server,
+                                $fileRepository,
+                                $type,
+                                $record['project_id'],
+                                $sourceKey,
+                            );
+
+                            $this->performInstallOrUpdate($server, $fileRepository, $record, $latestVersion, $primaryFile, $installedMod);
 
                             $this->forgetInstalledModsMetadata();
                             $this->forgetVersionCaches();
@@ -1954,7 +2056,17 @@ class ModManagerPage extends Page implements HasTable
                             $type = static::detectProjectType($server);
 
                             $sourceKey = ProjectSourceKey::tryFrom($record['source'] ?? '') ?? ProjectSourceKey::Modrinth;
-                            $installedMod = $this->getInstalledMod($record['project_id'], $sourceKey->value);
+                            if (!$type) {
+                                throw new Exception('Source unavailable');
+                            }
+
+                            $installedMod = $this->getCurrentInstalledModForOperation(
+                                $server,
+                                $fileRepository,
+                                $type,
+                                $record['project_id'],
+                                $sourceKey,
+                            );
 
                             if (!$installedMod) {
                                 throw new Exception('Mod not found in metadata');
@@ -1962,7 +2074,7 @@ class ModManagerPage extends Page implements HasTable
 
                             $source = app(ProjectSourceRegistry::class)->get($sourceKey);
 
-                            if (!$source || !$type) {
+                            if (!$source) {
                                 throw new Exception('Source unavailable');
                             }
 
@@ -2216,7 +2328,7 @@ class ModManagerPage extends Page implements HasTable
             Action::make('track_github_repo')
                 ->label(trans('pelican-minecraft-modrinth::strings.actions.track_github_repo'))
                 ->icon('tabler-brand-github')
-                ->authorize(fn (): bool => $this->canManageProjectOperation($server, ProjectOperation::Install))
+                ->authorize(fn (): bool => $this->canManageInstallOrUpdate($server))
                 ->disabled(fn () => !$githubSource?->isConfigured())
                 ->tooltip(fn () => $githubSource?->isConfigured() ? null : trans('pelican-minecraft-modrinth::strings.page.source_not_configured'))
                 ->schema([
@@ -2259,7 +2371,15 @@ class ModManagerPage extends Page implements HasTable
                             'source' => ProjectSourceKey::GitHubReleases->value,
                         ];
 
-                        $this->performInstallOrUpdate($server, $fileRepository, $record, $latestVersion, $primaryFile);
+                        $installedMod = $this->getCurrentInstalledModForOperation(
+                            $server,
+                            $fileRepository,
+                            $type,
+                            $record['project_id'],
+                            ProjectSourceKey::GitHubReleases,
+                        );
+
+                        $this->performInstallOrUpdate($server, $fileRepository, $record, $latestVersion, $primaryFile, $installedMod);
 
                         $this->forgetInstalledModsMetadata();
                         $this->forgetVersionCaches();
@@ -2283,7 +2403,7 @@ class ModManagerPage extends Page implements HasTable
                             ->send();
                     }
                 })
-                ->visible(fn () => $githubAvailable && $this->canManageProjectOperation($server, ProjectOperation::Install)),
+                ->visible(fn () => $githubAvailable && $this->canManageInstallOrUpdate($server)),
             Action::make('update_all')
                 ->label(fn () => trans(match ($type) {
                     ProjectType::Plugin => 'pelican-minecraft-modrinth::strings.actions.update_all_plugins',
@@ -2602,6 +2722,21 @@ class ModManagerPage extends Page implements HasTable
         $this->pollInstalledOperations = false;
     }
 
+    protected function forgetTerminalInstalledOperation(InstalledOperationState $state): void
+    {
+        if (!$state->isFinished()) {
+            return;
+        }
+
+        /** @var Server $server */
+        $server = Filament::getTenant();
+        app(InstalledOperationManager::class)->forget(
+            $server,
+            $state->projectType,
+            $state->operation,
+        );
+    }
+
     protected function getInstalledScanFingerprint(InstalledOperationState $state): string
     {
         return implode(':', [
@@ -2648,6 +2783,17 @@ class ModManagerPage extends Page implements HasTable
         $state = $this->refreshInstalledOperationState();
 
         if ($state === null) {
+            // Another browser may have handled the terminal state first and
+            // removed it from the shared operation cache. The durable scan
+            // result is still the source of truth for this tab's count badge.
+            $this->refreshInstalledScanDataReady();
+
+            if ($previousOperation !== null) {
+                $this->forgetInstalledModsMetadata();
+                $this->forgetVersionCaches();
+                $this->flushCachedTableRecords();
+            }
+
             $this->pollInstalledOperations = false;
 
             return;
@@ -2687,15 +2833,7 @@ class ModManagerPage extends Page implements HasTable
         $this->flushCachedTableRecords();
         $this->notifyInstalledOperationFinished($state);
 
-        /** @var Server $server */
-        $server = Filament::getTenant();
-        if ($state->status === InstalledOperationState::STATUS_COMPLETED) {
-            app(InstalledOperationManager::class)->forget(
-                $server,
-                $state->projectType,
-                $state->operation,
-            );
-        }
+        $this->forgetTerminalInstalledOperation($state);
     }
 
     /** @param array<string, mixed>|null $previousOperation */
@@ -2787,7 +2925,10 @@ class ModManagerPage extends Page implements HasTable
     protected function shouldShowInstalledOperationStatus(): bool
     {
         if (($this->installedOperation['operation'] ?? null) === InstalledOperationManager::OPERATION_BULK_UPDATE) {
-            return true;
+            return in_array($this->installedOperation['status'] ?? null, [
+                InstalledOperationState::STATUS_QUEUED,
+                InstalledOperationState::STATUS_RUNNING,
+            ], true);
         }
 
         if ($this->activeTab !== 'installed') {
@@ -3023,6 +3164,7 @@ class ModManagerPage extends Page implements HasTable
         // poll show a second, generic operation-failed notification.
         if ($reason === 'dispatch_failed' && $state !== null) {
             $this->markInstalledOperationHandled($state);
+            $this->forgetTerminalInstalledOperation($state);
         }
 
         $title = match ($reason) {

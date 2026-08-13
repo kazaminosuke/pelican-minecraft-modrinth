@@ -97,6 +97,15 @@ final class WarmProjectMetadata implements ShouldBeUnique, ShouldQueue
         } catch (Throwable $exception) {
             report($exception);
 
+            // Modrinth and CurseForge warm several individual metadata keys
+            // through one authoritative batch cache key. The batch-level
+            // failure marker alone is invisible to the Installed render path,
+            // which reads those individual keys; fan its short retry cooldown
+            // out without treating the projects as definitively missing.
+            if ($source instanceof AuthoritativeBatchProjectSourceInterface) {
+                $source->deferProjectMetadataRetries($projectIds);
+            }
+
             return;
         }
 

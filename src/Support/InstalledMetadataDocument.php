@@ -140,12 +140,20 @@ class InstalledMetadataDocument
         ];
 
         foreach ($requiredKeys as $key) {
-            if (!array_key_exists($key, $entry)) {
+            if (!array_key_exists($key, $entry) || !is_string($entry[$key])) {
                 return null;
             }
         }
 
         $entry['source'] ??= ProjectSourceKey::Modrinth->value;
+
+        if (!is_string($entry['source']) || ProjectSourceKey::tryFrom($entry['source']) === null) {
+            return null;
+        }
+
+        if (array_key_exists('author', $entry) && !is_string($entry['author'])) {
+            unset($entry['author']);
+        }
 
         return $entry;
     }

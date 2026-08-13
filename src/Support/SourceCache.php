@@ -138,12 +138,16 @@ final class SourceCache
      * Execute a queued refresh. Failures intentionally leave any stale entry
      * untouched and are absorbed after recording a short-lived marker.
      */
-    public function revalidate(SourceFetchSpec $spec, CacheProfile $profile): void
+    public function revalidate(SourceFetchSpec $spec, CacheProfile $profile): bool
     {
         try {
             $this->fetchAndStore($spec, $profile, $profile->backgroundTimeoutSeconds());
+
+            return true;
         } catch (Throwable $exception) {
             $this->markFailure($spec, $profile, $exception);
+
+            return false;
         }
     }
 
@@ -153,7 +157,7 @@ final class SourceCache
      * The boolean distinguishes a cached null from a miss and is used by
      * progressive-enrichment render paths.
      *
-     * @return array{hit: bool, data: mixed, fresh: bool}
+     * @return array{hit: bool, data: mixed, fresh: bool, retry_delayed: bool}
      */
     public function peek(SourceFetchSpec $spec): array
     {
@@ -163,15 +167,21 @@ final class SourceCache
             'hit' => $entry !== null,
             'data' => $entry['data'] ?? null,
             'fresh' => $entry !== null && $entry['fresh_until'] > time(),
+            // A failure marker means the last fetch failed. It is deliberately
+            // distinct from a cached null: callers must not treat a temporary
+            // retry cooldown as proof that the project was removed upstream.
+            'retry_delayed' => $entry === null && $this->hasFailureMarker($spec),
         ];
     }
 
     /**
      * Batched read-only counterpart to peek(). Cache stores such as Redis map
      * this to one MGET, avoiding one network round trip per Installed row.
+     * Retry-cooldown markers are read in that same MGET so a cold entry whose
+     * last refresh failed can remain distinguishable from a real cache miss.
      *
      * @param array<string, SourceFetchSpec> $specs
-     * @return array<string, array{hit: bool, data: mixed, fresh: bool}>
+     * @return array<string, array{hit: bool, data: mixed, fresh: bool, retry_delayed: bool}>
      */
     public function peekMany(array $specs): array
     {
@@ -180,11 +190,16 @@ final class SourceCache
         }
 
         $keys = [];
+        $failureMarkerKeys = [];
         foreach ($specs as $key => $spec) {
             $keys[$key] = $spec->cacheKey();
+            $failureMarkerKeys[$key] = $this->failureMarkerKey($spec);
         }
 
-        $payloads = $this->cache->many(array_values(array_unique($keys)));
+        $payloads = $this->cache->many(array_values(array_unique([
+            ...array_values($keys),
+            ...array_values($failureMarkerKeys),
+        ])));
         $now = time();
         $results = [];
 
@@ -194,6 +209,10 @@ final class SourceCache
                 'hit' => $entry !== null,
                 'data' => $entry['data'] ?? null,
                 'fresh' => $entry !== null && $entry['fresh_until'] > $now,
+                'retry_delayed' => $entry === null && $this->hasActiveFailureMarker(
+                    $payloads[$failureMarkerKeys[$key]] ?? null,
+                    $now,
+                ),
             ];
         }
 
@@ -224,7 +243,7 @@ final class SourceCache
      * to tell "genuinely empty" apart from "not checked yet" should use
      * the pending flag rather than inspecting the returned data.
      *
-     * @return array{data: mixed, pending: bool}
+     * @return array{data: mixed, pending: bool, retry_delayed: bool}
      */
     public function swrDeferred(SourceFetchSpec $spec, CacheProfile $profile): array
     {
@@ -235,12 +254,20 @@ final class SourceCache
                 $this->revalidateAsync($spec, $profile);
             }
 
-            return ['data' => $peeked['data'], 'pending' => false];
+            return ['data' => $peeked['data'], 'pending' => false, 'retry_delayed' => false];
         }
 
-        $this->revalidateAsync($spec, $profile);
+        // A failure marker (or a sync/null queue) means no background fetch
+        // was actually scheduled. Reporting this as pending keeps callers
+        // polling forever for a value that cannot change until the marker
+        // expires or queue configuration is fixed.
+        $pending = $this->revalidateAsync($spec, $profile);
 
-        return ['data' => $this->emptyResult($spec), 'pending' => true];
+        return [
+            'data' => $this->emptyResult($spec),
+            'pending' => $pending,
+            'retry_delayed' => $peeked['retry_delayed'],
+        ];
     }
 
     /** @return array{v: int, data: mixed, fresh_until: int}|null */
@@ -327,6 +354,37 @@ final class SourceCache
         }
     }
 
+    /**
+     * Record a short retry cooldown for several entity entries without
+     * persisting an empty/negative result. This is used when one authoritative
+     * batch request fails before it can prime its individual project entries:
+     * the batch cache key has a failure marker, but the next render reads the
+     * per-project keys.
+     *
+     * @param array<int, SourceFetchSpec> $specs
+     */
+    public function markRetryDelayedMany(array $specs, CacheProfile $profile): void
+    {
+        if ($specs === []) {
+            return;
+        }
+
+        $ttl = $profile->failureMarkerTtlSeconds();
+        $failedUntil = time() + $ttl;
+        $markers = [];
+
+        foreach ($specs as $spec) {
+            $markers[$this->failureMarkerKey($spec)] = [
+                'v' => self::FAILURE_MARKER_VERSION,
+                'failed_until' => $failedUntil,
+            ];
+        }
+
+        if ($markers !== []) {
+            $this->cache->putMany($markers, $ttl);
+        }
+    }
+
     private function storeEntry(SourceFetchSpec $spec, mixed $data, CacheProfile $profile): void
     {
         $entry = [
@@ -389,19 +447,27 @@ final class SourceCache
         $key = $this->failureMarkerKey($spec);
         $marker = $this->cache->get($key);
 
-        if (!is_array($marker)
-            || ($marker['v'] ?? null) !== self::FAILURE_MARKER_VERSION
-            || !is_int($marker['failed_until'] ?? null)) {
-            return false;
-        }
-
-        if ($marker['failed_until'] <= time()) {
-            $this->cache->forget($key);
+        if (!$this->hasActiveFailureMarker($marker, time())) {
+            // An expired (but not yet evicted) marker is harmless, but remove
+            // it here because this path is already doing a single-key read.
+            if (is_array($marker)
+                && ($marker['v'] ?? null) === self::FAILURE_MARKER_VERSION
+                && is_int($marker['failed_until'] ?? null)) {
+                $this->cache->forget($key);
+            }
 
             return false;
         }
 
         return true;
+    }
+
+    private function hasActiveFailureMarker(mixed $marker, int $now): bool
+    {
+        return is_array($marker)
+            && ($marker['v'] ?? null) === self::FAILURE_MARKER_VERSION
+            && is_int($marker['failed_until'] ?? null)
+            && $marker['failed_until'] > $now;
     }
 
     private function markFailure(SourceFetchSpec $spec, CacheProfile $profile, Throwable $exception): void

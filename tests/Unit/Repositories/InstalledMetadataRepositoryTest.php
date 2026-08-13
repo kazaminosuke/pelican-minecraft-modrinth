@@ -104,6 +104,26 @@ class InstalledMetadataRepositoryTest extends TestCase
         self::assertSame('unknown.jar', $roundTrip->unresolvedFiles()[0]['filename']);
     }
 
+    public function test_malformed_installed_entries_are_filtered_before_ui_consumers_read_them(): void
+    {
+        $valid = $this->legacyEntry();
+        $invalidTitle = $this->legacyEntry('invalid-title.jar');
+        $invalidTitle['project_title'] = [];
+        $invalidSource = $this->legacyEntry('invalid-source.jar');
+        $invalidSource['source'] = [];
+        $nonStringAuthor = $this->legacyEntry('author.jar');
+        $nonStringAuthor['author'] = ['unexpected'];
+
+        $document = InstalledMetadataDocument::fromArray([
+            'installed_mods' => [$valid, $invalidTitle, $invalidSource, $nonStringAuthor],
+        ]);
+
+        self::assertNotNull($document);
+        self::assertCount(2, $document->installedMods());
+        self::assertSame('Project', $document->installedMods()[0]['project_title']);
+        self::assertArrayNotHasKey('author', $document->installedMods()[1]);
+    }
+
     public function test_mutate_skips_wings_write_and_hydration_bump_when_current_document_is_unchanged(): void
     {
         $server = $this->server();

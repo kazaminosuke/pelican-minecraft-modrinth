@@ -18,7 +18,9 @@ use Kazaminosuke\ModManager\Contracts\SourceFetchExecutorInterface;
 use Kazaminosuke\ModManager\Contracts\SourceFetchHandlerInterface;
 use Kazaminosuke\ModManager\Exceptions\PartialSourceFetchException;
 use Kazaminosuke\ModManager\Jobs\RevalidateSourceCache;
+use Kazaminosuke\ModManager\Jobs\WarmProjectMetadata;
 use Kazaminosuke\ModManager\Services\InstalledOperationManager;
+use Kazaminosuke\ModManager\Sources\ModrinthSource;
 use Kazaminosuke\ModManager\Support\CacheProfile;
 use Kazaminosuke\ModManager\Support\ProjectSourceRegistry;
 use Kazaminosuke\ModManager\Support\SourceCache;
@@ -75,7 +77,14 @@ class SourceCacheTest extends TestCase
         $cache = Mockery::mock(CacheRepository::class);
         $cache->shouldReceive('many')
             ->once()
-            ->with([$first->cacheKey(), $second->cacheKey(), $missing->cacheKey()])
+            ->with([
+                $first->cacheKey(),
+                $second->cacheKey(),
+                $missing->cacheKey(),
+                $first->cacheKey().':failure:v1',
+                $second->cacheKey().':failure:v1',
+                $missing->cacheKey().':failure:v1',
+            ])
             ->andReturn([
                 $first->cacheKey() => $this->entry(['title' => 'First'], time() + 60),
                 $second->cacheKey() => $this->entry(null, time() - 60),
@@ -97,6 +106,7 @@ class SourceCacheTest extends TestCase
         self::assertFalse($result['second']['fresh']);
         self::assertNull($result['second']['data']);
         self::assertFalse($result['missing']['hit']);
+        self::assertFalse($result['missing']['retry_delayed']);
     }
 
     public function test_peek_many_reads_the_same_payload_shape_from_the_laravel_cache_repository(): void
@@ -119,6 +129,22 @@ class SourceCacheTest extends TestCase
         self::assertTrue($result['first']['fresh']);
         self::assertSame(['title' => 'Second'], $result['second']['data']);
         self::assertFalse($result['second']['fresh']);
+    }
+
+    public function test_peek_many_marks_a_cold_entry_with_an_active_failure_marker_as_retry_delayed(): void
+    {
+        $cache = $this->cache();
+        $spec = new SourceFetchSpec('modrinth', 'project', ['project_id' => 'offline']);
+        $cache->put($spec->cacheKey().':failure:v1', ['v' => 1, 'failed_until' => time() + 30], 30);
+        $executor = Mockery::mock(SourceFetchExecutorInterface::class);
+        $executor->shouldNotReceive('fetch');
+        $executor->shouldNotReceive('emptyResult');
+
+        $result = $this->sourceCache($cache, 'sync', $executor)->peekMany(['offline' => $spec]);
+
+        self::assertFalse($result['offline']['hit']);
+        self::assertNull($result['offline']['data']);
+        self::assertTrue($result['offline']['retry_delayed']);
     }
 
     public function test_prime_many_batches_finite_ttl_entries_and_clears_failure_markers(): void
@@ -391,7 +417,7 @@ class SourceCacheTest extends TestCase
         self::assertTrue($result['pending']);
     }
 
-    public function test_deferred_miss_on_sync_queue_never_fetches_inline_and_does_not_dispatch(): void
+    public function test_deferred_miss_on_sync_queue_never_fetches_inline_or_reports_an_unresolvable_pending_state(): void
     {
         $cache = $this->cache();
         $spec = $this->spec();
@@ -404,8 +430,28 @@ class SourceCacheTest extends TestCase
             ->swrDeferred($spec, CacheProfile::Search);
 
         self::assertSame($empty, $result['data']);
-        self::assertTrue($result['pending']);
+        self::assertFalse($result['pending']);
         self::assertNull($cache->get($spec->cacheKey()));
+    }
+
+    public function test_deferred_miss_with_a_failure_marker_does_not_report_a_pending_refresh(): void
+    {
+        $cache = $this->cache();
+        $spec = $this->spec();
+        $empty = ['hits' => [], 'total_hits' => 0];
+        $cache->put($spec->cacheKey().':failure:v1', ['v' => 1, 'failed_until' => time() + 30], 30);
+        $executor = Mockery::mock(SourceFetchExecutorInterface::class);
+        $executor->shouldNotReceive('fetch');
+        $executor->shouldReceive('emptyResult')->once()->with($spec)->andReturn($empty);
+        $dispatcher = $this->prepareDispatchContainer($cache);
+        $dispatcher->shouldNotReceive('dispatch');
+
+        $result = $this->sourceCache($cache, 'database', $executor)
+            ->swrDeferred($spec, CacheProfile::Search);
+
+        self::assertSame($empty, $result['data']);
+        self::assertFalse($result['pending']);
+        self::assertTrue($result['retry_delayed']);
     }
 
     public function test_revalidation_failure_preserves_existing_stale_entry(): void
@@ -424,6 +470,30 @@ class SourceCacheTest extends TestCase
 
         self::assertSame(['stale'], $cache->get($spec->cacheKey())['data']);
         self::assertIsArray($cache->get($spec->cacheKey().':failure:v1'));
+    }
+
+    public function test_successful_project_batch_revalidation_queues_individual_metadata_priming(): void
+    {
+        $cache = $this->cache();
+        $spec = new SourceFetchSpec('modrinth', 'projects', ['project_ids' => ['b', 'a', '']]);
+        $executor = Mockery::mock(SourceFetchExecutorInterface::class);
+        $executor->shouldReceive('fetch')
+            ->once()
+            ->with($spec, CacheProfile::ProjectMetadata->backgroundTimeoutSeconds())
+            ->andReturn(['a' => ['title' => 'A'], 'b' => ['title' => 'B']]);
+        $sourceCache = $this->sourceCache($cache, 'database', $executor);
+        $source = Mockery::mock(ModrinthSource::class);
+        $registry = Mockery::mock(ProjectSourceRegistry::class);
+        $registry->shouldReceive('getByValue')->once()->with('modrinth')->andReturn($source);
+        $dispatcher = $this->prepareDispatchContainer($cache);
+        $dispatcher->shouldReceive('dispatch')
+            ->once()
+            ->withArgs(fn (WarmProjectMetadata $job): bool => $job->sourceKey === 'modrinth' && $job->projectIds === ['b', 'a'])
+            ->andReturnNull();
+
+        (new RevalidateSourceCache($spec, CacheProfile::ProjectMetadata))->handle($sourceCache, $registry);
+
+        self::assertTrue(true);
     }
 
     public function test_cache_profiles_match_the_stage_three_policy(): void
