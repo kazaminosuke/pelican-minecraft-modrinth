@@ -233,5 +233,11 @@ class InstalledOperationManagerTest extends TestCase
                 && str_ends_with($key, ':'.$uniqueId)
                 && $seconds === $uniqueFor)
             ->andReturn($lock);
+        // Laravel 13 UniqueLock::acquire() calls getStore() after the lock
+        // is taken so it can record uniqueLockOwner on LockProvider stores.
+        // A Mockery repository is not a LockProvider; returning null keeps
+        // dispatch on the mocked Dispatcher instead of throwing into the
+        // manager's dispatch_failed path.
+        $cache->shouldReceive('getStore')->zeroOrMoreTimes()->andReturnNull();
     }
 }
