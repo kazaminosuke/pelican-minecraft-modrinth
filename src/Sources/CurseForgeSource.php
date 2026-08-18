@@ -145,6 +145,13 @@ class CurseForgeSource implements AuthoritativeBatchProjectSourceInterface, Batc
         return $spec === null || $this->cache()->peek($spec)['hit'];
     }
 
+    public function hasFreshCachedSearch(Server $server, ProjectType $type, int $page, ?string $search = null, array $filters = []): bool
+    {
+        $spec = $this->buildSearchSpec($server, $type, $page, $search, $filters);
+
+        return $spec === null || $this->cache()->peek($spec)['fresh'];
+    }
+
     public function warmSearch(Server $server, ProjectType $type, int $page = 1, ?string $search = null, array $filters = []): bool
     {
         $spec = $this->buildSearchSpec($server, $type, $page, $search, $filters);

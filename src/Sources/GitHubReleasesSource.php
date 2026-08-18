@@ -137,6 +137,11 @@ class GitHubReleasesSource implements BatchLatestVersionSourceInterface, Project
         return true;
     }
 
+    public function hasFreshCachedSearch(Server $server, ProjectType $type, int $page, ?string $search = null, array $filters = []): bool
+    {
+        return true;
+    }
+
     public function warmSearch(Server $server, ProjectType $type, int $page = 1, ?string $search = null, array $filters = []): bool
     {
         return false;

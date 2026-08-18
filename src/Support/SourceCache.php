@@ -2,6 +2,8 @@
 
 namespace Kazaminosuke\ModManager\Support;
 
+use Illuminate\Contracts\Cache\LockProvider;
+use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
 use Kazaminosuke\ModManager\Contracts\SourceFetchExecutorInterface;
 use Kazaminosuke\ModManager\Exceptions\PartialSourceFetchException;
@@ -294,6 +296,57 @@ final class SourceCache
     }
 
     private function fetchAndStore(
+        SourceFetchSpec $spec,
+        CacheProfile $profile,
+        float $timeoutSeconds,
+    ): mixed {
+        if ($spec->operation !== 'search' || !method_exists($this->cache, 'getStore')) {
+            return $this->performFetchAndStore($spec, $profile, $timeoutSeconds);
+        }
+
+        $store = $this->cache->getStore();
+        if (!$store instanceof LockProvider) {
+            return $this->performFetchAndStore($spec, $profile, $timeoutSeconds);
+        }
+
+        // Hangar's catalog search is ~1s. The after-response warm and a
+        // visitor who opens that tab while it is in flight must share one
+        // upstream call instead of stacking two. Wait up to this request's
+        // own budget for the in-flight fetch to land, then read the entry.
+        $lockTtl = max(12, (int) ceil($timeoutSeconds) + 1);
+        $lock = $this->cache->lock('mmr_src_fetch:'.$spec->cacheKey(), $lockTtl);
+        $waitSeconds = max(1, (int) ceil($timeoutSeconds));
+        $acquired = false;
+
+        try {
+            $lock->block($waitSeconds);
+            $acquired = true;
+
+            $entry = $this->readEntry($spec);
+            if ($entry !== null && $entry['fresh_until'] > time()) {
+                return $entry['data'];
+            }
+
+            return $this->performFetchAndStore($spec, $profile, $timeoutSeconds);
+        } catch (LockTimeoutException) {
+            $entry = $this->readEntry($spec);
+            if ($entry !== null && $entry['fresh_until'] > time()) {
+                return $entry['data'];
+            }
+
+            return $this->performFetchAndStore($spec, $profile, $timeoutSeconds);
+        } finally {
+            if ($acquired) {
+                try {
+                    $lock->release();
+                } catch (Throwable) {
+                    // The TTL may already have elapsed while Hangar was answering.
+                }
+            }
+        }
+    }
+
+    private function performFetchAndStore(
         SourceFetchSpec $spec,
         CacheProfile $profile,
         float $timeoutSeconds,

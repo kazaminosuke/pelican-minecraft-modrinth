@@ -62,6 +62,8 @@ class ProjectIconUrlTest extends TestCase
         $lastOnPage = ProjectIconUrl::imgAttributes(ProjectIconUrl::EAGER_COUNT - 1);
         $offPage = ProjectIconUrl::imgAttributes(ProjectIconUrl::EAGER_COUNT);
 
+        self::assertSame(12, ProjectIconUrl::EAGER_COUNT);
+        self::assertSame(8, ProjectIconUrl::HIGH_PRIORITY_COUNT);
         self::assertSame('eager', $first['loading']);
         self::assertSame('async', $first['decoding']);
         self::assertSame('high', $first['fetchpriority']);

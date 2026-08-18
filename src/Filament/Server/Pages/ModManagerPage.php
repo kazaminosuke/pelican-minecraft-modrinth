@@ -330,12 +330,11 @@ class ModManagerPage extends Page implements HasTable
     }
 
     /**
-     * Warm other catalog sources' page 1 (and this source's page 2) so a
-     * tab switch a moment later is a Redis hit. The active source's current
-     * page is fetched by this request's own records()/loadTable path;
-     * queuing it first just duplicates that API call and delays warming
-     * Modrinth/Hangar behind CurseForge. Too late to help THIS source's
-     * first paint - see WarmCatalogCacheCommand for scheduled warming.
+     * Warm other catalog sources so a tab switch is a Redis hit. Hangar's
+     * /projects call is ~1s, so its page-1 job is dispatched first instead
+     * of waiting behind Modrinth on a single queue worker. Other sources
+     * stay queued so this request never blocks on their APIs. The active
+     * source's current page is fetched by records()/loadTable itself.
      */
     protected function dispatchCatalogWarm(): void
     {
@@ -365,7 +364,20 @@ class ModManagerPage extends Page implements HasTable
             return;
         }
 
-        foreach ($this->catalogPagesToWarm() as $page) {
+        $plan = $this->catalogWarmPlan();
+
+        foreach ([...$plan['immediate'], ...$plan['queued']] as $page) {
+            $source = $this->catalogSourceByKey($page['sourceKey']);
+            if ($source !== null && $source->hasFreshCachedSearch(
+                $server,
+                $type,
+                $page['page'],
+                null,
+                ['sort' => $this->catalogSort],
+            )) {
+                continue;
+            }
+
             WarmCatalogSearch::dispatch(
                 $server->id,
                 $page['sourceKey'],
@@ -408,6 +420,44 @@ class ModManagerPage extends Page implements HasTable
         }
 
         return [...$otherSourcePages, ...$activeSourcePages];
+    }
+
+    /**
+     * Hangar's search is slow enough that lining it up behind Modrinth on
+     * the same queue worker makes the Hangar tab miss the warm window. Its
+     * pages are dispatched first. Other sources follow so this request
+     * never blocks on their APIs.
+     *
+     * @return array{queued: array<int, array{sourceKey: string, page: int}>, immediate: array<int, array{sourceKey: string, page: int}>}
+     */
+    protected function catalogWarmPlan(): array
+    {
+        $queued = [];
+        $immediate = [];
+
+        foreach ($this->catalogPagesToWarm() as $page) {
+            if ($page['sourceKey'] === ProjectSourceKey::Hangar->value) {
+                $immediate[] = $page;
+            } else {
+                $queued[] = $page;
+            }
+        }
+
+        return [
+            'queued' => $queued,
+            'immediate' => $immediate,
+        ];
+    }
+
+    protected function catalogSourceByKey(string $sourceKey): ?ProjectSourceInterface
+    {
+        foreach ($this->getCatalogSources() as $source) {
+            if ($source->getKey()->value === $sourceKey) {
+                return $source;
+            }
+        }
+
+        return null;
     }
 
     /**

@@ -12,15 +12,13 @@ final class ProjectIconUrl
      * scroller: Chrome deprioritizes lazy images, so the visible rows waited
      * on layout/intersection instead of starting with the document parse.
      *
-     * A page is 20 rows. The remaining viewport commonly shows 12-20 of them
-     * (1080p ≈ 12, 1440p ≈ 18-20), so every on-page icon is eager. Measured
-     * catalog transfer for 20 Modrinth icons is ~194KB; the extra ~80KB of
-     * below-fold rows is cheaper than leaving visible icons lazy. The first
-     * eight rows use fetchpriority=high so the initially visible CurseForge
-     * thumbnails (≈7 at 1440×900) are not competing with the rest of the
-     * page for the first decode.
+     * A page is 20 rows. Chrome's per-host connection limit is 6, so
+     * eager-loading every row made CurseForge thumbnails queue behind each
+     * other. Measured visible rows are ≈8 at 1440×900 and ≈12 at 1080p;
+     * only that window is eager. The first eight use fetchpriority=high
+     * so the first screen of CurseForge/Hangar icons starts immediately.
      */
-    public const EAGER_COUNT = 20;
+    public const EAGER_COUNT = 12;
 
     public const HIGH_PRIORITY_COUNT = 8;
 

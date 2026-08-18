@@ -118,6 +118,14 @@ final class TestableModManagerPage extends ModManagerPage
         return $this->catalogPagesToWarm();
     }
 
+    /**
+     * @return array{queued: array<int, array{sourceKey: string, page: int}>, immediate: array<int, array{sourceKey: string, page: int}>}
+     */
+    public function catalogWarmPlanForTest(): array
+    {
+        return $this->catalogWarmPlan();
+    }
+
     public int $pollEnrichmentSkipRenderCallsForTest = 0;
 
     public int $flushCachedTableRecordsCallsForTest = 0;
@@ -671,6 +679,15 @@ class ModManagerPagePayloadTest extends TestCase
             ['sourceKey' => 'hangar', 'page' => 1],
             ['sourceKey' => 'curseforge', 'page' => 2],
         ], $page->catalogPagesToWarmForTest());
+        self::assertSame([
+            'queued' => [
+                ['sourceKey' => 'modrinth', 'page' => 1],
+                ['sourceKey' => 'curseforge', 'page' => 2],
+            ],
+            'immediate' => [
+                ['sourceKey' => 'hangar', 'page' => 1],
+            ],
+        ], $page->catalogWarmPlanForTest());
     }
 
     public function test_catalog_warm_skips_unconfigured_sources(): void

@@ -78,6 +78,7 @@ class ModrinthSourceSearchCacheTest extends TestCase
         $source->search($server, ProjectType::Datapack, 1, null, []);
 
         self::assertTrue($source->hasCachedSearch($server, ProjectType::Datapack, 1, null, []));
+        self::assertTrue($source->hasFreshCachedSearch($server, ProjectType::Datapack, 1, null, []));
     }
 
     public function test_warm_search_skips_a_fresh_cache_entry(): void
@@ -107,6 +108,7 @@ class ModrinthSourceSearchCacheTest extends TestCase
 
         self::assertTrue($source->warmSearch($this->server(), ProjectType::Datapack, 1, null, []));
         self::assertTrue($source->hasCachedSearch($this->server(), ProjectType::Datapack, 1, null, []));
+        self::assertTrue($source->hasFreshCachedSearch($this->server(), ProjectType::Datapack, 1, null, []));
     }
 
     public function test_a_different_page_is_a_distinct_cache_entry(): void

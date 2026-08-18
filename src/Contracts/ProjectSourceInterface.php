@@ -62,6 +62,13 @@ interface ProjectSourceInterface
     public function hasCachedSearch(Server $server, ProjectType $type, int $page, ?string $search = null, array $filters = []): bool;
 
     /**
+     * Whether search()'s cache entry is still within its fresh TTL.
+     * Used to skip a Hangar after-response warm that would only repeat
+     * an upstream call already paid for by this or another visitor.
+     */
+    public function hasFreshCachedSearch(Server $server, ProjectType $type, int $page, ?string $search = null, array $filters = []): bool;
+
+    /**
      * Populate search()'s cache using the background timeout rather than
      * the render-path 1.5s inline budget. A fresh entry is left untouched
      * so a WarmCatalogSearch job that lost the race to the visitor's own

@@ -236,6 +236,25 @@ class SourceCacheTest extends TestCase
 
         self::assertSame($stale, $sourceCache->swr($spec, CacheProfile::Search));
         self::assertSame($stale, $sourceCache->swr($spec, CacheProfile::Search));
+
+        $peeked = $sourceCache->peek($spec);
+        self::assertTrue($peeked['hit']);
+        self::assertFalse($peeked['fresh']);
+    }
+
+    public function test_search_cold_fetch_is_serialized_by_a_store_lock(): void
+    {
+        $cache = $this->cache();
+        $spec = $this->spec();
+        $data = ['hits' => [['project_id' => 'one']], 'total_hits' => 1];
+        $executor = Mockery::mock(SourceFetchExecutorInterface::class);
+        $executor->shouldReceive('fetch')->once()->andReturn($data);
+        $executor->shouldNotReceive('emptyResult');
+        $sourceCache = $this->sourceCache($cache, 'sync', $executor);
+
+        self::assertSame($data, $sourceCache->swr($spec, CacheProfile::Search));
+        self::assertSame($data, $sourceCache->swr($spec, CacheProfile::Search));
+        self::assertTrue($sourceCache->peek($spec)['fresh']);
     }
 
     public function test_fetch_failure_returns_stale_data_and_writes_failure_marker(): void

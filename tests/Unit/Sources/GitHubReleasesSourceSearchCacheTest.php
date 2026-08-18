@@ -39,6 +39,7 @@ class GitHubReleasesSourceSearchCacheTest extends TestCase
         $server = Mockery::mock(Server::class);
 
         self::assertTrue($source->hasCachedSearch($server, ProjectType::Mod, 1, null, []));
+        self::assertTrue($source->hasFreshCachedSearch($server, ProjectType::Mod, 1, null, []));
         self::assertSame(
             ['hits' => [], 'total_hits' => 0],
             $source->search($server, ProjectType::Mod, 1, null, []),
