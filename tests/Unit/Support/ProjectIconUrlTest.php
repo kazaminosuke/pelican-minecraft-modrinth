@@ -49,4 +49,23 @@ class ProjectIconUrlTest extends TestCase
         self::assertSame($url, ProjectIconUrl::githubAvatar($url));
         self::assertNull(ProjectIconUrl::githubAvatar(null));
     }
+
+    public function test_on_page_icons_are_eager_and_the_first_rows_are_high_priority(): void
+    {
+        $first = ProjectIconUrl::imgAttributes(0);
+        $second = ProjectIconUrl::imgAttributes(1);
+        $later = ProjectIconUrl::imgAttributes(2);
+        $lastOnPage = ProjectIconUrl::imgAttributes(ProjectIconUrl::EAGER_COUNT - 1);
+        $offPage = ProjectIconUrl::imgAttributes(ProjectIconUrl::EAGER_COUNT);
+
+        self::assertSame('eager', $first['loading']);
+        self::assertSame('async', $first['decoding']);
+        self::assertSame('high', $first['fetchpriority']);
+        self::assertSame('high', $second['fetchpriority']);
+        self::assertArrayNotHasKey('fetchpriority', $later);
+        self::assertSame('eager', $later['loading']);
+        self::assertSame('eager', $lastOnPage['loading']);
+        self::assertSame('lazy', $offPage['loading']);
+        self::assertArrayNotHasKey('fetchpriority', $offPage);
+    }
 }

@@ -785,10 +785,13 @@
 
             currentImages.forEach((image, index) => {
                 const cachedImage = projection.images[index];
+                const currentSrc = image.getAttribute('src');
 
                 if (cachedImage.src) {
-                    image.setAttribute('src', cachedImage.src);
-                } else {
+                    if (currentSrc !== cachedImage.src) {
+                        image.setAttribute('src', cachedImage.src);
+                    }
+                } else if (currentSrc) {
                     image.removeAttribute('src');
                 }
 
@@ -1460,8 +1463,22 @@
             // buildKey() reads the view being opened, not the one being left.
             window.Livewire.hook('morph', ({ el, toEl }) => prepareMorph(el, toEl));
 
-            window.Livewire.hook('morph.updating', ({ el, skip }) => {
+            window.Livewire.hook('morph.updating', ({ el, toEl, skip }) => {
                 if (skipHeldContentUpdate(el)) {
+                    skip();
+
+                    return;
+                }
+
+                // Replacing an <img> whose src did not change restarts decode
+                // even when the bytes are cached. Skip that node so poll/morph
+                // cannot make the same icon flash or re-request.
+                if (
+                    el instanceof HTMLImageElement
+                    && toEl instanceof HTMLImageElement
+                    && el.matches('.mmr-table-scroll-ctn .mmr-project-icon-cell .fi-ta-image img')
+                    && el.getAttribute('src') === toEl.getAttribute('src')
+                ) {
                     skip();
                 }
             });

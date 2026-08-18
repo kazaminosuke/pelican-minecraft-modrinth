@@ -113,9 +113,32 @@ final class TestableModManagerPage extends ModManagerPage
         return $this->lowercaseInstalledSearchValue($value);
     }
 
+    public int $pollEnrichmentSkipRenderCallsForTest = 0;
+
+    public int $flushCachedTableRecordsCallsForTest = 0;
+
+    public ?string $peekedEnrichmentSignatureForTest = null;
+
     public function currentInstalledModForOperationForTest(Server $server, DaemonFileRepository $files, ProjectType $type, string $projectId, ProjectSourceKey $source): ?array
     {
         return $this->getCurrentInstalledModForOperation($server, $files, $type, $projectId, $source);
+    }
+
+    public function skipRender($html = null)
+    {
+        $this->pollEnrichmentSkipRenderCallsForTest++;
+
+        return $this;
+    }
+
+    public function flushCachedTableRecords(): void
+    {
+        $this->flushCachedTableRecordsCallsForTest++;
+    }
+
+    protected function peekInstalledEnrichmentSignature(): ?string
+    {
+        return $this->peekedEnrichmentSignatureForTest;
     }
 
     protected function refreshInstalledOperationState(): ?InstalledOperationState
@@ -166,6 +189,14 @@ class ModManagerPagePayloadTest extends TestCase
 
         self::assertTrue($property->isPublic());
         self::assertFalse($property->isProtected());
+        self::assertCount(1, $property->getAttributes(Locked::class));
+    }
+
+    public function test_installed_enrichment_signature_is_locked_component_state(): void
+    {
+        $property = new ReflectionProperty(ModManagerPage::class, 'installedEnrichmentSignature');
+
+        self::assertTrue($property->isPublic());
         self::assertCount(1, $property->getAttributes(Locked::class));
     }
 
@@ -559,6 +590,52 @@ class ModManagerPagePayloadTest extends TestCase
         self::assertSame($failed->operation.':'.$failed->finishedAt, $page->handledInstalledOperation);
         self::assertFalse($page->pollInstalledOperations);
         self::assertFalse($page->shouldPollForTest($failed));
+    }
+
+    public function test_enrichment_poll_skips_render_when_the_visible_payload_is_unchanged(): void
+    {
+        $page = new TestableModManagerPage();
+        $page->activeTab = 'installed';
+        $page->pollEnrichment = true;
+        $page->installedEnrichmentSignature = 'same-payload';
+        $page->peekedEnrichmentSignatureForTest = 'same-payload';
+
+        $page->pollEnrichment();
+
+        self::assertSame(1, $page->pollEnrichmentSkipRenderCallsForTest);
+        self::assertSame(0, $page->flushCachedTableRecordsCallsForTest);
+        self::assertTrue($page->pollEnrichment);
+        self::assertSame('same-payload', $page->installedEnrichmentSignature);
+    }
+
+    public function test_enrichment_poll_renders_when_a_background_fill_lands(): void
+    {
+        $page = new TestableModManagerPage();
+        $page->activeTab = 'installed';
+        $page->pollEnrichment = true;
+        $page->installedEnrichmentSignature = 'placeholders';
+        $page->peekedEnrichmentSignatureForTest = 'filled-icons';
+
+        $page->pollEnrichment();
+
+        self::assertSame(0, $page->pollEnrichmentSkipRenderCallsForTest);
+        self::assertSame(1, $page->flushCachedTableRecordsCallsForTest);
+        self::assertSame('filled-icons', $page->installedEnrichmentSignature);
+    }
+
+    public function test_enrichment_poll_stops_off_the_installed_tab(): void
+    {
+        $page = new TestableModManagerPage();
+        $page->activeTab = ProjectSourceKey::Modrinth->value;
+        $page->pollEnrichment = true;
+        $page->installedEnrichmentSignature = 'stale';
+
+        $page->pollEnrichment();
+
+        self::assertFalse($page->pollEnrichment);
+        self::assertNull($page->installedEnrichmentSignature);
+        self::assertSame(0, $page->pollEnrichmentSkipRenderCallsForTest);
+        self::assertSame(0, $page->flushCachedTableRecordsCallsForTest);
     }
 
     /** @param array<int, ProjectSourceInterface> $sources */

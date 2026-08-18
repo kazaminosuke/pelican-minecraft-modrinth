@@ -83,6 +83,13 @@ class ModManagerPage extends Page implements HasTable
     /** @var array<string, array<string, mixed>>|null */
     protected ?array $installedModsIndex = null;
 
+    /**
+     * Current-page row index for project icons, rebuilt once per table render.
+     *
+     * @var array<string, int>|null
+     */
+    protected ?array $projectIconRowIndexMap = null;
+
     /** @var array<string, array<int, mixed>> Cache for version data by "source:project_id" */
     protected array $versionsCache = [];
 
@@ -149,6 +156,14 @@ class ModManagerPage extends Page implements HasTable
      * job state rather than passive cache-fill progress.
      */
     public bool $pollEnrichment = false;
+
+    /**
+     * Hash of the Installed page's visible enrichment payload. Compared on
+     * pollEnrichment() so an unchanged pending fill does not remorph image
+     * nodes every five seconds.
+     */
+    #[Locked]
+    public ?string $installedEnrichmentSignature = null;
 
     /** Whether a still-valid scan result already exists, independent of background-operation state. */
     public bool $installedScanDataReady = false;
@@ -513,6 +528,7 @@ class ModManagerPage extends Page implements HasTable
         if ($activeTab !== 'installed') {
             $this->observedInstalledScan = null;
             $this->installedScanCompletion = null;
+            $this->installedEnrichmentSignature = null;
         }
 
         // A loaded table normally evaluates its records during this same
@@ -1452,6 +1468,137 @@ class ModManagerPage extends Page implements HasTable
             : strtolower($value);
     }
 
+    /**
+     * @param  array<int, array<string, mixed>>  $installedMods
+     * @param  array<int, string>  $unknownFiles
+     * @return array{mods: array<int, array<string, mixed>>, unknown: array<int, string>}
+     */
+    protected function applyInstalledSearch(array $installedMods, array $unknownFiles, ?string $search): array
+    {
+        if (!$search) {
+            return [
+                'mods' => array_values($installedMods),
+                'unknown' => array_values($unknownFiles),
+            ];
+        }
+
+        $searchLower = $this->lowercaseInstalledSearchValue($search);
+
+        return [
+            'mods' => array_values(array_filter($installedMods, function (array $mod) use ($searchLower) {
+                return str_contains($this->lowercaseInstalledSearchValue($mod['project_title'] ?? ''), $searchLower)
+                    || str_contains($this->lowercaseInstalledSearchValue($mod['project_slug'] ?? ''), $searchLower);
+            })),
+            'unknown' => array_values(array_filter(
+                $unknownFiles,
+                fn (string $filename) => str_contains($this->lowercaseInstalledSearchValue($filename), $searchLower),
+            )),
+        ];
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $installedMods
+     * @return array<int, array<string, mixed>>
+     */
+    protected function installedModsInSourceOrder(array $installedMods): array
+    {
+        $installedBySource = [];
+        foreach ($installedMods as $installedMod) {
+            $sourceKey = $installedMod['source'] ?? ProjectSourceKey::Modrinth->value;
+            $installedBySource[$sourceKey][] = $installedMod;
+        }
+
+        return $installedBySource !== []
+            ? array_merge(...array_values($installedBySource))
+            : [];
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $projects
+     */
+    protected function enrichmentSignatureFromProjects(array $projects, bool $latestPending): string
+    {
+        $parts = [];
+
+        foreach ($projects as $project) {
+            $parts[] = implode("\1", [
+                (string) ($project['project_id'] ?? ''),
+                (string) ($project['source'] ?? ''),
+                (string) ($project['icon_url'] ?? ''),
+                (string) ($project['downloads'] ?? ''),
+                (string) ($project['date_modified'] ?? ''),
+                !empty($project['enrichment_pending']) ? '1' : '0',
+            ]);
+        }
+
+        $parts[] = $latestPending ? '1' : '0';
+
+        return hash('sha256', implode("\n", $parts));
+    }
+
+    protected function peekInstalledEnrichmentSignature(): ?string
+    {
+        try {
+            /** @var Server $server */
+            $server = Filament::getTenant();
+            $type = static::detectProjectType($server);
+            $search = $this->getTableSearch();
+            $page = (int) $this->getTablePage();
+            $installedMods = $this->getInstalledModsMetadata();
+            $filtered = $this->applyInstalledSearch($installedMods, [], $search);
+            $pagedInstalledMods = array_slice(
+                $this->installedModsInSourceOrder($filtered['mods']),
+                ($page - 1) * self::TABLE_PAGE_SIZE,
+                self::TABLE_PAGE_SIZE,
+            );
+
+            if ($pagedInstalledMods !== [] && $type !== null) {
+                $this->peekVisibleLatestVersions($pagedInstalledMods, $server, $type);
+            }
+
+            $projects = $pagedInstalledMods !== []
+                ? app(ProjectSourceRegistry::class)->peekInstalled($pagedInstalledMods, $server)
+                : [];
+
+            return $this->enrichmentSignatureFromProjects(
+                $projects,
+                $this->pendingLatestVersionKeys !== [],
+            );
+        } catch (Exception) {
+            return null;
+        }
+    }
+
+    /** @param array<string, mixed> $record */
+    protected function projectIconImgAttributes(array $record): array
+    {
+        return ProjectIconUrl::imgAttributes($this->projectIconRowIndex($record));
+    }
+
+    /** @param array<string, mixed> $record */
+    protected function projectIconRowIndex(array $record): int
+    {
+        if ($this->projectIconRowIndexMap === null) {
+            $this->projectIconRowIndexMap = [];
+            $index = 0;
+
+            foreach ($this->getTableRecords() as $row) {
+                if (is_array($row)) {
+                    $this->projectIconRowIndexMap[$this->projectIconRecordKey($row)] = $index;
+                }
+                $index++;
+            }
+        }
+
+        return $this->projectIconRowIndexMap[$this->projectIconRecordKey($record)] ?? PHP_INT_MAX;
+    }
+
+    /** @param array<string, mixed> $record */
+    protected function projectIconRecordKey(array $record): string
+    {
+        return ($record['source'] ?? '')."\0".($record['project_id'] ?? '')."\0".($record['title'] ?? '');
+    }
+
     protected function truncateProjectDescription(string $description): string
     {
         return Str::limit($description, 120, '...');
@@ -1482,6 +1629,8 @@ class ModManagerPage extends Page implements HasTable
     {
         return $table
             ->records(function (?string $search, int $page) {
+                $this->projectIconRowIndexMap = null;
+
                 /** @var Server $server */
                 $server = Filament::getTenant();
                 $type = static::detectProjectType($server);
@@ -1524,29 +1673,15 @@ class ModManagerPage extends Page implements HasTable
                             : $this->shouldPollInstalledOperation($state);
                     }
 
-                    if ($search) {
-                        $searchLower = $this->lowercaseInstalledSearchValue($search);
-                        $installedMods = array_values(array_filter($installedMods, function (array $mod) use ($searchLower) {
-                            return str_contains($this->lowercaseInstalledSearchValue($mod['project_title']), $searchLower)
-                                || str_contains($this->lowercaseInstalledSearchValue($mod['project_slug']), $searchLower);
-                        }));
-
-                        $unknownFiles = array_values(array_filter($unknownFiles, fn (string $filename) => str_contains($this->lowercaseInstalledSearchValue($filename), $searchLower)));
-                    }
+                    $filtered = $this->applyInstalledSearch($installedMods, $unknownFiles, $search);
+                    $installedMods = $filtered['mods'];
+                    $unknownFiles = $filtered['unknown'];
 
                     // hydrateInstalled()/peekInstalled() group records by source.
                     // Reproduce that ordering before pagination, then hydrate only
                     // this page's records instead of every installed project on
                     // every request.
-                    $installedBySource = [];
-                    foreach ($installedMods as $installedMod) {
-                        $sourceKey = $installedMod['source'] ?? ProjectSourceKey::Modrinth->value;
-                        $installedBySource[$sourceKey][] = $installedMod;
-                    }
-
-                    $orderedInstalledMods = $installedBySource
-                        ? array_merge(...array_values($installedBySource))
-                        : [];
+                    $orderedInstalledMods = $this->installedModsInSourceOrder($installedMods);
                     $totalCount = count($orderedInstalledMods) + count($unknownFiles);
                     $page = $this->synchronizeTablePage($page, $totalCount);
                     $offset = ($page - 1) * $perPage;
@@ -1580,6 +1715,10 @@ class ModManagerPage extends Page implements HasTable
                     // fill, so polling it would only repeat the same cache
                     // reads and table render indefinitely.
                     $this->pollEnrichment = $enrichmentPending && $operations->supportsAsyncDispatch();
+                    $this->installedEnrichmentSignature = $this->enrichmentSignatureFromProjects(
+                        $projects,
+                        $this->pendingLatestVersionKeys !== [],
+                    );
 
                     $unknownOffset = max(0, $offset - count($orderedInstalledMods));
                     $remainingSlots = $perPage - count($pagedInstalledMods);
@@ -1709,10 +1848,7 @@ class ModManagerPage extends Page implements HasTable
                     // real Filament cell. Keep this selector independent of
                     // Filament's generated HTML below the cell.
                     ->extraCellAttributes(['data-mmr-swr-cell' => 'icon', 'class' => 'mmr-project-icon-cell'])
-                    ->extraImgAttributes([
-                        'loading' => 'lazy',
-                        'decoding' => 'async',
-                    ]),
+                    ->extraImgAttributes(fn (array $record): array => $this->projectIconImgAttributes($record)),
                 TextColumn::make('title')
                     ->label(trans('pelican-minecraft-modrinth::strings.table.columns.title'))
                     ->searchable()
@@ -2859,15 +2995,29 @@ class ModManagerPage extends Page implements HasTable
      * that landed since the last render becomes visible. The poll request
      * itself re-renders the component; unlike resetTable(), this preserves
      * the Installed table's current page, search, and filters.
+     *
+     * When the peeked payload is unchanged, skip the remorph so in-flight
+     * icons are not decoded again while the fill is still pending.
      */
     public function pollEnrichment(): void
     {
         if ($this->activeTab !== 'installed') {
             $this->pollEnrichment = false;
+            $this->installedEnrichmentSignature = null;
 
             return;
         }
 
+        $signature = $this->peekInstalledEnrichmentSignature();
+        if ($this->pollEnrichment
+            && $signature !== null
+            && $signature === $this->installedEnrichmentSignature) {
+            $this->skipRender();
+
+            return;
+        }
+
+        $this->installedEnrichmentSignature = $signature;
         $this->flushCachedTableRecords();
     }
 

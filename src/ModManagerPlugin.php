@@ -82,7 +82,15 @@ class ModManagerPlugin implements HasPluginSettings, Plugin
         $panel->renderHook(
             PanelsRenderHook::HEAD_END,
             fn () => new HtmlString(
-                '<style>'
+                '<link rel="preconnect" href="https://cdn.modrinth.com" crossorigin>'
+                .'<link rel="preconnect" href="https://media.forgecdn.net" crossorigin>'
+                .'<link rel="preconnect" href="https://hangarcdn.papermc.io" crossorigin>'
+                .'<link rel="preconnect" href="https://avatars.githubusercontent.com" crossorigin>'
+                .'<link rel="dns-prefetch" href="https://cdn.modrinth.com">'
+                .'<link rel="dns-prefetch" href="https://media.forgecdn.net">'
+                .'<link rel="dns-prefetch" href="https://hangarcdn.papermc.io">'
+                .'<link rel="dns-prefetch" href="https://avatars.githubusercontent.com">'
+                .'<style>'
                 .'.mcloader-badge .fi-icon{width:1em!important;height:1em!important;}'
                 // The mod/plugin table owns the rest of the screen, and the row
                 // area alone scrolls, so the Minecraft Version/Loader/Installed
@@ -125,7 +133,7 @@ class ModManagerPlugin implements HasPluginSettings, Plugin
                     .'min-height:15rem;'
                 .'}'
                 // A container-relative, square image footprint reserves space
-                // before lazy remote icons decode without introducing a fixed
+                // before remote icons decode without introducing a fixed
                 // pixel size. It scales with the actual table viewport.
                 .'.mmr-table-scroll-ctn{container-type:inline-size;}'
                 .'.mmr-table-scroll-ctn .mmr-project-icon-cell .fi-ta-image img{'
