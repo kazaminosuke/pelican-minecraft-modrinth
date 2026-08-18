@@ -89,7 +89,7 @@ final class WarmCatalogSearch implements ShouldBeUnique, ShouldQueue
         }
 
         try {
-            $source->search($server, $type, $this->page, null, ['sort' => $this->sort]);
+            $source->warmSearch($server, $type, $this->page, null, ['sort' => $this->sort]);
         } catch (Throwable $exception) {
             report($exception);
         }

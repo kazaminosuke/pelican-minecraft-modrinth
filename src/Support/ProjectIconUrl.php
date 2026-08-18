@@ -16,12 +16,13 @@ final class ProjectIconUrl
      * (1080p ≈ 12, 1440p ≈ 18-20), so every on-page icon is eager. Measured
      * catalog transfer for 20 Modrinth icons is ~194KB; the extra ~80KB of
      * below-fold rows is cheaper than leaving visible icons lazy. The first
-     * two rows use fetchpriority=high so they are not competing with the
-     * rest for LCP.
+     * eight rows use fetchpriority=high so the initially visible CurseForge
+     * thumbnails (≈7 at 1440×900) are not competing with the rest of the
+     * page for the first decode.
      */
     public const EAGER_COUNT = 20;
 
-    public const HIGH_PRIORITY_COUNT = 2;
+    public const HIGH_PRIORITY_COUNT = 8;
 
     public static function placeholderDataUri(): string
     {

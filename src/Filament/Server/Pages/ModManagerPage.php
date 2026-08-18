@@ -98,10 +98,9 @@ class ModManagerPage extends Page implements HasTable
 
     /**
      * Keys ("source:project_id") whose latest-version lookup was a cold
-     * cache miss on the Installed tab's non-blocking peek path - a
-     * background revalidation was queued rather than fetched inline. Set
-     * only by peekVisibleLatestVersions(); the catalog tab's blocking
-     * warmVisibleLatestVersions() never leaves an entry pending.
+     * cache miss on the non-blocking peek path - a background
+     * revalidation was queued rather than fetched inline. Set only by
+     * peekVisibleLatestVersions() for both Installed and catalog rows.
      *
      * @var array<string, true>
      */
@@ -331,14 +330,12 @@ class ModManagerPage extends Page implements HasTable
     }
 
     /**
-     * Warm this visit's catalog page 1 (every available source) and the
-     * active source's page 2, so a later visitor sharing the same (source,
-     * project type, loader, Minecraft version, sort) combination gets a
-     * fresh-cache hit instead of a cold miss. Too late to help this
-     * request - records() has already run its own inline SourceCache
-     * fetch by the time this warm job's result would land - see
-     * WarmCatalogCacheCommand for what actually prevents a cold first
-     * visit.
+     * Warm other catalog sources' page 1 (and this source's page 2) so a
+     * tab switch a moment later is a Redis hit. The active source's current
+     * page is fetched by this request's own records()/loadTable path;
+     * queuing it first just duplicates that API call and delays warming
+     * Modrinth/Hangar behind CurseForge. Too late to help THIS source's
+     * first paint - see WarmCatalogCacheCommand for scheduled warming.
      */
     protected function dispatchCatalogWarm(): void
     {
@@ -368,35 +365,49 @@ class ModManagerPage extends Page implements HasTable
             return;
         }
 
-        $activeSourceKey = $this->getCurrentSource()?->getKey()->value;
-
-        foreach ($this->getCatalogSources() as $source) {
-            if (!$source->isConfigured()) {
-                continue;
-            }
-
+        foreach ($this->catalogPagesToWarm() as $page) {
             WarmCatalogSearch::dispatch(
                 $server->id,
-                $source->getKey()->value,
+                $page['sourceKey'],
                 $type->value,
-                1,
+                $page['page'],
                 $loader,
                 $mcVersion,
                 $this->catalogSort,
             );
-
-            if ($source->getKey()->value === $activeSourceKey) {
-                WarmCatalogSearch::dispatch(
-                    $server->id,
-                    $source->getKey()->value,
-                    $type->value,
-                    2,
-                    $loader,
-                    $mcVersion,
-                    $this->catalogSort,
-                );
-            }
         }
+    }
+
+    /**
+     * Pages the current visit should warm in the background. Page 1 of the
+     * active catalog source is omitted: records() (or the deferred
+     * loadTable that follows a cold miss) already performs that fetch.
+     *
+     * @return array<int, array{sourceKey: string, page: int}>
+     */
+    protected function catalogPagesToWarm(): array
+    {
+        $activeSourceKey = $this->getCurrentSource()?->getKey()->value;
+        $otherSourcePages = [];
+        $activeSourcePages = [];
+
+        foreach ($this->getCatalogSources() as $source) {
+            if (!$source->isConfigured() || !$source->supportsSearch()) {
+                continue;
+            }
+
+            $sourceKey = $source->getKey()->value;
+
+            if ($sourceKey === $activeSourceKey) {
+                $activeSourcePages[] = ['sourceKey' => $sourceKey, 'page' => 2];
+
+                continue;
+            }
+
+            $otherSourcePages[] = ['sourceKey' => $sourceKey, 'page' => 1];
+        }
+
+        return [...$otherSourcePages, ...$activeSourcePages];
     }
 
     /**
@@ -1034,11 +1045,11 @@ class ModManagerPage extends Page implements HasTable
     }
 
     /**
-     * Non-blocking counterpart to warmVisibleLatestVersions(), used by the
-     * Installed tab's render path so a cold cache never blocks the
-     * response. A cache hit (fresh or stale) is used immediately, same as
-     * the blocking path; a miss queues a background revalidation and
-     * leaves the entry out of latestVersionsCache entirely (see
+     * Non-blocking latest-version lookup used by both the Installed tab
+     * and catalog rows that overlap installed projects, so a cold cache
+     * never blocks the response. A cache hit (fresh or stale) is used
+     * immediately; a miss queues a background revalidation and leaves
+     * the entry out of latestVersionsCache entirely (see
      * isLatestVersionPending()) so it isn't mistaken for a confirmed
      * no-update result.
      *
@@ -1105,61 +1116,6 @@ class ModManagerPage extends Page implements HasTable
         }
 
         return $this->pendingLatestVersionKeys !== [];
-    }
-
-    /** @param array<int, array<string, mixed>> $records */
-    protected function warmVisibleLatestVersions(array $records, Server $server, ProjectType $type): void
-    {
-        $installedMods = [];
-
-        foreach ($records as $record) {
-            $projectId = $record['project_id'] ?? null;
-            $sourceKey = $record['source'] ?? null;
-
-            if (!is_string($projectId) || $projectId === '' || !is_string($sourceKey) || $sourceKey === '') {
-                continue;
-            }
-
-            $cacheIndex = "$sourceKey:$projectId";
-            if (array_key_exists($cacheIndex, $this->latestVersionsCache)) {
-                continue;
-            }
-
-            $installedMod = $this->getInstalledMod($projectId, $sourceKey);
-            if ($installedMod !== null) {
-                $installedMods[$cacheIndex] = $installedMod;
-            }
-        }
-
-        if ($installedMods === []) {
-            return;
-        }
-
-        $startedAt = $this->isModManagerTimingEnabled() ? microtime(true) : 0.0;
-        $result = app(VersionLookupCoordinator::class)->lookupInstalled(array_values($installedMods), $server, $type);
-
-        foreach (array_keys($installedMods) as $cacheIndex) {
-            $this->latestVersionsCache[$cacheIndex] = $result->version($cacheIndex);
-        }
-
-        if ($this->isModManagerTimingEnabled()) {
-            $durationMs = (int) round((microtime(true) - $startedAt) * 1000);
-            $this->modManagerTimingVersionLookups += count($installedMods);
-            $this->modManagerTimingVersionLookupDurationMs += $durationMs;
-
-            Log::info('Mod manager timing', [
-                'stage' => 'record_version_lookup_batch',
-                'request_id' => $this->modManagerTimingRequestId,
-                'source' => 'coordinator',
-                'started_after_ms' => $this->getModManagerTimingElapsedMs($startedAt),
-                'finished_after_ms' => $this->getModManagerTimingElapsedMs(),
-                'duration_ms' => $durationMs,
-                'project_count' => count($installedMods),
-                'resolved_count' => count($result->versions()),
-                'unresolved_count' => count($result->unresolvedKeys()),
-                'failed_count' => count($result->failures()),
-            ]);
-        }
     }
 
     protected function getCachedDatapackWorldName(Server $server, DaemonFileRepository $fileRepository): string
@@ -1790,7 +1746,14 @@ class ModManagerPage extends Page implements HasTable
                     return $hit;
                 }, $response['hits']);
 
-                $this->warmVisibleLatestVersions($hits, $server, $type);
+                // Catalog update badges overlap installed projects. Do not
+                // block first paint on those lookups: peek queues a
+                // background fill and pollEnrichment reloads the row once
+                // it lands, same as the Installed tab.
+                $this->pendingLatestVersionKeys = [];
+                $versionPending = $this->peekVisibleLatestVersions($hits, $server, $type);
+                $this->pollEnrichment = $versionPending
+                    && app(InstalledOperationManager::class)->supportsAsyncDispatch();
 
                 return new LengthAwarePaginator($hits, $response['total_hits'], self::TABLE_PAGE_SIZE, $page);
             })
@@ -2708,12 +2671,13 @@ class ModManagerPage extends Page implements HasTable
                     // Keep observing scan/bulk-update state even though scan
                     // status no longer renders a page-body component.
                     ? ['wire:poll.2s' => 'pollInstalledOperation']
-                    : [], $this->activeTab === 'installed' && $this->pollEnrichment
+                    : [], $this->pollEnrichment
                     // Independent of pollInstalledOperations: this fires only
                     // while a background icon/downloads/date_modified or
                     // update-badge fetch is still outstanding (see
                     // peekVisibleLatestVersions()/ProjectSourceRegistry::
-                    // peekInstalled()), and stops on its own once records()
+                    // peekInstalled()), including catalog rows that overlap
+                    // installed projects, and stops on its own once records()
                     // finds nothing left pending.
                     ? ['wire:poll.5s' => 'pollEnrichment']
                     : [])),
@@ -3002,8 +2966,13 @@ class ModManagerPage extends Page implements HasTable
     public function pollEnrichment(): void
     {
         if ($this->activeTab !== 'installed') {
-            $this->pollEnrichment = false;
-            $this->installedEnrichmentSignature = null;
+            if (!$this->pollEnrichment) {
+                $this->installedEnrichmentSignature = null;
+
+                return;
+            }
+
+            $this->flushCachedTableRecords();
 
             return;
         }

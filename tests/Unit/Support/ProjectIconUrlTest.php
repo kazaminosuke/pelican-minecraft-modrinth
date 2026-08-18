@@ -57,7 +57,8 @@ class ProjectIconUrlTest extends TestCase
     {
         $first = ProjectIconUrl::imgAttributes(0);
         $second = ProjectIconUrl::imgAttributes(1);
-        $later = ProjectIconUrl::imgAttributes(2);
+        $lastHigh = ProjectIconUrl::imgAttributes(ProjectIconUrl::HIGH_PRIORITY_COUNT - 1);
+        $later = ProjectIconUrl::imgAttributes(ProjectIconUrl::HIGH_PRIORITY_COUNT);
         $lastOnPage = ProjectIconUrl::imgAttributes(ProjectIconUrl::EAGER_COUNT - 1);
         $offPage = ProjectIconUrl::imgAttributes(ProjectIconUrl::EAGER_COUNT);
 
@@ -65,6 +66,7 @@ class ProjectIconUrlTest extends TestCase
         self::assertSame('async', $first['decoding']);
         self::assertSame('high', $first['fetchpriority']);
         self::assertSame('high', $second['fetchpriority']);
+        self::assertSame('high', $lastHigh['fetchpriority']);
         self::assertArrayNotHasKey('fetchpriority', $later);
         self::assertSame('eager', $later['loading']);
         self::assertSame('eager', $lastOnPage['loading']);

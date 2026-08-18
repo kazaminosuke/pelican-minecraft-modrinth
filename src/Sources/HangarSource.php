@@ -18,6 +18,7 @@ use Kazaminosuke\ModManager\Enums\ProjectType;
 use Kazaminosuke\ModManager\Exceptions\PartialSourceFetchException;
 use Kazaminosuke\ModManager\Support\CacheProfile;
 use Kazaminosuke\ModManager\Support\CacheVersion;
+use Kazaminosuke\ModManager\Support\CatalogFields;
 use Kazaminosuke\ModManager\Support\LatestVersionLookupRequest;
 use Kazaminosuke\ModManager\Support\LatestVersionLookupResult;
 use Kazaminosuke\ModManager\Support\MinecraftVersionResolver;
@@ -151,6 +152,21 @@ class HangarSource implements BatchLatestVersionSourceInterface, ProjectMetadata
         $spec = $this->buildSearchSpec($server, $type, $page, $search, $filters);
 
         return $spec === null || $this->sourceCache->peek($spec)['hit'];
+    }
+
+    public function warmSearch(Server $server, ProjectType $type, int $page = 1, ?string $search = null, array $filters = []): bool
+    {
+        $spec = $this->buildSearchSpec($server, $type, $page, $search, $filters);
+        if ($spec === null) {
+            return false;
+        }
+
+        $peeked = $this->sourceCache->peek($spec);
+        if ($peeked['hit'] && $peeked['fresh']) {
+            return false;
+        }
+
+        return $this->sourceCache->revalidate($spec, CacheProfile::Search);
     }
 
     /** @param array<string, mixed> $filters */
@@ -548,21 +564,39 @@ class HangarSource implements BatchLatestVersionSourceInterface, ProjectMetadata
             throw new Exception('Invalid Hangar search parameters.');
         }
 
-        $response = $this->getJson('/projects', $params, $timeoutSeconds);
-        if (!is_array($response['result'] ?? null) || !is_array($response['pagination'] ?? null)) {
-            throw new Exception('Invalid Hangar search response.');
+        $debugTiming = (bool) config('pelican-minecraft-modrinth.debug_timing', false);
+        $startedAt = $debugTiming ? microtime(true) : 0.0;
+        $responseBytes = null;
+
+        try {
+            $response = $this->getJson('/projects', $params, $timeoutSeconds);
+            if ($debugTiming) {
+                $responseBytes = strlen(json_encode($response) ?: '');
+            }
+
+            if (!is_array($response['result'] ?? null) || !is_array($response['pagination'] ?? null)) {
+                throw new Exception('Invalid Hangar search response.');
+            }
+
+            $hits = collect($response['result'])
+                ->filter(fn ($project) => is_array($project))
+                ->map(fn (array $project) => $this->normalizeProject($project))
+                ->values()
+                ->all();
+
+            return [
+                'hits' => $hits,
+                'total_hits' => (int) ($response['pagination']['count'] ?? count($hits)),
+            ];
+        } finally {
+            if ($debugTiming) {
+                logger()->debug('Catalog search API timing', [
+                    'source' => 'hangar',
+                    'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+                    'response_bytes' => $responseBytes,
+                ]);
+            }
         }
-
-        $hits = collect($response['result'])
-            ->filter(fn ($project) => is_array($project))
-            ->map(fn (array $project) => $this->normalizeProject($project))
-            ->values()
-            ->all();
-
-        return [
-            'hits' => $hits,
-            'total_hits' => (int) ($response['pagination']['count'] ?? count($hits)),
-        ];
     }
 
     /** @return array<string, mixed> */
@@ -789,7 +823,7 @@ class HangarSource implements BatchLatestVersionSourceInterface, ProjectMetadata
             'project_id' => (string) ($project['id'] ?? ''),
             'slug' => $namespace['slug'] ?? '',
             'title' => $project['name'] ?? '',
-            'description' => $project['description'] ?? '',
+            'description' => CatalogFields::description($project['description'] ?? ''),
             'icon_url' => $project['avatarUrl'] ?? null,
             'author' => $namespace['owner'] ?? null,
             'downloads' => (int) ($project['stats']['downloads'] ?? 0),

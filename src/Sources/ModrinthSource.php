@@ -15,6 +15,7 @@ use Kazaminosuke\ModManager\Contracts\SourceFetchHandlerInterface;
 use Kazaminosuke\ModManager\Enums\ProjectSourceKey;
 use Kazaminosuke\ModManager\Enums\ProjectType;
 use Kazaminosuke\ModManager\Support\CacheProfile;
+use Kazaminosuke\ModManager\Support\CatalogFields;
 use Kazaminosuke\ModManager\Support\LatestVersionLookupRequest;
 use Kazaminosuke\ModManager\Support\LatestVersionLookupResult;
 use Kazaminosuke\ModManager\Support\MinecraftVersionResolver;
@@ -144,6 +145,21 @@ class ModrinthSource implements AuthoritativeBatchProjectSourceInterface, BatchL
         return $spec === null || $this->sourceCache->peek($spec)['hit'];
     }
 
+    public function warmSearch(Server $server, ProjectType $type, int $page = 1, ?string $search = null, array $filters = []): bool
+    {
+        $spec = $this->buildSearchSpec($server, $type, $page, $search, $filters);
+        if ($spec === null) {
+            return false;
+        }
+
+        $peeked = $this->sourceCache->peek($spec);
+        if ($peeked['hit'] && $peeked['fresh']) {
+            return false;
+        }
+
+        return $this->sourceCache->revalidate($spec, CacheProfile::Search);
+    }
+
     /** @param array<string, mixed> $filters */
     private function buildSearchSpec(Server $server, ProjectType $type, int $page, ?string $search, array $filters): ?SourceFetchSpec
     {
@@ -198,7 +214,7 @@ class ModrinthSource implements AuthoritativeBatchProjectSourceInterface, BatchL
             'project_id' => (string) ($project['project_id'] ?? $project['id'] ?? ''),
             'slug' => $project['slug'] ?? '',
             'title' => $project['title'] ?? '',
-            'description' => $project['description'] ?? '',
+            'description' => CatalogFields::description($project['description'] ?? ''),
             'icon_url' => $project['icon_url'] ?? null,
             'author' => $project['author'] ?? null,
             'downloads' => (int) ($project['downloads'] ?? 0),

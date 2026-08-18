@@ -17,6 +17,7 @@ use Kazaminosuke\ModManager\Enums\ProjectSourceKey;
 use Kazaminosuke\ModManager\Enums\ProjectType;
 use Kazaminosuke\ModManager\Exceptions\PartialSourceFetchException;
 use Kazaminosuke\ModManager\Support\CacheProfile;
+use Kazaminosuke\ModManager\Support\CatalogFields;
 use Kazaminosuke\ModManager\Support\LatestVersionLookupRequest;
 use Kazaminosuke\ModManager\Support\LatestVersionLookupResult;
 use Kazaminosuke\ModManager\Support\MinecraftVersionResolver;
@@ -142,6 +143,21 @@ class CurseForgeSource implements AuthoritativeBatchProjectSourceInterface, Batc
         $spec = $this->buildSearchSpec($server, $type, $page, $search, $filters);
 
         return $spec === null || $this->cache()->peek($spec)['hit'];
+    }
+
+    public function warmSearch(Server $server, ProjectType $type, int $page = 1, ?string $search = null, array $filters = []): bool
+    {
+        $spec = $this->buildSearchSpec($server, $type, $page, $search, $filters);
+        if ($spec === null) {
+            return false;
+        }
+
+        $peeked = $this->cache()->peek($spec);
+        if ($peeked['hit'] && $peeked['fresh']) {
+            return false;
+        }
+
+        return $this->cache()->revalidate($spec, CacheProfile::Search);
     }
 
     /** @param array<string, mixed> $filters */
@@ -1287,7 +1303,7 @@ class CurseForgeSource implements AuthoritativeBatchProjectSourceInterface, Batc
             'project_id' => (string) ($mod['id'] ?? ''),
             'slug' => $mod['slug'] ?? '',
             'title' => $mod['name'] ?? '',
-            'description' => $mod['summary'] ?? '',
+            'description' => CatalogFields::description($mod['summary'] ?? ''),
             'icon_url' => ProjectIconUrl::curseForgeThumbnail($logo['thumbnailUrl'] ?? $logo['url'] ?? null),
             'author' => (is_string($author) && $author !== '') ? $author : null,
             'downloads' => (int) ($mod['downloadCount'] ?? 0),

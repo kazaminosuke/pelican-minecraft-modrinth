@@ -113,6 +113,11 @@ final class TestableModManagerPage extends ModManagerPage
         return $this->lowercaseInstalledSearchValue($value);
     }
 
+    public function catalogPagesToWarmForTest(): array
+    {
+        return $this->catalogPagesToWarm();
+    }
+
     public int $pollEnrichmentSkipRenderCallsForTest = 0;
 
     public int $flushCachedTableRecordsCallsForTest = 0;
@@ -623,7 +628,7 @@ class ModManagerPagePayloadTest extends TestCase
         self::assertSame('filled-icons', $page->installedEnrichmentSignature);
     }
 
-    public function test_enrichment_poll_stops_off_the_installed_tab(): void
+    public function test_enrichment_poll_on_a_catalog_tab_reloads_pending_version_badges(): void
     {
         $page = new TestableModManagerPage();
         $page->activeTab = ProjectSourceKey::Modrinth->value;
@@ -632,10 +637,61 @@ class ModManagerPagePayloadTest extends TestCase
 
         $page->pollEnrichment();
 
+        self::assertTrue($page->pollEnrichment);
+        self::assertSame('stale', $page->installedEnrichmentSignature);
+        self::assertSame(0, $page->pollEnrichmentSkipRenderCallsForTest);
+        self::assertSame(1, $page->flushCachedTableRecordsCallsForTest);
+    }
+
+    public function test_enrichment_poll_on_a_catalog_tab_is_idle_when_nothing_is_pending(): void
+    {
+        $page = new TestableModManagerPage();
+        $page->activeTab = ProjectSourceKey::Modrinth->value;
+        $page->pollEnrichment = false;
+        $page->installedEnrichmentSignature = 'stale';
+
+        $page->pollEnrichment();
+
         self::assertFalse($page->pollEnrichment);
         self::assertNull($page->installedEnrichmentSignature);
-        self::assertSame(0, $page->pollEnrichmentSkipRenderCallsForTest);
         self::assertSame(0, $page->flushCachedTableRecordsCallsForTest);
+    }
+
+    public function test_catalog_warm_skips_the_active_source_landing_page(): void
+    {
+        $page = $this->pageWithSources([
+            $this->source(ProjectSourceKey::CurseForge, true),
+            $this->source(ProjectSourceKey::Modrinth, true),
+            $this->source(ProjectSourceKey::Hangar, true),
+        ]);
+        $page->activeTab = ProjectSourceKey::CurseForge->value;
+
+        self::assertSame([
+            ['sourceKey' => 'modrinth', 'page' => 1],
+            ['sourceKey' => 'hangar', 'page' => 1],
+            ['sourceKey' => 'curseforge', 'page' => 2],
+        ], $page->catalogPagesToWarmForTest());
+    }
+
+    public function test_catalog_warm_skips_unconfigured_sources(): void
+    {
+        $page = $this->pageWithSources([
+            $this->source(ProjectSourceKey::CurseForge, true, true),
+            $this->source(ProjectSourceKey::Modrinth, true, false),
+        ]);
+        $page->activeTab = ProjectSourceKey::CurseForge->value;
+
+        self::assertSame([
+            ['sourceKey' => 'curseforge', 'page' => 2],
+        ], $page->catalogPagesToWarmForTest());
+    }
+
+    public function test_catalog_records_peek_latest_versions_instead_of_blocking(): void
+    {
+        $source = (string) file_get_contents(dirname(__DIR__, 3).'/src/Filament/Server/Pages/ModManagerPage.php');
+
+        self::assertStringContainsString('$this->peekVisibleLatestVersions($hits, $server, $type);', $source);
+        self::assertStringNotContainsString('function warmVisibleLatestVersions', $source);
     }
 
     /** @param array<int, ProjectSourceInterface> $sources */
@@ -644,11 +700,12 @@ class ModManagerPagePayloadTest extends TestCase
         return new TestableModManagerPage($sources);
     }
 
-    private function source(ProjectSourceKey $key, bool $supportsSearch): ProjectSourceInterface
+    private function source(ProjectSourceKey $key, bool $supportsSearch, bool $configured = true): ProjectSourceInterface
     {
         $source = Mockery::mock(ProjectSourceInterface::class);
         $source->shouldReceive('getKey')->andReturn($key);
         $source->shouldReceive('supportsSearch')->andReturn($supportsSearch);
+        $source->shouldReceive('isConfigured')->andReturn($configured);
 
         return $source;
     }

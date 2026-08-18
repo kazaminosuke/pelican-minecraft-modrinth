@@ -61,6 +61,15 @@ interface ProjectSourceInterface
      */
     public function hasCachedSearch(Server $server, ProjectType $type, int $page, ?string $search = null, array $filters = []): bool;
 
+    /**
+     * Populate search()'s cache using the background timeout rather than
+     * the render-path 1.5s inline budget. A fresh entry is left untouched
+     * so a WarmCatalogSearch job that lost the race to the visitor's own
+     * search() does not repeat the upstream call. Returns whether a fetch
+     * was attempted.
+     */
+    public function warmSearch(Server $server, ProjectType $type, int $page, ?string $search = null, array $filters = []): bool;
+
     /** @return array<string, mixed>|null normalized project data */
     public function getProject(string $projectId): ?array;
 
