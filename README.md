@@ -51,13 +51,13 @@ Add one of these **features** to the egg so the plugin knows what to manage:
 
 Also add the `minecraft` **tag**, plus a loader tag so version/loader-specific filtering works: `paper`, `purpur`, `folia`, `spigot`, `bukkit`, `fabric`, `quilt`, `forge`, `neoforge`, `sponge`, `velocity`, `waterfall`, or `bungeecord`.
 
-To enable the opt-in catalog sources, add their feature flag too:
+To enable GitHub Releases tracking, add its feature flag:
 
 ```json
-{ "features": ["mod_manager", "curseforge", "hangar"], "tags": ["minecraft", "fabric"] }
+{ "features": ["mod_manager", "github_releases"], "tags": ["minecraft", "fabric"] }
 ```
 
-`hangar` unlocks its matching catalog tab. `github_releases` enables the **Track GitHub Repository** action instead: GitHub Releases has no browseable catalog, so enter an `owner/repo` there to track its latest release. Once a CurseForge API key is configured, every catalog type enables CurseForge by default. Add `curseforge_disabled` to explicitly hide CurseForge for an egg; this opt-out takes precedence over the default.
+`github_releases` enables the **Track GitHub Repository** action: GitHub Releases has no browseable catalog, so enter an `owner/repo` there to track its latest release. Once a CurseForge API key is configured, every catalog type enables CurseForge by default. Hangar is enabled by default on Plugin catalogs. Add `curseforge_disabled` or `hangar_disabled` to an egg's features or tags to hide that source; these opt-outs take precedence over the defaults.
 
 **Automatic egg detection** (see [How it works](#how-it-works)) means most official Minecraft eggs don't need any of the above set manually - explicit `features`/`tags` still always win when present.
 One consequence: datapack management now **defaults to on** for any recognized Java server egg (mod/plugin/hybrid/vanilla/modpack), even without a `datapack_manager` feature. Add `datapack_manager_disabled` to an egg's features to opt back out, or set `MOD_MANAGER_EGG_AUTODETECT=false` to fully restore the pre-autodetect behaviour where `datapack_manager` must be explicit.

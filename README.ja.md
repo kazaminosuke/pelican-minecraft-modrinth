@@ -50,13 +50,13 @@ https://github.com/kazaminosuke/pelican-minecraft-modrinth/releases/latest/downl
 
 さらに`minecraft`**タグ**と、バージョン/ローダー別のフィルタリングを機能させるためのローダータグ(`paper`、`purpur`、`folia`、`spigot`、`bukkit`、`fabric`、`quilt`、`forge`、`neoforge`、`sponge`、`velocity`、`waterfall`、`bungeecord`のいずれか)を追加してください。
 
-オプトインのカタログソースを有効にするには、それぞれのfeatureフラグも追加します。
+GitHub Releasesを有効にするには、featureフラグを追加します。
 
 ```json
-{ "features": ["mod_manager", "curseforge", "hangar"], "tags": ["minecraft", "fabric"] }
+{ "features": ["mod_manager", "github_releases"], "tags": ["minecraft", "fabric"] }
 ```
 
-`hangar`は対応するカタログタブを有効にします。`github_releases`は代わりに**GitHubリポジトリを追跡**アクションを有効にします。GitHub Releasesには一覧検索できるカタログがないため、ここで`owner/repo`を入力して最新リリースを追跡してください。CurseForge APIキーを設定すると、すべてのカタログ種別でCurseForgeが既定で有効になります。egg単位でCurseForgeを明示的に隠すには`curseforge_disabled`を追加します。この無効化指定は既定の有効化より優先されます。
+`github_releases`は**GitHubリポジトリを追跡**アクションを有効にします。GitHub Releasesには一覧検索できるカタログがないため、ここで`owner/repo`を入力して最新リリースを追跡してください。CurseForge APIキーを設定すると、すべてのカタログ種別でCurseForgeが既定で有効になります。HangarはPluginカタログで既定で有効です。egg単位で隠すには`curseforge_disabled`または`hangar_disabled`をfeaturesまたはtagsに追加します。この無効化指定は既定の有効化より優先されます。
 
 **eggの自動認識**([内部の仕組み](#内部の仕組み)参照)により、公式のMinecraft eggの大半は上記を手動設定する必要がありません(明示的な`features`/`tags`が設定されていれば常にそちらが優先されます)。
 これに伴う変更点として、認識されたJava系egg(mod/plugin/hybrid/vanilla/modpack)ではdatapack管理が`datapack_manager` featureなしでも**既定で有効**になります。無効化するにはeggのfeatureに`datapack_manager_disabled`を追加するか、`MOD_MANAGER_EGG_AUTODETECT=false`を設定して自動認識導入前の挙動(`datapack_manager`の明示指定が必須)に完全に戻してください。

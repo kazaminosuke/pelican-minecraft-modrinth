@@ -264,14 +264,16 @@ class ProjectSourceRegistryTest extends TestCase
         $server = $this->serverWithEgg('paper-uuid');
         $modrinth = Mockery::mock(ModrinthSource::class);
         $curseForge = Mockery::mock(CurseForgeSource::class);
+        $hangar = Mockery::mock(HangarSource::class);
         $modrinth->shouldReceive('supportsProjectType')->once()->with(ProjectType::Plugin)->andReturnTrue();
         $curseForge->shouldReceive('supportsProjectType')->once()->with(ProjectType::Plugin)->andReturnTrue();
         $curseForge->shouldReceive('isConfigured')->once()->andReturnTrue();
+        $hangar->shouldReceive('supportsProjectType')->once()->with(ProjectType::Plugin)->andReturnTrue();
 
         self::assertSame(ProjectType::Plugin, ProjectType::fromServer($server));
         self::assertSame(
-            [$curseForge, $modrinth],
-            $this->registryWith(modrinth: $modrinth, curseForge: $curseForge)->availableFor($server, ProjectType::Plugin),
+            [$curseForge, $modrinth, $hangar],
+            $this->registryWith(modrinth: $modrinth, curseForge: $curseForge, hangar: $hangar)->availableFor($server, ProjectType::Plugin),
         );
     }
 
@@ -281,13 +283,20 @@ class ProjectSourceRegistryTest extends TestCase
         $server = $this->serverWithEgg();
         $modrinth = Mockery::mock(ModrinthSource::class);
         $curseForge = Mockery::mock(CurseForgeSource::class);
+        $hangar = Mockery::mock(HangarSource::class);
         $modrinth->shouldReceive('supportsProjectType')->once()->with($type)->andReturnTrue();
         $curseForge->shouldReceive('isConfigured')->once()->andReturnTrue();
         $curseForge->shouldReceive('supportsProjectType')->once()->with($type)->andReturnTrue();
+        $hangar->shouldReceive('supportsProjectType')->once()->with($type)->andReturn($type === ProjectType::Plugin);
+
+        $expected = [$curseForge, $modrinth];
+        if ($type === ProjectType::Plugin) {
+            $expected[] = $hangar;
+        }
 
         self::assertSame(
-            [$curseForge, $modrinth],
-            $this->registryWith(modrinth: $modrinth, curseForge: $curseForge)->availableFor($server, $type),
+            $expected,
+            $this->registryWith(modrinth: $modrinth, curseForge: $curseForge, hangar: $hangar)->availableFor($server, $type),
         );
     }
 
@@ -308,12 +317,19 @@ class ProjectSourceRegistryTest extends TestCase
         $server = $this->serverWithEgg(features: $features);
         $modrinth = Mockery::mock(ModrinthSource::class);
         $curseForge = Mockery::mock(CurseForgeSource::class);
+        $hangar = Mockery::mock(HangarSource::class);
         $modrinth->shouldReceive('supportsProjectType')->once()->with($type)->andReturnTrue();
         $curseForge->shouldReceive('isConfigured')->once()->andReturnFalse();
+        $hangar->shouldReceive('supportsProjectType')->once()->with($type)->andReturn($type === ProjectType::Plugin);
+
+        $expected = [$modrinth];
+        if ($type === ProjectType::Plugin) {
+            $expected[] = $hangar;
+        }
 
         self::assertSame(
-            [$modrinth],
-            $this->registryWith(modrinth: $modrinth, curseForge: $curseForge)->availableFor($server, $type),
+            $expected,
+            $this->registryWith(modrinth: $modrinth, curseForge: $curseForge, hangar: $hangar)->availableFor($server, $type),
         );
     }
 
@@ -331,17 +347,103 @@ class ProjectSourceRegistryTest extends TestCase
     {
         $server = $this->serverWithEgg(features: ['curseforge_disabled']);
         $modrinth = Mockery::mock(ModrinthSource::class);
+        $hangar = Mockery::mock(HangarSource::class);
         $modrinth->shouldReceive('supportsProjectType')->once()->with(ProjectType::Plugin)->andReturnTrue();
+        $hangar->shouldReceive('supportsProjectType')->once()->with(ProjectType::Plugin)->andReturnTrue();
+
+        self::assertSame(
+            [$modrinth, $hangar],
+            $this->registryWith(modrinth: $modrinth, hangar: $hangar)->availableFor($server, ProjectType::Plugin),
+        );
+    }
+
+    public function test_hangar_is_available_for_plugins_without_a_positive_hangar_flag(): void
+    {
+        $server = $this->serverWithEgg(features: ['plugin_manager']);
+        $modrinth = Mockery::mock(ModrinthSource::class);
+        $curseForge = Mockery::mock(CurseForgeSource::class);
+        $hangar = Mockery::mock(HangarSource::class);
+        $modrinth->shouldReceive('supportsProjectType')->once()->with(ProjectType::Plugin)->andReturnTrue();
+        $curseForge->shouldReceive('isConfigured')->once()->andReturnFalse();
+        $hangar->shouldReceive('supportsProjectType')->once()->with(ProjectType::Plugin)->andReturnTrue();
+
+        self::assertSame(
+            [$modrinth, $hangar],
+            $this->registryWith(modrinth: $modrinth, curseForge: $curseForge, hangar: $hangar)->availableFor($server, ProjectType::Plugin),
+        );
+    }
+
+    public function test_hangar_disabled_feature_hides_hangar_for_plugins(): void
+    {
+        $server = $this->serverWithEgg(features: ['hangar_disabled']);
+        $modrinth = Mockery::mock(ModrinthSource::class);
+        $curseForge = Mockery::mock(CurseForgeSource::class);
+        $hangar = Mockery::mock(HangarSource::class);
+        $modrinth->shouldReceive('supportsProjectType')->once()->with(ProjectType::Plugin)->andReturnTrue();
+        $curseForge->shouldReceive('isConfigured')->once()->andReturnFalse();
+        $hangar->shouldNotReceive('supportsProjectType');
 
         self::assertSame(
             [$modrinth],
-            $this->registryWith(modrinth: $modrinth)->availableFor($server, ProjectType::Plugin),
+            $this->registryWith(modrinth: $modrinth, curseForge: $curseForge, hangar: $hangar)->availableFor($server, ProjectType::Plugin),
+        );
+    }
+
+    public function test_hangar_disabled_tag_hides_hangar_for_plugins(): void
+    {
+        $server = $this->serverWithEgg(features: [], tags: ['minecraft', 'hangar_disabled']);
+        $modrinth = Mockery::mock(ModrinthSource::class);
+        $curseForge = Mockery::mock(CurseForgeSource::class);
+        $hangar = Mockery::mock(HangarSource::class);
+        $modrinth->shouldReceive('supportsProjectType')->once()->with(ProjectType::Plugin)->andReturnTrue();
+        $curseForge->shouldReceive('isConfigured')->once()->andReturnFalse();
+        $hangar->shouldNotReceive('supportsProjectType');
+
+        self::assertSame(
+            [$modrinth],
+            $this->registryWith(modrinth: $modrinth, curseForge: $curseForge, hangar: $hangar)->availableFor($server, ProjectType::Plugin),
+        );
+    }
+
+    public function test_hangar_is_not_available_for_mod_or_datapack_catalogs(): void
+    {
+        $server = $this->serverWithEgg();
+        $modrinth = Mockery::mock(ModrinthSource::class);
+        $curseForge = Mockery::mock(CurseForgeSource::class);
+        $hangar = Mockery::mock(HangarSource::class);
+        $modrinth->shouldReceive('supportsProjectType')->once()->with(ProjectType::Mod)->andReturnTrue();
+        $curseForge->shouldReceive('isConfigured')->once()->andReturnFalse();
+        $hangar->shouldReceive('supportsProjectType')->once()->with(ProjectType::Mod)->andReturnFalse();
+
+        self::assertSame(
+            [$modrinth],
+            $this->registryWith(modrinth: $modrinth, curseForge: $curseForge, hangar: $hangar)->availableFor($server, ProjectType::Mod),
+        );
+    }
+
+    public function test_github_releases_remain_opt_in(): void
+    {
+        $server = $this->serverWithEgg(features: ['github_releases']);
+        $modrinth = Mockery::mock(ModrinthSource::class);
+        $curseForge = Mockery::mock(CurseForgeSource::class);
+        $hangar = Mockery::mock(HangarSource::class);
+        $github = Mockery::mock(GitHubReleasesSource::class);
+        $modrinth->shouldReceive('supportsProjectType')->once()->with(ProjectType::Plugin)->andReturnTrue();
+        $curseForge->shouldReceive('isConfigured')->once()->andReturnFalse();
+        $hangar->shouldReceive('supportsProjectType')->once()->with(ProjectType::Plugin)->andReturnTrue();
+        $github->shouldReceive('supportsProjectType')->once()->with(ProjectType::Plugin)->andReturnTrue();
+
+        self::assertSame(
+            [$modrinth, $hangar, $github],
+            $this->registryWith(modrinth: $modrinth, curseForge: $curseForge, hangar: $hangar, github: $github)->availableFor($server, ProjectType::Plugin),
         );
     }
 
     protected function registryWith(
         ?ProjectSourceInterface $modrinth = null,
         ?CurseForgeSource $curseForge = null,
+        ?HangarSource $hangar = null,
+        ?GitHubReleasesSource $github = null,
         bool $supportsAsyncDispatch = false,
     ): ProjectSourceRegistry {
         // InstalledOperationManager is final, so it can't be Mockery-mocked
@@ -359,8 +461,8 @@ class ProjectSourceRegistryTest extends TestCase
         return new ProjectSourceRegistry(
             $modrinth ?? Mockery::mock(ModrinthSource::class),
             $curseForge ?? Mockery::mock(CurseForgeSource::class),
-            Mockery::mock(HangarSource::class),
-            Mockery::mock(GitHubReleasesSource::class),
+            $hangar ?? Mockery::mock(HangarSource::class),
+            $github ?? Mockery::mock(GitHubReleasesSource::class),
             $operations,
         );
     }
@@ -403,10 +505,11 @@ class ProjectSourceRegistryTest extends TestCase
         return $server;
     }
 
-    private function serverWithEgg(?string $uuid = null, array $features = []): Server
+    /** @param array<int, string> $tags */
+    private function serverWithEgg(?string $uuid = null, array $features = [], array $tags = ['minecraft']): Server
     {
         $egg = new Egg();
-        $egg->forceFill(['id' => 70, 'uuid' => $uuid, 'name' => 'Paper', 'features' => $features, 'tags' => ['minecraft']]);
+        $egg->forceFill(['id' => 70, 'uuid' => $uuid, 'name' => 'Paper', 'features' => $features, 'tags' => $tags]);
         $egg->setRelation('variables', collect());
 
         $server = new Server();

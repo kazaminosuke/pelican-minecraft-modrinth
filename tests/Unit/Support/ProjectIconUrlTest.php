@@ -24,11 +24,14 @@ class ProjectIconUrlTest extends TestCase
         );
     }
 
-    public function test_curseforge_urls_without_a_thumbnail_dimension_are_preserved(): void
+    public function test_curseforge_original_avatars_are_rewritten_to_the_small_thumbnail(): void
     {
-        $url = 'https://media.forgecdn.net/avatars/308/39/project.png';
+        $url = 'https://media.forgecdn.net/avatars/68/303/636163127747978216.png';
 
-        self::assertSame($url, ProjectIconUrl::curseForgeThumbnail($url));
+        self::assertSame(
+            'https://media.forgecdn.net/avatars/thumbnails/68/303/64/64/636163127747978216.png',
+            ProjectIconUrl::curseForgeThumbnail($url),
+        );
         self::assertNull(ProjectIconUrl::curseForgeThumbnail(null));
     }
 

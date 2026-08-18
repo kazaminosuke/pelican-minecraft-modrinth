@@ -48,7 +48,8 @@ final class ProjectIconUrl
     /**
      * CurseForge's logo.thumbnailUrl is already a CDN rendition. Request its
      * small square variant for a dense catalog instead of transferring the
-     * 256px thumbnail and shrinking it in the browser.
+     * 256px thumbnail and shrinking it in the browser. Some plugins only
+     * expose logo.url, the original avatar, which can be several megabytes.
      */
     public static function curseForgeThumbnail(?string $url): ?string
     {
@@ -56,11 +57,17 @@ final class ProjectIconUrl
             return null;
         }
 
-        return preg_replace(
+        $thumbnail = preg_replace(
             '#(/avatars/thumbnails/\d+/\d+)/\d+/\d+(/)#',
             '$1/64/64$2',
             $url,
         ) ?? $url;
+
+        return preg_replace(
+            '~(https://media\.forgecdn\.net/avatars/)(?!thumbnails/)(\d+)/(\d+)/([^/?]+)~',
+            '$1thumbnails/$2/$3/64/64/$4',
+            $thumbnail,
+        ) ?? $thumbnail;
     }
 
     /**
