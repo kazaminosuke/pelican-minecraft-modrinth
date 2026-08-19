@@ -208,6 +208,7 @@ class ModManagerPlugin implements HasPluginSettings, Plugin
                 // from showing through.
                 .'.mmr-table-scroll-ctn .fi-ta-table>thead{position:sticky;top:0;z-index:1;}'
                 .$this->catalogRowActionCss()
+                .$this->catalogStatIconCss()
                 // TextEntry exposes no extraImgAttributes()-style hook for
                 // its icon, so this class goes on the entry's own wrapper
                 // (via ->extraAttributes()) and reaches the icon - rendered
@@ -722,6 +723,37 @@ class ModManagerPlugin implements HasPluginSettings, Plugin
                 .'display:block;width:1.25rem;height:1.25rem;background:currentColor;'
                 .'-webkit-mask:var(--mmr-row-action-mask) center/contain no-repeat;'
                 .'mask:var(--mmr-row-action-mask) center/contain no-repeat;'
+            .'}'
+            .$maskRules;
+    }
+
+    /**
+     * Downloads / Modified column icons are CSS masks, not a Tabler SVG
+     * copied into every catalog row.
+     */
+    private function catalogStatIconCss(): string
+    {
+        $masks = [
+            'downloads' => ['M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2 -2v-2', 'M7 11l5 5l5 -5', 'M12 4l0 12'],
+            'calendar' => ['M4 7a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2v-12z', 'M16 3v4', 'M8 3v4', 'M4 11h16', 'M11 15h1', 'M12 15v3'],
+        ];
+
+        $maskRules = '';
+        foreach ($masks as $name => $paths) {
+            $pathMarkup = '';
+            foreach ($paths as $path) {
+                $pathMarkup .= '<path d="'.$path.'"/>';
+            }
+
+            $svg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>{$pathMarkup}</svg>";
+            $maskRules .= '.mmr-table-scroll-ctn .mmr-stat-icon[data-mmr-stat-icon="'.$name.'"]{--mmr-stat-icon-mask:url("data:image/svg+xml,'.rawurlencode($svg).'");}';
+        }
+
+        return
+            '.mmr-table-scroll-ctn .mmr-stat-icon{'
+                .'display:inline-block;width:1rem;height:1rem;flex:0 0 1rem;background:currentColor;vertical-align:-0.125em;'
+                .'-webkit-mask:var(--mmr-stat-icon-mask) center/contain no-repeat;'
+                .'mask:var(--mmr-stat-icon-mask) center/contain no-repeat;'
             .'}'
             .$maskRules;
     }
