@@ -111,6 +111,24 @@ class ModManagerPage extends Page implements HasTable
     /** @var array<int, ProjectSourceInterface>|null */
     protected ?array $availableSources = null;
 
+    /** @var array<int, ProjectSourceInterface>|null */
+    protected ?array $catalogSources = null;
+
+    protected ?ProjectSourceInterface $currentSource = null;
+
+    protected ?string $currentSourceTab = null;
+
+    /** @var array<string, string>|null */
+    protected ?array $catalogCategoryOptions = null;
+
+    protected ?string $catalogCategoryOptionsKey = null;
+
+    /** @var array<string, bool> */
+    protected array $projectOperationPermissionMemo = [];
+
+    /** @var array<string, Carbon|null> */
+    protected array $externalProjectDateMemo = [];
+
     /** @var array<string> */
     protected array $unknownFiles = [];
 
@@ -603,6 +621,12 @@ class ModManagerPage extends Page implements HasTable
             $this->installedEnrichmentSignature = null;
         }
 
+        $this->currentSource = null;
+        $this->currentSourceTab = null;
+        $this->catalogCategoryOptions = null;
+        $this->catalogCategoryOptionsKey = null;
+        $this->projectIconRowIndexMap = null;
+
         // A loaded table normally evaluates its records during this same
         // Livewire update. Reset it to Filament's deferred state first, so an
         // Installed-tab hydration runs in the follow-up loadTable request
@@ -776,7 +800,11 @@ class ModManagerPage extends Page implements HasTable
      */
     protected function getCatalogSources(): array
     {
-        return array_values(array_filter(
+        if ($this->catalogSources !== null) {
+            return $this->catalogSources;
+        }
+
+        return $this->catalogSources = array_values(array_filter(
             $this->getAvailableSources(),
             static fn (ProjectSourceInterface $source): bool => $source->supportsSearch(),
         ));
@@ -789,17 +817,30 @@ class ModManagerPage extends Page implements HasTable
      */
     protected function getCurrentSource(): ?ProjectSourceInterface
     {
+        if ($this->currentSource !== null && $this->currentSourceTab === $this->activeTab) {
+            return $this->currentSource;
+        }
+
         $sources = $this->getCatalogSources();
 
         if (count($sources) <= 1) {
-            return $sources[0] ?? null;
+            $this->currentSource = $sources[0] ?? null;
+            $this->currentSourceTab = $this->activeTab;
+
+            return $this->currentSource;
         }
 
         foreach ($sources as $source) {
             if ($source->getKey()->value === $this->activeTab) {
+                $this->currentSource = $source;
+                $this->currentSourceTab = $this->activeTab;
+
                 return $source;
             }
         }
+
+        $this->currentSource = null;
+        $this->currentSourceTab = $this->activeTab;
 
         return null;
     }
@@ -1261,7 +1302,13 @@ class ModManagerPage extends Page implements HasTable
 
     protected function canManageProjectOperation(Server $server, ProjectOperation $operation): bool
     {
-        return app(ProjectOperationAuthorizer::class)->allows(user(), $server, $operation);
+        $memoKey = $server->getKey().':'.$operation->value;
+        if (array_key_exists($memoKey, $this->projectOperationPermissionMemo)) {
+            return $this->projectOperationPermissionMemo[$memoKey];
+        }
+
+        return $this->projectOperationPermissionMemo[$memoKey] = app(ProjectOperationAuthorizer::class)
+            ->allows(user(), $server, $operation);
     }
 
     protected function canManageCurrentProjectOperation(ProjectOperation $operation): bool
@@ -1702,10 +1749,15 @@ class ModManagerPage extends Page implements HasTable
             return null;
         }
 
+        $key = trim($value);
+        if (array_key_exists($key, $this->externalProjectDateMemo)) {
+            return $this->externalProjectDateMemo[$key];
+        }
+
         try {
-            return Carbon::parse(trim($value), 'UTC');
+            return $this->externalProjectDateMemo[$key] = Carbon::parse($key, 'UTC');
         } catch (Exception) {
-            return null;
+            return $this->externalProjectDateMemo[$key] = null;
         }
     }
 
@@ -2486,15 +2538,21 @@ class ModManagerPage extends Page implements HasTable
         /** @var Server $server */
         $server = Filament::getTenant();
 
-        if ($this->getCurrentSource()?->getKey() === ProjectSourceKey::CurseForge
-            && static::detectProjectType($server) === ProjectType::Datapack) {
-            // CurseForge's Datapack catalog always searches its dedicated Data
-            // Packs category. Offering a second category selector here would
-            // be misleading because it intentionally cannot override that.
-            return [];
+        $sourceKey = $this->getCurrentSource()?->getKey()?->value;
+        $typeValue = static::detectProjectType($server)?->value;
+        $memoKey = ($sourceKey ?? '').':'.($typeValue ?? '');
+        if ($this->catalogCategoryOptions !== null && $this->catalogCategoryOptionsKey === $memoKey) {
+            return $this->catalogCategoryOptions;
         }
 
-        return match ($this->getCurrentSource()?->getKey()) {
+        $this->catalogCategoryOptionsKey = $memoKey;
+
+        if ($this->getCurrentSource()?->getKey() === ProjectSourceKey::CurseForge
+            && static::detectProjectType($server) === ProjectType::Datapack) {
+            return $this->catalogCategoryOptions = [];
+        }
+
+        return $this->catalogCategoryOptions = match ($this->getCurrentSource()?->getKey()) {
             ProjectSourceKey::Modrinth => ['adventure' => 'Adventure', 'cursed' => 'Cursed', 'decoration' => 'Decoration', 'economy' => 'Economy', 'equipment' => 'Equipment', 'food' => 'Food', 'magic' => 'Magic', 'optimization' => 'Optimization', 'social' => 'Social', 'technology' => 'Technology', 'utility' => 'Utility', 'worldgen' => 'World Generation'],
             ProjectSourceKey::CurseForge => ['406' => 'Technology', '407' => 'Storage', '408' => 'Cosmetic', '409' => 'Ores and Resources', '410' => 'Armor, Tools, and Weapons', '412' => 'Miscellaneous', '413' => 'Server Utility', '414' => 'Food', '415' => 'Energy', '416' => 'Farming', '417' => 'Transport', '419' => 'Magic'],
             default => [],
