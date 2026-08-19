@@ -5,6 +5,7 @@ namespace Kazaminosuke\ModManager\Support;
 use Illuminate\Contracts\Cache\LockProvider;
 use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
+use Illuminate\Http\Request;
 use Kazaminosuke\ModManager\Contracts\SourceFetchExecutorInterface;
 use Kazaminosuke\ModManager\Exceptions\PartialSourceFetchException;
 use Kazaminosuke\ModManager\Jobs\RevalidateSourceCache;
@@ -207,12 +208,16 @@ final class SourceCache
 
         foreach ($keys as $key => $cacheKey) {
             $entry = $this->entryFromPayload($payloads[$cacheKey] ?? null);
+            $this->rememberEntryPayload($cacheKey, $entry);
+            $failureKey = $failureMarkerKeys[$key];
+            $failurePayload = $payloads[$failureKey] ?? null;
+            $this->rememberFailurePayload($failureKey, $failurePayload);
             $results[$key] = [
                 'hit' => $entry !== null,
                 'data' => $entry['data'] ?? null,
                 'fresh' => $entry !== null && $entry['fresh_until'] > $now,
                 'retry_delayed' => $entry === null && $this->hasActiveFailureMarker(
-                    $payloads[$failureMarkerKeys[$key]] ?? null,
+                    $failurePayload,
                     $now,
                 ),
             ];
@@ -273,9 +278,21 @@ final class SourceCache
     }
 
     /** @return array{v: int, data: mixed, fresh_until: int}|null */
-    private function readEntry(SourceFetchSpec $spec): ?array
+    private function readEntry(SourceFetchSpec $spec, bool $refresh = false): ?array
     {
-        return $this->entryFromPayload($this->cache->get($spec->cacheKey()));
+        $key = $spec->cacheKey();
+        $memos = $this->memos();
+        $entries = $memos['entries'];
+
+        if (!$refresh && array_key_exists($key, $entries)) {
+            return $entries[$key] === false ? null : $entries[$key];
+        }
+
+        $entry = $this->entryFromPayload($this->cache->get($key));
+        $entries[$key] = $entry ?? false;
+        $memos['entries'] = $entries;
+
+        return $entry;
     }
 
     /** @return array{v: int, data: mixed, fresh_until: int}|null */
@@ -322,14 +339,14 @@ final class SourceCache
             $lock->block($waitSeconds);
             $acquired = true;
 
-            $entry = $this->readEntry($spec);
+            $entry = $this->readEntry($spec, refresh: true);
             if ($entry !== null && $entry['fresh_until'] > time()) {
                 return $entry['data'];
             }
 
             return $this->performFetchAndStore($spec, $profile, $timeoutSeconds);
         } catch (LockTimeoutException) {
-            $entry = $this->readEntry($spec);
+            $entry = $this->readEntry($spec, refresh: true);
             if ($entry !== null && $entry['fresh_until'] > time()) {
                 return $entry['data'];
             }
@@ -402,8 +419,12 @@ final class SourceCache
         // write per row while retaining each entry's existing TTL semantics.
         $this->cache->putMany($payloads, $staleTtl);
 
+        foreach (array_keys($payloads) as $cacheKey) {
+            $this->rememberEntryPayload($cacheKey, $payloads[$cacheKey]);
+        }
+
         foreach (array_keys($failureMarkers) as $failureMarker) {
-            $this->cache->forget($failureMarker);
+            $this->forgetFailureMarker($failureMarker);
         }
     }
 
@@ -435,6 +456,9 @@ final class SourceCache
 
         if ($markers !== []) {
             $this->cache->putMany($markers, $ttl);
+            foreach ($markers as $failureKey => $payload) {
+                $this->rememberFailurePayload($failureKey, $payload);
+            }
         }
     }
 
@@ -453,7 +477,8 @@ final class SourceCache
             $this->cache->put($spec->cacheKey(), $entry, $staleTtl);
         }
 
-        $this->cache->forget($this->failureMarkerKey($spec));
+        $this->rememberEntryPayload($spec->cacheKey(), $entry);
+        $this->forgetFailureMarker($this->failureMarkerKey($spec));
     }
 
     private function emptyResult(SourceFetchSpec $spec): mixed
@@ -498,7 +523,16 @@ final class SourceCache
     private function hasFailureMarker(SourceFetchSpec $spec): bool
     {
         $key = $this->failureMarkerKey($spec);
-        $marker = $this->cache->get($key);
+        $memos = $this->memos();
+        $failures = $memos['failures'];
+
+        if (array_key_exists($key, $failures)) {
+            $marker = $failures[$key] === false ? null : $failures[$key];
+        } else {
+            $marker = $this->cache->get($key);
+            $failures[$key] = is_array($marker) ? $marker : false;
+            $memos['failures'] = $failures;
+        }
 
         if (!$this->hasActiveFailureMarker($marker, time())) {
             // An expired (but not yet evicted) marker is harmless, but remove
@@ -507,6 +541,8 @@ final class SourceCache
                 && ($marker['v'] ?? null) === self::FAILURE_MARKER_VERSION
                 && is_int($marker['failed_until'] ?? null)) {
                 $this->cache->forget($key);
+                $failures[$key] = false;
+                $memos['failures'] = $failures;
             }
 
             return false;
@@ -526,10 +562,12 @@ final class SourceCache
     private function markFailure(SourceFetchSpec $spec, CacheProfile $profile, Throwable $exception): void
     {
         $ttl = $profile->failureMarkerTtlSeconds();
-        $this->cache->put($this->failureMarkerKey($spec), [
+        $marker = [
             'v' => self::FAILURE_MARKER_VERSION,
             'failed_until' => time() + $ttl,
-        ], $ttl);
+        ];
+        $this->cache->put($this->failureMarkerKey($spec), $marker, $ttl);
+        $this->rememberFailurePayload($this->failureMarkerKey($spec), $marker);
 
         $this->logFailure('Source-cache fetch failed.', $spec, $exception);
     }
@@ -537,6 +575,88 @@ final class SourceCache
     private function failureMarkerKey(SourceFetchSpec $spec): string
     {
         return $spec->cacheKey().':failure:v1';
+    }
+
+    /**
+     * Request-scoped probe memo. SourceCache is a singleton, so the bag lives
+     * on the current HTTP request when one exists and otherwise on this
+     * instance (queue workers / unit tests).
+     */
+    private ?\ArrayObject $processMemos = null;
+
+    private function memos(): \ArrayObject
+    {
+        $request = $this->currentRequest();
+        if ($request !== null) {
+            $memos = $request->attributes->get('mmr_source_cache_memo');
+            if ($memos instanceof \ArrayObject) {
+                return $memos;
+            }
+
+            $memos = $this->newMemoBag();
+            $request->attributes->set('mmr_source_cache_memo', $memos);
+
+            return $memos;
+        }
+
+        return $this->processMemos ??= $this->newMemoBag();
+    }
+
+    private function newMemoBag(): \ArrayObject
+    {
+        return new \ArrayObject([
+            'entries' => [],
+            'failures' => [],
+        ]);
+    }
+
+    private function currentRequest(): ?Request
+    {
+        try {
+            $request = request();
+        } catch (Throwable) {
+            return null;
+        }
+
+        return $request instanceof Request ? $request : null;
+    }
+
+    /**
+     * @param  array{v: int, data: mixed, fresh_until: int}|null  $entry
+     */
+    private function rememberEntryPayload(string $cacheKey, ?array $entry): void
+    {
+        $memos = $this->memos();
+        $entries = $memos['entries'];
+        $entries[$cacheKey] = $entry ?? false;
+        $memos['entries'] = $entries;
+    }
+
+    private function rememberFailurePayload(string $failureKey, mixed $payload): void
+    {
+        $memos = $this->memos();
+        $failures = $memos['failures'];
+        $failures[$failureKey] = is_array($payload) ? $payload : false;
+        $memos['failures'] = $failures;
+    }
+
+    /**
+     * Drop a retry cooldown only when this request already observed one.
+     * Failure markers expire in 30s, which is shorter than every fresh TTL,
+     * so an unobserved leftover cannot block a later stale revalidation.
+     */
+    private function forgetFailureMarker(string $failureKey): void
+    {
+        $memos = $this->memos();
+        $failures = $memos['failures'];
+        $known = $failures[$failureKey] ?? null;
+
+        if ($known !== null && $known !== false && $this->hasActiveFailureMarker($known, time())) {
+            $this->cache->forget($failureKey);
+        }
+
+        $failures[$failureKey] = false;
+        $memos['failures'] = $failures;
     }
 
     private function logFailure(string $message, SourceFetchSpec $spec, Throwable $exception): void

@@ -147,28 +147,21 @@ class SourceCacheTest extends TestCase
         self::assertTrue($result['offline']['retry_delayed']);
     }
 
-    public function test_prime_many_batches_finite_ttl_entries_and_clears_failure_markers(): void
+    public function test_prime_many_skips_unobserved_failure_marker_deletes(): void
     {
         $first = new SourceFetchSpec('modrinth', 'project', ['project_id' => 'first']);
         $second = new SourceFetchSpec('modrinth', 'project', ['project_id' => 'second']);
         $cache = Mockery::mock(CacheRepository::class);
-        $cache->shouldReceive('putMany')
-            ->once()
-            ->withArgs(function (array $payloads, int $ttl) use ($first, $second): bool {
-                self::assertSame(CacheProfile::ProjectMetadata->staleTtlSeconds(), $ttl);
-                self::assertSame(['title' => 'First'], $payloads[$first->cacheKey()]['data']);
-                self::assertNull($payloads[$second->cacheKey()]['data']);
-                self::assertSame(SourceCache::SCHEMA_VERSION, $payloads[$first->cacheKey()]['v']);
-                self::assertIsInt($payloads[$first->cacheKey()]['fresh_until']);
+        $cache->shouldReceive('putMany')->once()->withArgs(function (array $payloads, int $ttl) use ($first, $second): bool {
+            self::assertSame(CacheProfile::ProjectMetadata->staleTtlSeconds(), $ttl);
+            self::assertSame(['title' => 'First'], $payloads[$first->cacheKey()]['data']);
+            self::assertNull($payloads[$second->cacheKey()]['data']);
+            self::assertSame(SourceCache::SCHEMA_VERSION, $payloads[$first->cacheKey()]['v']);
+            self::assertIsInt($payloads[$first->cacheKey()]['fresh_until']);
 
-                return true;
-            });
-        $cache->shouldReceive('forget')
-            ->once()
-            ->with($first->cacheKey().':failure:v1');
-        $cache->shouldReceive('forget')
-            ->once()
-            ->with($second->cacheKey().':failure:v1');
+            return true;
+        });
+        $cache->shouldNotReceive('forget');
         $executor = Mockery::mock(SourceFetchExecutorInterface::class);
         $executor->shouldNotReceive('fetch');
         $executor->shouldNotReceive('emptyResult');
@@ -196,6 +189,58 @@ class SourceCacheTest extends TestCase
         self::assertTrue($peeked['hit']);
         self::assertTrue($peeked['fresh']);
         self::assertNull($peeked['data']);
+    }
+
+    public function test_hot_probes_share_one_entry_cache_read(): void
+    {
+        $store = new class extends ArrayStore
+        {
+            public int $getCalls = 0;
+
+            public function get($key)
+            {
+                $this->getCalls++;
+
+                return parent::get($key);
+            }
+        };
+        $cache = new LaravelCacheRepository($store);
+        $spec = $this->spec();
+        $data = ['hits' => [['project_id' => 'one']], 'total_hits' => 1];
+        $cache->put($spec->cacheKey(), $this->entry($data, time() + 60), 300);
+        $store->getCalls = 0;
+        $executor = Mockery::mock(SourceFetchExecutorInterface::class);
+        $executor->shouldNotReceive('fetch');
+        $sourceCache = $this->sourceCache($cache, 'database', $executor);
+
+        self::assertTrue($sourceCache->peek($spec)['hit']);
+        self::assertTrue($sourceCache->peek($spec)['fresh']);
+        self::assertSame($data, $sourceCache->swr($spec, CacheProfile::Search));
+        self::assertTrue($sourceCache->peek($spec)['fresh']);
+        self::assertSame(1, $store->getCalls);
+    }
+
+    public function test_prime_many_clears_an_observed_failure_marker_only(): void
+    {
+        $cache = $this->cache();
+        $spec = new SourceFetchSpec('modrinth', 'project', ['project_id' => 'first']);
+        $failureKey = $spec->cacheKey().':failure:v1';
+        $cache->put($failureKey, [
+            'v' => 1,
+            'failed_until' => time() + 30,
+        ], 30);
+        $executor = Mockery::mock(SourceFetchExecutorInterface::class);
+        $executor->shouldNotReceive('fetch');
+        $sourceCache = $this->sourceCache($cache, 'sync', $executor);
+
+        self::assertTrue($sourceCache->peek($spec)['retry_delayed']);
+
+        $sourceCache->primeMany([
+            ['spec' => $spec, 'data' => ['title' => 'First']],
+        ], CacheProfile::ProjectMetadata);
+
+        self::assertNull($cache->get($failureKey));
+        self::assertSame('First', $sourceCache->peek($spec)['data']['title']);
     }
 
     public function test_fresh_required_fetch_revalidates_a_stale_entry_instead_of_using_it_as_authoritative(): void
