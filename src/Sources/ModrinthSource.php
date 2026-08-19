@@ -5,7 +5,6 @@ namespace Kazaminosuke\ModManager\Sources;
 use App\Models\Server;
 use Exception;
 use Illuminate\Http\Client\PendingRequest;
-use Illuminate\Support\Facades\Http;
 use Kazaminosuke\ModManager\Contracts\AuthoritativeBatchProjectSourceInterface;
 use Kazaminosuke\ModManager\Contracts\BatchLatestVersionSourceInterface;
 use Kazaminosuke\ModManager\Contracts\ProjectMetadataPeekManyInterface;
@@ -21,6 +20,7 @@ use Kazaminosuke\ModManager\Support\LatestVersionLookupResult;
 use Kazaminosuke\ModManager\Support\MinecraftVersionResolver;
 use Kazaminosuke\ModManager\Support\SourceCache;
 use Kazaminosuke\ModManager\Support\SourceFetchSpec;
+use Kazaminosuke\ModManager\Support\UpstreamHttp;
 
 class ModrinthSource implements AuthoritativeBatchProjectSourceInterface, BatchLatestVersionSourceInterface, ProjectMetadataPeekManyInterface, ProjectSourceInterface, SourceFetchAuthoritativeInterface, SourceFetchHandlerInterface
 {
@@ -969,7 +969,7 @@ class ModrinthSource implements AuthoritativeBatchProjectSourceInterface, BatchL
 
     private function http(float $timeoutSeconds): PendingRequest
     {
-        return Http::asJson()
+        return UpstreamHttp::json()
             ->timeout($timeoutSeconds)
             ->connectTimeout(min(1.0, $timeoutSeconds));
     }

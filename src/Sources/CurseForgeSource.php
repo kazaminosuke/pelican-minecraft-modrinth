@@ -4,6 +4,7 @@ namespace Kazaminosuke\ModManager\Sources;
 
 use App\Models\Server;
 use Exception;
+use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\Pool;
 use Illuminate\Support\Facades\Http;
 use Kazaminosuke\ModManager\Contracts\AuthoritativeBatchProjectSourceInterface;
@@ -24,6 +25,7 @@ use Kazaminosuke\ModManager\Support\MinecraftVersionResolver;
 use Kazaminosuke\ModManager\Support\ProjectIconUrl;
 use Kazaminosuke\ModManager\Support\SourceCache;
 use Kazaminosuke\ModManager\Support\SourceFetchSpec;
+use Kazaminosuke\ModManager\Support\UpstreamHttp;
 
 class CurseForgeSource implements AuthoritativeBatchProjectSourceInterface, BatchLatestVersionSourceInterface, ProjectMetadataPeekManyInterface, ProjectSourceInterface, SourceFetchAuthoritativeInterface, SourceFetchHandlerInterface
 {
@@ -237,10 +239,7 @@ class CurseForgeSource implements AuthoritativeBatchProjectSourceInterface, Batc
         $responseBytes = null;
 
         try {
-            $response = Http::asJson()
-                ->withHeaders(['x-api-key' => $this->apiKey()])
-                ->timeout($timeoutSeconds)
-                ->connectTimeout(min(1.0, $timeoutSeconds))
+            $response = $this->http($timeoutSeconds)
                 ->throw()
                 ->get(self::BASE_URL.'/mods/search', $params);
             if ($debugTiming) {
@@ -456,10 +455,7 @@ class CurseForgeSource implements AuthoritativeBatchProjectSourceInterface, Batc
     /** @param array<int, int> $modIds */
     protected function fetchProjectsByIds(array $modIds, float $timeoutSeconds): array
     {
-        $response = Http::asJson()
-            ->withHeaders(['x-api-key' => $this->apiKey()])
-            ->timeout($timeoutSeconds)
-            ->connectTimeout(min(1.0, $timeoutSeconds))
+        $response = $this->http($timeoutSeconds)
             ->throw()
             ->post(self::BASE_URL.'/mods', ['modIds' => $modIds])
             ->json();
@@ -594,7 +590,11 @@ class CurseForgeSource implements AuthoritativeBatchProjectSourceInterface, Batc
                 foreach (array_keys($pending) as $projectId) {
                     $requests[] = $pool->as((string) $projectId)
                         ->asJson()
-                        ->withHeaders(['x-api-key' => $this->apiKey()])
+                        ->withHeaders([
+                            'Accept-Encoding' => 'gzip, deflate',
+                            'x-api-key' => $this->apiKey(),
+                        ])
+                        ->withOptions(['decode_content' => true])
                         ->timeout($requestTimeout)
                         ->connectTimeout(min(1.0, $requestTimeout))
                         ->get(self::BASE_URL."/mods/$projectId/files", $params);
@@ -804,10 +804,7 @@ class CurseForgeSource implements AuthoritativeBatchProjectSourceInterface, Batc
      */
     protected function getBulkMods(array $projectIds, float $timeoutSeconds): array
     {
-        $response = Http::asJson()
-            ->withHeaders(['x-api-key' => $this->apiKey()])
-            ->timeout($timeoutSeconds)
-            ->connectTimeout(min(1.0, $timeoutSeconds))
+        $response = $this->http($timeoutSeconds)
             ->throw()
             ->post(self::BASE_URL.'/mods', ['modIds' => array_map('intval', $projectIds)])
             ->json();
@@ -1373,13 +1370,19 @@ class CurseForgeSource implements AuthoritativeBatchProjectSourceInterface, Batc
         ];
     }
 
+    private function http(float $timeoutSeconds): PendingRequest
+    {
+        $timeoutSeconds = max(0.1, $timeoutSeconds);
+
+        return UpstreamHttp::json(['x-api-key' => $this->apiKey()])
+            ->timeout($timeoutSeconds)
+            ->connectTimeout(min(1.0, $timeoutSeconds));
+    }
+
     /** @param array<string, mixed> $query */
     protected function getJson(string $path, array $query = [], float $timeoutSeconds = 10.0): array
     {
-        $response = Http::asJson()
-            ->withHeaders(['x-api-key' => $this->apiKey()])
-            ->timeout($timeoutSeconds)
-            ->connectTimeout(min(1.0, $timeoutSeconds))
+        $response = $this->http($timeoutSeconds)
             ->throw()
             ->get(self::BASE_URL.$path, $query)
             ->json();
@@ -1394,10 +1397,7 @@ class CurseForgeSource implements AuthoritativeBatchProjectSourceInterface, Batc
     /** @param array<string, mixed> $body */
     protected function postJson(string $path, array $body, float $timeoutSeconds = 10.0): array
     {
-        $response = Http::asJson()
-            ->withHeaders(['x-api-key' => $this->apiKey()])
-            ->timeout($timeoutSeconds)
-            ->connectTimeout(min(1.0, $timeoutSeconds))
+        $response = $this->http($timeoutSeconds)
             ->throw()
             ->post(self::BASE_URL.$path, $body)
             ->json();
