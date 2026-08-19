@@ -2,16 +2,16 @@
     (() => {
         'use strict';
 
-        if (window.__mmrTableSwrCacheV8) {
-            window.__mmrTableSwrCacheV8.scan();
+        if (window.__mmrTableSwrCacheV9) {
+            window.__mmrTableSwrCacheV9.scan();
 
             return;
         }
 
-        // V1 stored sanitized copies of whole Filament table fragments. V8
-        // deliberately stores only display values and keeps Filament's actual
-        // table/pagination DOM in place while a cached view revalidates.
-        const SCHEMA_VERSION = 8;
+        // V1 stored sanitized copies of whole Filament table fragments. V9
+        // stores display values only, and catalog row actions are CSS-mask
+        // buttons rather than per-row inline SVGs.
+        const SCHEMA_VERSION = 9;
         const STORAGE_PREFIX = `mmr-table-swr:v${SCHEMA_VERSION}:`;
         const INDEX_KEY = `${STORAGE_PREFIX}index`;
         const DEBUG_STORAGE_KEY = 'mmrSwrDebug';
@@ -23,28 +23,14 @@
         const WRAPPER_SELECTOR = '.mmr-table-scroll-ctn[data-mmr-swr-scope]';
         const CELL_SELECTOR = 'td[data-mmr-swr-cell]';
         const ROW_ACTION_SELECTOR = '[data-mmr-swr-row-action]';
-        const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
         const ROW_ACTION_DEFINITIONS = Object.freeze({
-            versions: {
-                paths: ['M9 6l11 0', 'M9 12l11 0', 'M9 18l11 0', 'M5 6l0 .01', 'M5 12l0 .01', 'M5 18l0 .01'],
-            },
-            install_latest: {
-                paths: ['M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2 -2v-2', 'M7 11l5 5l5 -5', 'M12 4l0 12'],
-            },
-            update: {
-                paths: ['M20 11a8.1 8.1 0 0 0 -15.5 -2m-.5 -4v4h4', 'M4 13a8.1 8.1 0 0 0 15.5 2m.5 4v-4h-4'],
-            },
-            installed: {
-                disabled: true,
-                paths: ['M5 12l5 5l10 -10'],
-            },
-            uninstall: {
-                paths: ['M4 7l16 0', 'M10 11l0 6', 'M14 11l0 6', 'M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2 -2l1 -12', 'M9 7v-3a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v3'],
-            },
+            versions: {},
+            install_latest: {},
+            update: {},
+            installed: { disabled: true },
+            uninstall: {},
         });
         const ROW_ACTION_COLORS = new Set(['info', 'success', 'warning', 'danger']);
-        const ROW_ACTION_SIZE_CLASSES = new Set(['fi-size-xs', 'fi-size-sm', 'fi-size-md', 'fi-size-lg', 'fi-size-xl']);
-        const ROW_ACTION_TEXT_COLOR_SHADES = new Set(['0', '50', '100', '200', '300', '400', '500', '600', '700', '800', '900', '950']);
         const controllers = new WeakMap();
         let documentObserver = null;
         let scanQueued = false;
@@ -400,72 +386,29 @@
         const getRowActionElements = (row) => Array.from(row.querySelectorAll(ROW_ACTION_SELECTOR));
         const getRowActionContainer = (row) => row.querySelector('.fi-ta-actions');
 
-        const isRowActionClass = (className) => {
-            if (['fi-icon-btn', 'fi-ac-icon-btn-action', 'fi-color', 'fi-disabled', 'mx-0.5'].includes(className) || ROW_ACTION_SIZE_CLASSES.has(className)) {
-                return true;
-            }
-
-            if (className.startsWith('fi-color-')) {
-                return ROW_ACTION_COLORS.has(className.slice('fi-color-'.length));
-            }
-
-            const textColorMatch = className.match(/^(?:(?:dark:)?(?:hover:)?|hover:)?fi-text-color-(.+)$/);
-
-            return textColorMatch !== null && ROW_ACTION_TEXT_COLOR_SHADES.has(textColorMatch[1]);
-        };
-
-        const rowActionClasses = (action) => Array.from(action.classList)
-            .filter(isRowActionClass)
-            .sort();
-
-        const isRowActionIconClass = (className) => className === 'fi-icon' || ROW_ACTION_SIZE_CLASSES.has(className);
-
-        const rowActionIconClasses = (action) => {
-            const icon = Array.from(action.querySelectorAll('.fi-icon'))
-                .find((candidate) => !candidate.classList.contains('fi-loading-indicator'));
-
-            return icon
-                ? Array.from(icon.classList).filter(isRowActionIconClass).sort()
-                : [];
-        };
-
-        const isRowActionDescriptor = (descriptor) => {
-            if (
-                !descriptor
-                || typeof descriptor.type !== 'string'
-                || typeof descriptor.color !== 'string'
-                || !Object.hasOwn(ROW_ACTION_DEFINITIONS, descriptor.type)
-                || !ROW_ACTION_COLORS.has(descriptor.color)
-                || !Array.isArray(descriptor.classes)
-                || !descriptor.classes.every((className) => typeof className === 'string' && isRowActionClass(className))
-                || !Array.isArray(descriptor.iconClasses)
-                || !descriptor.iconClasses.every((className) => typeof className === 'string' && isRowActionIconClass(className))
-            ) {
-                return false;
-            }
-
-            const classes = new Set(descriptor.classes);
-            const iconClasses = new Set(descriptor.iconClasses);
-            const isDisabled = ROW_ACTION_DEFINITIONS[descriptor.type].disabled === true;
-
-            return classes.has('fi-icon-btn')
-                && classes.has('fi-ac-icon-btn-action')
-                && classes.has('fi-color')
-                && classes.has(`fi-color-${descriptor.color}`)
-                && classes.has('mx-0.5')
-                && descriptor.classes.filter((className) => ROW_ACTION_SIZE_CLASSES.has(className)).length === 1
-                && iconClasses.has('fi-icon')
-                && descriptor.iconClasses.filter((className) => ROW_ACTION_SIZE_CLASSES.has(className)).length === 1
-                && (isDisabled ? classes.has('fi-disabled') : !classes.has('fi-disabled'));
-        };
+        const isRowActionDescriptor = (descriptor) => (
+            !!descriptor
+            && typeof descriptor.type === 'string'
+            && typeof descriptor.color === 'string'
+            && typeof descriptor.disabled === 'boolean'
+            && Object.hasOwn(ROW_ACTION_DEFINITIONS, descriptor.type)
+            && ROW_ACTION_COLORS.has(descriptor.color)
+            && ((ROW_ACTION_DEFINITIONS[descriptor.type].disabled === true) === descriptor.disabled)
+        );
 
         const getRowActionDescriptors = (row) => {
-            const descriptors = getRowActionElements(row).map((action) => ({
-                type: action.dataset.mmrSwrRowAction,
-                color: action.dataset.mmrSwrRowActionColor,
-                classes: rowActionClasses(action),
-                iconClasses: rowActionIconClasses(action),
-            }));
+            const descriptors = getRowActionElements(row).map((action) => {
+                const type = action.dataset.mmrSwrRowAction;
+                const definition = ROW_ACTION_DEFINITIONS[type];
+
+                return {
+                    type,
+                    color: action.dataset.mmrSwrRowActionColor,
+                    disabled: definition?.disabled === true
+                        || action.disabled
+                        || action.classList.contains('fi-disabled'),
+                };
+            });
 
             return descriptors.every(isRowActionDescriptor) ? descriptors : null;
         };
@@ -475,42 +418,26 @@
             && current.length === cached.length
             && current.every((action, index) => action.type === cached[index]?.type
                 && action.color === cached[index]?.color
-                && action.classes.length === cached[index]?.classes?.length
-                && action.classes.every((className, classIndex) => className === cached[index].classes[classIndex])
-                && action.iconClasses.length === cached[index]?.iconClasses?.length
-                && action.iconClasses.every((className, classIndex) => className === cached[index].iconClasses[classIndex]));
-
-        const createRowActionIcon = (paths, classes) => {
-            const icon = document.createElementNS(SVG_NAMESPACE, 'svg');
-            icon.classList.add(...classes);
-            icon.setAttribute('viewBox', '0 0 24 24');
-            icon.setAttribute('fill', 'none');
-            icon.setAttribute('stroke', 'currentColor');
-            icon.setAttribute('stroke-width', '2');
-            icon.setAttribute('stroke-linecap', 'round');
-            icon.setAttribute('stroke-linejoin', 'round');
-            icon.setAttribute('aria-hidden', 'true');
-
-            paths.forEach((pathData) => {
-                const path = document.createElementNS(SVG_NAMESPACE, 'path');
-                path.setAttribute('d', pathData);
-                icon.append(path);
-            });
-
-            return icon;
-        };
+                && action.disabled === cached[index]?.disabled);
 
         const createProjectedRowAction = (descriptor) => {
-            const definition = ROW_ACTION_DEFINITIONS[descriptor.type];
             const action = document.createElement('button');
             action.type = 'button';
-            action.classList.add(...descriptor.classes);
+            action.className = 'fi-icon-btn fi-ac-icon-btn-action fi-size-md mx-0.5 mmr-row-action'
+                +(descriptor.disabled ? ' fi-disabled' : '');
             action.dataset.mmrSwrRowAction = descriptor.type;
             action.dataset.mmrSwrRowActionColor = descriptor.color;
             action.dataset.mmrSwrActionProjection = descriptor.type;
             action.setAttribute('aria-hidden', 'true');
             action.tabIndex = -1;
-            action.append(createRowActionIcon(definition.paths, descriptor.iconClasses));
+            if (descriptor.disabled) {
+                action.disabled = true;
+            }
+
+            const icon = document.createElement('span');
+            icon.className = 'mmr-row-action-icon';
+            icon.setAttribute('aria-hidden', 'true');
+            action.append(icon);
 
             return action;
         };
@@ -1528,7 +1455,7 @@
             });
         };
 
-        window.__mmrTableSwrCacheV8 = { scan, init };
+        window.__mmrTableSwrCacheV9 = { scan, init };
         init();
         document.addEventListener('livewire:navigated', scan);
     })();

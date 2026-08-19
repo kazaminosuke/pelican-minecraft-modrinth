@@ -207,6 +207,7 @@ class ModManagerPlugin implements HasPluginSettings, Plugin
                 // underneath it; its own background (set by Filament) keeps rows
                 // from showing through.
                 .'.mmr-table-scroll-ctn .fi-ta-table>thead{position:sticky;top:0;z-index:1;}'
+                .$this->catalogRowActionCss()
                 // TextEntry exposes no extraImgAttributes()-style hook for
                 // its icon, so this class goes on the entry's own wrapper
                 // (via ->extraAttributes()) and reaches the icon - rendered
@@ -676,5 +677,52 @@ class ModManagerPlugin implements HasPluginSettings, Plugin
             ->title(trans('pelican-minecraft-modrinth::strings.settings.cache_cleared_single', ['name' => $server->name]))
             ->success()
             ->send();
+    }
+
+    /**
+     * Icons for catalog row actions are CSS masks defined once, not inline
+     * SVGs copied onto every Filament icon button.
+     */
+    private function catalogRowActionCss(): string
+    {
+        $masks = [
+            'versions' => ['M9 6l11 0', 'M9 12l11 0', 'M9 18l11 0', 'M5 6l0 .01', 'M5 12l0 .01', 'M5 18l0 .01'],
+            'install_latest' => ['M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2 -2v-2', 'M7 11l5 5l5 -5', 'M12 4l0 12'],
+            'update' => ['M20 11a8.1 8.1 0 0 0 -15.5 -2m-.5 -4v4h4', 'M4 13a8.1 8.1 0 0 0 15.5 2m.5 4v-4h-4'],
+            'installed' => ['M5 12l5 5l10 -10'],
+            'uninstall' => ['M4 7l16 0', 'M10 11l0 6', 'M14 11l0 6', 'M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2 -2l1 -12', 'M9 7v-3a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v3'],
+        ];
+
+        $maskRules = '';
+        foreach ($masks as $name => $paths) {
+            $pathMarkup = '';
+            foreach ($paths as $path) {
+                $pathMarkup .= '<path d="'.$path.'"/>';
+            }
+
+            $svg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>{$pathMarkup}</svg>";
+            $maskRules .= '.mmr-table-scroll-ctn .mmr-row-action[data-mmr-swr-row-action="'.$name.'"]{--mmr-row-action-mask:url("data:image/svg+xml,'.rawurlencode($svg).'");}';
+        }
+
+        return
+            '.mmr-table-scroll-ctn .mmr-row-action{'
+                .'display:inline-flex;align-items:center;justify-content:center;'
+                .'width:2.25rem;height:2.25rem;padding:0;border:0;background:transparent;cursor:pointer;color:inherit;'
+            .'}'
+            .'.mmr-table-scroll-ctn .mmr-row-action.fi-disabled{opacity:.55;cursor:default;}'
+            .'.mmr-table-scroll-ctn .mmr-row-action[data-mmr-swr-row-action-color="info"]{color:rgb(59 130 246);}'
+            .'.mmr-table-scroll-ctn .mmr-row-action[data-mmr-swr-row-action-color="success"]{color:rgb(16 185 129);}'
+            .'.mmr-table-scroll-ctn .mmr-row-action[data-mmr-swr-row-action-color="warning"]{color:rgb(245 158 11);}'
+            .'.mmr-table-scroll-ctn .mmr-row-action[data-mmr-swr-row-action-color="danger"]{color:rgb(239 68 68);}'
+            .'.dark .mmr-table-scroll-ctn .mmr-row-action[data-mmr-swr-row-action-color="info"]{color:rgb(96 165 250);}'
+            .'.dark .mmr-table-scroll-ctn .mmr-row-action[data-mmr-swr-row-action-color="success"]{color:rgb(52 211 153);}'
+            .'.dark .mmr-table-scroll-ctn .mmr-row-action[data-mmr-swr-row-action-color="warning"]{color:rgb(251 191 36);}'
+            .'.dark .mmr-table-scroll-ctn .mmr-row-action[data-mmr-swr-row-action-color="danger"]{color:rgb(248 113 113);}'
+            .'.mmr-table-scroll-ctn .mmr-row-action-icon{'
+                .'display:block;width:1.25rem;height:1.25rem;background:currentColor;'
+                .'-webkit-mask:var(--mmr-row-action-mask) center/contain no-repeat;'
+                .'mask:var(--mmr-row-action-mask) center/contain no-repeat;'
+            .'}'
+            .$maskRules;
     }
 }

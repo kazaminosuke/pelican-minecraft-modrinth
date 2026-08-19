@@ -43,6 +43,7 @@ use Kazaminosuke\ModManager\Enums\ProjectOperation;
 use Kazaminosuke\ModManager\Enums\ProjectSourceKey;
 use Kazaminosuke\ModManager\Enums\ProjectType;
 use Kazaminosuke\ModManager\Facades\ModManager;
+use Kazaminosuke\ModManager\Filament\Actions\CatalogRowAction;
 use Kazaminosuke\ModManager\Jobs\WarmCatalogSearch;
 use Kazaminosuke\ModManager\ModManagerPlugin;
 use Kazaminosuke\ModManager\Services\InstalledOperationManager;
@@ -1925,15 +1926,7 @@ class ModManagerPage extends Page implements HasTable
                 return $this->getExternalProjectUrl($record);
             }, true)
             ->recordActions([
-                Action::make('versions')
-                    ->iconButton()
-                    ->extraAttributes([
-                        'class' => 'mx-0.5',
-                        'data-mmr-swr-row-action' => 'versions',
-                        'data-mmr-swr-row-action-color' => 'info',
-                    ])
-                    ->icon('tabler-list')
-                    ->color('info')
+                CatalogRowAction::compact('versions', 'info')
                     ->tooltip(trans('pelican-minecraft-modrinth::strings.actions.versions'))
                     ->hidden(fn (array $record): bool => $record['untracked'] ?? false)
                     ->modalSubmitAction(false)
@@ -2062,15 +2055,7 @@ class ModManagerPage extends Page implements HasTable
 
                         return $sections;
                     }),
-                Action::make('install_latest')
-                    ->iconButton()
-                    ->extraAttributes([
-                        'class' => 'mx-0.5',
-                        'data-mmr-swr-row-action' => 'install_latest',
-                        'data-mmr-swr-row-action-color' => 'success',
-                    ])
-                    ->icon('tabler-download')
-                    ->color('success')
+                CatalogRowAction::compact('install_latest', 'success')
                     ->tooltip(trans('pelican-minecraft-modrinth::strings.actions.install_latest'))
                     ->authorize(fn (): bool => $this->canManageCurrentInstallOrUpdate())
                     ->hidden(fn (array $record): bool => $record['untracked'] ?? false)
@@ -2146,15 +2131,7 @@ class ModManagerPage extends Page implements HasTable
                                 ->send();
                         }
                     }),
-                Action::make('update')
-                    ->iconButton()
-                    ->extraAttributes([
-                        'class' => 'mx-0.5',
-                        'data-mmr-swr-row-action' => 'update',
-                        'data-mmr-swr-row-action-color' => 'warning',
-                    ])
-                    ->icon('tabler-refresh')
-                    ->color('warning')
+                CatalogRowAction::compact('update', 'warning')
                     ->tooltip(trans('pelican-minecraft-modrinth::strings.actions.update'))
                     ->authorize(fn (): bool => $this->canManageCurrentProjectOperation(ProjectOperation::Update))
                     ->hidden(fn (array $record): bool => $record['untracked'] ?? false)
@@ -2272,15 +2249,7 @@ class ModManagerPage extends Page implements HasTable
                                 ->send();
                         }
                     }),
-                Action::make('installed')
-                    ->iconButton()
-                    ->extraAttributes([
-                        'class' => 'mx-0.5',
-                        'data-mmr-swr-row-action' => 'installed',
-                        'data-mmr-swr-row-action-color' => 'success',
-                    ])
-                    ->icon('tabler-check')
-                    ->color('success')
+                CatalogRowAction::compact('installed', 'success')
                     ->tooltip(trans('pelican-minecraft-modrinth::strings.actions.installed'))
                     ->disabled()
                     ->hidden(fn (array $record): bool => $record['untracked'] ?? false)
@@ -2314,15 +2283,7 @@ class ModManagerPage extends Page implements HasTable
 
                         return $installedMod['version_id'] === ($latestVersion['id'] ?? null);
                     }),
-                Action::make('uninstall')
-                    ->iconButton()
-                    ->extraAttributes([
-                        'class' => 'mx-0.5',
-                        'data-mmr-swr-row-action' => 'uninstall',
-                        'data-mmr-swr-row-action-color' => 'danger',
-                    ])
-                    ->icon('tabler-trash')
-                    ->color('danger')
+                CatalogRowAction::compact('uninstall', 'danger')
                     ->tooltip(trans('pelican-minecraft-modrinth::strings.actions.uninstall'))
                     ->authorize(fn (): bool => $this->canManageCurrentProjectOperation(ProjectOperation::Delete))
                     ->visible(function (array $record) {
