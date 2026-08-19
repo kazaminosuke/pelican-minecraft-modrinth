@@ -2,6 +2,8 @@
 
 namespace Kazaminosuke\ModManager\Tests\Unit\Services;
 
+use Illuminate\Cache\ArrayStore;
+use Illuminate\Cache\Repository;
 use Illuminate\Config\Repository as LaravelConfigRepository;
 use Illuminate\Container\Container;
 use Illuminate\Contracts\Bus\Dispatcher;
@@ -197,6 +199,125 @@ class InstalledOperationManagerTest extends TestCase
         self::assertSame(InstalledOperationState::STATUS_RUNNING, $state->status);
         self::assertSame(3, $state->progress);
         self::assertSame(10, $state->total);
+    }
+
+    public function test_repeated_progress_coalesces_cache_writes_and_flushes_the_final_state(): void
+    {
+        $store = new class extends ArrayStore
+        {
+            public int $getCalls = 0;
+
+            public int $putCalls = 0;
+
+            public function get($key)
+            {
+                $this->getCalls++;
+
+                return parent::get($key);
+            }
+
+            public function put($key, $value, $seconds)
+            {
+                $this->putCalls++;
+
+                return parent::put($key, $value, $seconds);
+            }
+        };
+        $cache = new Repository($store);
+        $config = Mockery::mock(ConfigRepository::class);
+        $manager = new InstalledOperationManager($cache, $config);
+
+        for ($progress = 1; $progress <= 500; $progress++) {
+            $manager->progress(42, ProjectType::Mod, InstalledOperationManager::OPERATION_BULK_UPDATE, $progress, 500);
+        }
+
+        $completed = $manager->complete(42, ProjectType::Mod, InstalledOperationManager::OPERATION_BULK_UPDATE, [
+            'updated' => 500,
+        ]);
+
+        self::assertSame(1, $store->getCalls);
+        self::assertSame(2, $store->putCalls);
+        self::assertSame(InstalledOperationState::STATUS_COMPLETED, $completed->status);
+        self::assertSame(500, $completed->progress);
+        self::assertSame(500, $completed->total);
+        self::assertSame(['updated' => 500], $completed->result);
+    }
+
+    public function test_fail_uses_buffered_progress_without_an_extra_cache_read(): void
+    {
+        $store = new class extends ArrayStore
+        {
+            public int $getCalls = 0;
+
+            public int $putCalls = 0;
+
+            public function get($key)
+            {
+                $this->getCalls++;
+
+                return parent::get($key);
+            }
+
+            public function put($key, $value, $seconds)
+            {
+                $this->putCalls++;
+
+                return parent::put($key, $value, $seconds);
+            }
+        };
+        $cache = new Repository($store);
+        $config = Mockery::mock(ConfigRepository::class);
+        $manager = new InstalledOperationManager($cache, $config);
+
+        $manager->progress(42, ProjectType::Mod, InstalledOperationManager::OPERATION_BULK_UPDATE, 17, 100);
+        $manager->progress(42, ProjectType::Mod, InstalledOperationManager::OPERATION_BULK_UPDATE, 18, 100);
+        $failed = $manager->fail(
+            42,
+            ProjectType::Mod,
+            InstalledOperationManager::OPERATION_BULK_UPDATE,
+            'bulk_update_exception',
+        );
+
+        self::assertSame(1, $store->getCalls);
+        self::assertSame(2, $store->putCalls);
+        self::assertSame(InstalledOperationState::STATUS_FAILED, $failed->status);
+        self::assertSame(18, $failed->progress);
+        self::assertSame('bulk_update_exception', $failed->error);
+    }
+
+    public function test_installed_tab_snapshot_reads_scan_and_operation_keys_together(): void
+    {
+        $store = new class extends ArrayStore
+        {
+            public int $manyCalls = 0;
+
+            public function many(array $keys)
+            {
+                $this->manyCalls++;
+
+                return parent::many($keys);
+            }
+        };
+        $cache = new Repository($store);
+        $config = Mockery::mock(ConfigRepository::class);
+        $scanState = InstalledOperationState::queued(
+            InstalledOperationManager::OPERATION_SCAN,
+            42,
+            ProjectType::Mod,
+        );
+        $cache->put('mod_manager_operation:v1:42:mod:scan', $scanState->toCachePayload(), 60);
+        $cache->put('mod_manager_hash_scan:42:mod', ['successful' => true], 60);
+
+        $snapshot = (new InstalledOperationManager($cache, $config))->installedTabCacheSnapshot(
+            42,
+            ProjectType::Mod,
+            'mod_manager_hash_scan:42:mod',
+        );
+
+        self::assertSame(1, $store->manyCalls);
+        self::assertSame(['successful' => true], $snapshot['scan_result']);
+        self::assertSame(InstalledOperationManager::OPERATION_SCAN, $snapshot['scan']?->operation);
+        self::assertNull($snapshot['bulk']);
     }
 
     private function bindDispatcher(CacheRepository $cache): Dispatcher

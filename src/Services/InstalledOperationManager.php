@@ -22,6 +22,20 @@ final class InstalledOperationManager
 
     private const CACHE_TTL_MINUTES = 120;
 
+    /**
+     * Persist running progress at most this often. The first update and the
+     * terminal complete/fail write are always flushed immediately.
+     */
+    private const PROGRESS_FLUSH_SECONDS = 1.5;
+
+    /**
+     * In-process coalescing buffer keyed by cache key. A bulk update of
+     * hundreds of files would otherwise GET+PUT Redis on every item.
+     *
+     * @var array<string, array{state: InstalledOperationState, flushed_at: float}>
+     */
+    private array $progressBuffer = [];
+
     public function __construct(
         private readonly CacheRepository $cache,
         private readonly ConfigRepository $config,
@@ -108,9 +122,70 @@ final class InstalledOperationManager
         ProjectType $projectType,
         string $operation,
     ): ?InstalledOperationState {
-        return InstalledOperationState::fromCachePayload(
-            $this->cache->get($this->cacheKey($this->serverId($server), $projectType, $operation)),
-        );
+        $serverId = $this->serverId($server);
+        $key = $this->cacheKey($serverId, $projectType, $operation);
+
+        if (isset($this->progressBuffer[$key])) {
+            return $this->progressBuffer[$key]['state'];
+        }
+
+        return InstalledOperationState::fromCachePayload($this->cache->get($key));
+    }
+
+    /**
+     * One cache round trip for several operation keys (Redis MGET).
+     *
+     * @param  array<int, string>  $operations
+     * @return array<string, InstalledOperationState|null>
+     */
+    public function states(
+        Server|int $server,
+        ProjectType $projectType,
+        array $operations,
+    ): array {
+        $serverId = $this->serverId($server);
+        $keys = [];
+
+        foreach ($operations as $operation) {
+            $keys[$operation] = $this->cacheKey($serverId, $projectType, $operation);
+        }
+
+        $payloads = $this->cache->many(array_values($keys));
+        $states = [];
+
+        foreach ($keys as $operation => $key) {
+            $states[$operation] = isset($this->progressBuffer[$key])
+                ? $this->progressBuffer[$key]['state']
+                : InstalledOperationState::fromCachePayload($payloads[$key] ?? null);
+        }
+
+        return $states;
+    }
+
+    /**
+     * Scan result plus scan/bulk operation state in one cache round trip.
+     *
+     * @return array{scan_result: mixed, scan: InstalledOperationState|null, bulk: InstalledOperationState|null}
+     */
+    public function installedTabCacheSnapshot(
+        Server|int $server,
+        ProjectType $projectType,
+        string $scanResultCacheKey,
+    ): array {
+        $serverId = $this->serverId($server);
+        $scanKey = $this->cacheKey($serverId, $projectType, self::OPERATION_SCAN);
+        $bulkKey = $this->cacheKey($serverId, $projectType, self::OPERATION_BULK_UPDATE);
+        $payloads = $this->cache->many([$scanResultCacheKey, $scanKey, $bulkKey]);
+
+        return [
+            'scan_result' => $payloads[$scanResultCacheKey] ?? null,
+            'scan' => isset($this->progressBuffer[$scanKey])
+                ? $this->progressBuffer[$scanKey]['state']
+                : InstalledOperationState::fromCachePayload($payloads[$scanKey] ?? null),
+            'bulk' => isset($this->progressBuffer[$bulkKey])
+                ? $this->progressBuffer[$bulkKey]['state']
+                : InstalledOperationState::fromCachePayload($payloads[$bulkKey] ?? null),
+        ];
     }
 
     /**
@@ -151,10 +226,29 @@ final class InstalledOperationManager
         ?int $total = null,
     ): InstalledOperationState {
         $serverId = $this->serverId($server);
-        $state = $this->state($serverId, $projectType, $operation)
+        $key = $this->cacheKey($serverId, $projectType, $operation);
+        $state = ($this->progressBuffer[$key]['state'] ?? $this->state($serverId, $projectType, $operation))
             ?? InstalledOperationState::queued($operation, $serverId, $projectType);
+        $state = $state->withProgress($progress, $total);
+        $flushedAt = $this->progressBuffer[$key]['flushed_at'] ?? null;
+        $now = microtime(true);
 
-        return $this->put($state->withProgress($progress, $total));
+        if ($flushedAt === null || ($now - $flushedAt) >= self::PROGRESS_FLUSH_SECONDS) {
+            $this->put($state);
+            $this->progressBuffer[$key] = [
+                'state' => $state,
+                'flushed_at' => $now,
+            ];
+
+            return $state;
+        }
+
+        $this->progressBuffer[$key] = [
+            'state' => $state,
+            'flushed_at' => $flushedAt,
+        ];
+
+        return $state;
     }
 
     /**
@@ -211,7 +305,9 @@ final class InstalledOperationManager
         ProjectType $projectType,
         string $operation,
     ): void {
-        $this->cache->forget($this->cacheKey($this->serverId($server), $projectType, $operation));
+        $key = $this->cacheKey($this->serverId($server), $projectType, $operation);
+        unset($this->progressBuffer[$key]);
+        $this->cache->forget($key);
     }
 
     private function operationStateOrActive(
@@ -235,8 +331,10 @@ final class InstalledOperationManager
 
     private function put(InstalledOperationState $state): InstalledOperationState
     {
+        $key = $this->cacheKey($state->serverId, $state->projectType, $state->operation);
+        unset($this->progressBuffer[$key]);
         $this->cache->put(
-            $this->cacheKey($state->serverId, $state->projectType, $state->operation),
+            $key,
             $state->toCachePayload(),
             new DateTimeImmutable('+'.self::CACHE_TTL_MINUTES.' minutes'),
         );
