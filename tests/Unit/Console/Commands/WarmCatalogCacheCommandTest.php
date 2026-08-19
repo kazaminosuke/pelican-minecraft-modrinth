@@ -3,13 +3,23 @@
 namespace Kazaminosuke\ModManager\Tests\Unit\Console\Commands;
 
 use Illuminate\Config\Repository as LaravelConfigRepository;
+use Illuminate\Console\OutputStyle;
 use Illuminate\Container\Container;
+use Illuminate\Contracts\Cache\Repository as CacheRepository;
+use Illuminate\Contracts\Config\Repository as ConfigRepository;
 use Illuminate\Database\Capsule\Manager as Capsule;
 use Illuminate\Support\Facades\Facade;
 use Kazaminosuke\ModManager\Console\Commands\WarmCatalogCacheCommand;
+use Kazaminosuke\ModManager\Contracts\ProjectSourceInterface;
+use Kazaminosuke\ModManager\Enums\ProjectType;
+use Kazaminosuke\ModManager\Services\InstalledOperationManager;
 use Kazaminosuke\ModManager\Support\EggProfileRegistry;
 use Kazaminosuke\ModManager\Support\EggProfileResolver;
+use Kazaminosuke\ModManager\Support\ProjectSourceRegistry;
+use Mockery;
 use PHPUnit\Framework\TestCase;
+use Symfony\Component\Console\Input\ArrayInput;
+use Symfony\Component\Console\Output\NullOutput;
 
 class WarmCatalogCacheCommandTest extends TestCase
 {
@@ -95,8 +105,68 @@ class WarmCatalogCacheCommandTest extends TestCase
         Facade::setFacadeApplication($this->previousFacadeApplication);
         EggProfileRegistry::clear();
         EggProfileResolver::clear();
+        Mockery::close();
 
         parent::tearDown();
+    }
+
+    public function test_skips_warm_jobs_when_search_cache_is_still_fresh(): void
+    {
+        Capsule::table('eggs')->insert([
+            'id' => 1,
+            'uuid' => 'spigot-uuid',
+            'name' => 'Spigot',
+            'features' => json_encode([]),
+            'tags' => json_encode(['minecraft']),
+        ]);
+        Capsule::table('servers')->insert(['id' => 1, 'egg_id' => 1]);
+        Capsule::table('egg_variables')->insert([
+            ['id' => 1, 'egg_id' => 1, 'env_variable' => 'DL_PATH'],
+            ['id' => 2, 'egg_id' => 1, 'env_variable' => 'DL_VERSION'],
+            ['id' => 3, 'egg_id' => 1, 'env_variable' => 'SERVER_JARFILE'],
+        ]);
+        Capsule::table('server_variables')->insert([
+            'server_id' => 1,
+            'variable_id' => 2,
+            'variable_value' => '1.20.4',
+        ]);
+
+        $container = Container::getInstance();
+        $container->make('config')->set('pelican-minecraft-modrinth.warm_catalog_enabled', true);
+        $container->make('config')->set('pelican-minecraft-modrinth.warm_max_targets', 50);
+
+        $queueConfig = Mockery::mock(ConfigRepository::class);
+        $queueConfig->shouldReceive('get')->with('queue.default', 'sync')->andReturn('database');
+        $operations = new InstalledOperationManager(
+            Mockery::mock(CacheRepository::class),
+            $queueConfig,
+        );
+
+        $source = Mockery::mock(ProjectSourceInterface::class);
+        $source->shouldReceive('isConfigured')->once()->andReturnTrue();
+        $source->shouldReceive('supportsSearch')->once()->andReturnTrue();
+        $source->shouldReceive('hasFreshCachedSearch')
+            ->once()
+            ->withArgs(function ($server, $type, int $page, $search, array $filters): bool {
+                return (int) $server->id === 1
+                    && $type === ProjectType::Plugin
+                    && $page === 1
+                    && $search === null
+                    && $filters === ['sort' => 'downloads'];
+            })
+            ->andReturnTrue();
+        $source->shouldNotReceive('getKey');
+
+        $registry = Mockery::mock(ProjectSourceRegistry::class);
+        $registry->shouldReceive('availableFor')->once()->andReturn([$source]);
+
+        $command = new WarmCatalogCacheCommand();
+        $command->setOutput(new OutputStyle(
+            new ArrayInput([]),
+            new NullOutput(),
+        ));
+
+        self::assertSame(0, $command->handle($operations, $registry));
     }
 
     public function test_discovers_an_auto_detected_egg_and_its_profile_specific_minecraft_version(): void

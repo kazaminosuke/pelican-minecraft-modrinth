@@ -81,6 +81,10 @@ final class WarmCatalogCacheCommand extends Command
                     continue;
                 }
 
+                if ($source->hasFreshCachedSearch($server, $type, 1, null, ['sort' => 'downloads'])) {
+                    continue;
+                }
+
                 WarmCatalogSearch::dispatch(
                     $server->id,
                     $source->getKey()->value,
