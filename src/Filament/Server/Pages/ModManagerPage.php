@@ -36,6 +36,7 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\HtmlString;
 use Illuminate\Support\Str;
 use Kazaminosuke\ModManager\Contracts\ProjectSourceInterface;
 use Kazaminosuke\ModManager\Enums\MinecraftLoader;
@@ -158,12 +159,21 @@ class ModManagerPage extends Page implements HasTable
     public bool $pollEnrichment = false;
 
     /**
-     * Hash of the Installed page's visible enrichment payload. Compared on
-     * pollEnrichment() so an unchanged pending fill does not remorph image
-     * nodes every five seconds.
+     * Hash of the visible enrichment payload. Compared on pollEnrichment()
+     * so an unchanged pending fill does not remorph the table every five
+     * seconds. Shared by Installed and Catalog.
      */
     #[Locked]
     public ?string $installedEnrichmentSignature = null;
+
+    /**
+     * Compact catalog-row identities used by pollEnrichment() to peek
+     * latest-version fills without repeating search().
+     *
+     * @var array<int, array{project_id: string, source: string}>
+     */
+    #[Locked]
+    public array $catalogEnrichmentPeekKeys = [];
 
     /** Whether a still-valid scan result already exists, independent of background-operation state. */
     public bool $installedScanDataReady = false;
@@ -1543,6 +1553,81 @@ class ModManagerPage extends Page implements HasTable
         return hash('sha256', implode("\n", $parts));
     }
 
+    /**
+     * @param  array<int, array<string, mixed>>  $hits
+     * @return array<int, array{project_id: string, source: string}>
+     */
+    protected function catalogEnrichmentPeekKeysFromHits(array $hits): array
+    {
+        $keys = [];
+
+        foreach ($hits as $hit) {
+            $projectId = $hit['project_id'] ?? null;
+            $sourceKey = $hit['source'] ?? null;
+
+            if (!is_string($projectId) || $projectId === '' || !is_string($sourceKey) || $sourceKey === '') {
+                continue;
+            }
+
+            $keys[] = [
+                'project_id' => $projectId,
+                'source' => $sourceKey,
+            ];
+        }
+
+        return $keys;
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $hits
+     */
+    protected function catalogEnrichmentSignatureFromHits(array $hits): string
+    {
+        $pending = [];
+        $resolved = [];
+
+        foreach ($hits as $hit) {
+            $projectId = $hit['project_id'] ?? null;
+            $sourceKey = $hit['source'] ?? null;
+
+            if (!is_string($projectId) || $projectId === '' || !is_string($sourceKey) || $sourceKey === '') {
+                continue;
+            }
+
+            $cacheIndex = "$sourceKey:$projectId";
+
+            if (isset($this->pendingLatestVersionKeys[$cacheIndex])) {
+                $pending[] = $cacheIndex;
+            }
+
+            $version = $this->latestVersionsCache[$cacheIndex] ?? null;
+            $resolved[$cacheIndex] = is_array($version) ? (string) ($version['id'] ?? '') : '';
+        }
+
+        sort($pending);
+        ksort($resolved);
+
+        return hash('sha256', json_encode([$pending, $resolved], JSON_THROW_ON_ERROR));
+    }
+
+    protected function peekCatalogEnrichmentSignature(): ?string
+    {
+        try {
+            /** @var Server $server */
+            $server = Filament::getTenant();
+            $type = static::detectProjectType($server);
+            $hits = $this->catalogEnrichmentPeekKeys;
+
+            if ($hits !== [] && $type !== null) {
+                $this->peekVisibleLatestVersions($hits, $server, $type);
+            }
+
+            return $this->catalogEnrichmentSignatureFromHits($hits);
+        } catch (Exception) {
+            return null;
+        }
+    }
+
     protected function peekInstalledEnrichmentSignature(): ?string
     {
         try {
@@ -1645,18 +1730,15 @@ class ModManagerPage extends Page implements HasTable
                 if ($this->activeTab === 'installed') {
                     $perPage = self::TABLE_PAGE_SIZE;
                     $scanCacheKey = ModManager::getHashScanCacheKey($server, $type);
-                    $scanResult = InstalledScanResult::fromCache(Cache::get($scanCacheKey));
+                    $operations = app(InstalledOperationManager::class);
+                    $snapshot = $operations->installedTabCacheSnapshot($server, $type, $scanCacheKey);
+                    $scanResult = InstalledScanResult::fromCache($snapshot['scan_result']);
                     $installedMods = $this->getInstalledModsMetadata();
                     $unknownFiles = $scanResult === null ? [] : $scanResult->unknownFiles;
                     $this->unknownFiles = $unknownFiles;
                     $this->setInstalledScanResult($scanResult);
 
-                    $operations = app(InstalledOperationManager::class);
-                    $scanState = $operations->state(
-                        $server,
-                        $type,
-                        InstalledOperationManager::OPERATION_SCAN,
-                    );
+                    $scanState = $snapshot['scan'];
 
                     if ($scanResult === null && $scanState === null) {
                         $dispatch = $operations->dispatchScan($server, $type);
@@ -1674,7 +1756,11 @@ class ModManagerPage extends Page implements HasTable
                     if ($scanState !== null) {
                         $this->setInstalledOperationState($scanState);
                     } else {
-                        $state = $this->refreshInstalledOperationState();
+                        $state = $this->refreshInstalledOperationState(
+                            $snapshot['scan'],
+                            $snapshot['bulk'],
+                            true,
+                        );
                         $this->pollInstalledOperations = $state === null
                             ? $scanResult === null && !$this->operationQueueWarningShown
                             : $this->shouldPollInstalledOperation($state);
@@ -1752,6 +1838,10 @@ class ModManagerPage extends Page implements HasTable
                 $catalogStartedAt = $this->isModManagerTimingEnabled() ? microtime(true) : 0.0;
 
                 if (!$type || !$currentSource || !$currentSource->isConfigured() || !$currentSource->supportsSearch()) {
+                    $this->pollEnrichment = false;
+                    $this->catalogEnrichmentPeekKeys = [];
+                    $this->installedEnrichmentSignature = null;
+
                     return new LengthAwarePaginator([], 0, self::TABLE_PAGE_SIZE, $this->synchronizeTablePage($page, 0));
                 }
 
@@ -1805,6 +1895,8 @@ class ModManagerPage extends Page implements HasTable
                 $versionPending = $this->peekVisibleLatestVersions($hits, $server, $type);
                 $this->pollEnrichment = $versionPending
                     && app(InstalledOperationManager::class)->supportsAsyncDispatch();
+                $this->catalogEnrichmentPeekKeys = $this->catalogEnrichmentPeekKeysFromHits($hits);
+                $this->installedEnrichmentSignature = $this->catalogEnrichmentSignatureFromHits($hits);
 
                 return new LengthAwarePaginator($hits, $response['total_hits'], self::TABLE_PAGE_SIZE, $page);
             })
@@ -1902,13 +1994,13 @@ class ModManagerPage extends Page implements HasTable
                     ->toggleable(),
                 TextColumn::make('downloads')
                     ->label(trans('pelican-minecraft-modrinth::strings.table.columns.downloads'))
-                    ->icon('tabler-download')
                     ->numeric()
+                    ->prefix(new HtmlString('<span class="mmr-stat-icon" data-mmr-stat-icon="downloads" aria-hidden="true"></span>'))
                     ->extraCellAttributes(['data-mmr-swr-cell' => 'downloads'])
                     ->toggleable(),
                 TextColumn::make('date_modified')
                     ->label(trans('pelican-minecraft-modrinth::strings.table.columns.date_modified'))
-                    ->icon('tabler-calendar')
+                    ->prefix(new HtmlString('<span class="mmr-stat-icon" data-mmr-stat-icon="calendar" aria-hidden="true"></span>'))
                     ->formatStateUsing(fn ($state): string => $this->formatExternalProjectDate($state))
                     ->tooltip(function ($state) use ($table): string {
                         $date = $this->parseExternalProjectDate($state);
@@ -2979,10 +3071,19 @@ class ModManagerPage extends Page implements HasTable
         if ($this->activeTab !== 'installed') {
             if (!$this->pollEnrichment) {
                 $this->installedEnrichmentSignature = null;
+                $this->catalogEnrichmentPeekKeys = [];
 
                 return;
             }
 
+            $signature = $this->peekCatalogEnrichmentSignature();
+            if ($signature !== null && $signature === $this->installedEnrichmentSignature) {
+                $this->skipRender();
+
+                return;
+            }
+
+            $this->installedEnrichmentSignature = $signature;
             $this->flushCachedTableRecords();
 
             return;
@@ -3001,8 +3102,11 @@ class ModManagerPage extends Page implements HasTable
         $this->flushCachedTableRecords();
     }
 
-    protected function refreshInstalledOperationState(): ?InstalledOperationState
-    {
+    protected function refreshInstalledOperationState(
+        ?InstalledOperationState $scanState = null,
+        ?InstalledOperationState $bulkState = null,
+        bool $preloaded = false,
+    ): ?InstalledOperationState {
         /** @var Server $server */
         $server = Filament::getTenant();
         $type = static::detectProjectType($server);
@@ -3015,11 +3119,18 @@ class ModManagerPage extends Page implements HasTable
         }
 
         $operations = app(InstalledOperationManager::class);
-        $scanState = $operations->state($server, $type, InstalledOperationManager::OPERATION_SCAN);
+
+        if (!$preloaded) {
+            $fetched = $operations->states($server, $type, [
+                InstalledOperationManager::OPERATION_SCAN,
+                InstalledOperationManager::OPERATION_BULK_UPDATE,
+            ]);
+            $scanState = $fetched[InstalledOperationManager::OPERATION_SCAN];
+            $bulkState = $fetched[InstalledOperationManager::OPERATION_BULK_UPDATE];
+        }
 
         // Scan and bulk update are mutually exclusive. The common active
-        // scan path therefore needs only one cache lookup per two-second
-        // poll instead of reading the unrelated bulk-update state as well.
+        // scan path therefore needs only the already-fetched scan state.
         if ($scanState?->isActive()) {
             $this->setInstalledOperationState($scanState);
 
@@ -3028,7 +3139,7 @@ class ModManagerPage extends Page implements HasTable
 
         $states = array_values(array_filter([
             $scanState,
-            $operations->state($server, $type, InstalledOperationManager::OPERATION_BULK_UPDATE),
+            $bulkState,
         ]));
 
         usort($states, function (InstalledOperationState $left, InstalledOperationState $right): int {

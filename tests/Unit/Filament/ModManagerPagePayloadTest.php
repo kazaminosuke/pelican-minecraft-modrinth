@@ -154,15 +154,23 @@ final class TestableModManagerPage extends ModManagerPage
         return $this->peekedEnrichmentSignatureForTest;
     }
 
-    protected function refreshInstalledOperationState(): ?InstalledOperationState
+    protected function peekCatalogEnrichmentSignature(): ?string
     {
+        return $this->peekedEnrichmentSignatureForTest;
+    }
+
+    protected function refreshInstalledOperationState(
+        ?InstalledOperationState $scanState = null,
+        ?InstalledOperationState $bulkState = null,
+        bool $preloaded = false,
+    ): ?InstalledOperationState {
         if ($this->returnNullInstalledOperationForTest) {
             $this->installedOperation = null;
 
             return null;
         }
 
-        return parent::refreshInstalledOperationState();
+        return parent::refreshInstalledOperationState($scanState, $bulkState, $preloaded);
     }
 
     protected function refreshInstalledScanDataReady(): void
@@ -636,17 +644,34 @@ class ModManagerPagePayloadTest extends TestCase
         self::assertSame('filled-icons', $page->installedEnrichmentSignature);
     }
 
+    public function test_enrichment_poll_on_a_catalog_tab_skips_render_when_the_payload_is_unchanged(): void
+    {
+        $page = new TestableModManagerPage();
+        $page->activeTab = ProjectSourceKey::Modrinth->value;
+        $page->pollEnrichment = true;
+        $page->installedEnrichmentSignature = 'same-payload';
+        $page->peekedEnrichmentSignatureForTest = 'same-payload';
+
+        $page->pollEnrichment();
+
+        self::assertSame(1, $page->pollEnrichmentSkipRenderCallsForTest);
+        self::assertSame(0, $page->flushCachedTableRecordsCallsForTest);
+        self::assertTrue($page->pollEnrichment);
+        self::assertSame('same-payload', $page->installedEnrichmentSignature);
+    }
+
     public function test_enrichment_poll_on_a_catalog_tab_reloads_pending_version_badges(): void
     {
         $page = new TestableModManagerPage();
         $page->activeTab = ProjectSourceKey::Modrinth->value;
         $page->pollEnrichment = true;
         $page->installedEnrichmentSignature = 'stale';
+        $page->peekedEnrichmentSignatureForTest = 'filled';
 
         $page->pollEnrichment();
 
         self::assertTrue($page->pollEnrichment);
-        self::assertSame('stale', $page->installedEnrichmentSignature);
+        self::assertSame('filled', $page->installedEnrichmentSignature);
         self::assertSame(0, $page->pollEnrichmentSkipRenderCallsForTest);
         self::assertSame(1, $page->flushCachedTableRecordsCallsForTest);
     }
