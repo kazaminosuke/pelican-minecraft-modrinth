@@ -103,6 +103,33 @@ class IncrementalInstalledScanTest extends TestCase
         self::assertSame($expected, $result);
     }
 
+    public function test_unchanged_unresolved_files_keep_their_last_checked_timestamp(): void
+    {
+        $service = new TestableInstalledProjectService();
+        $signature = ['size' => 123, 'modified_at' => '2026-07-30T00:00:00Z'];
+        $hashes = ['murmur2' => '1', 'sha512' => 'two', 'sha256' => 'three'];
+        $existing = [
+            'filename' => 'unknown.jar',
+            'file_signature' => $signature,
+            'hashes' => $hashes,
+            'last_checked_at' => '2026-08-01T00:00:00Z',
+        ];
+        $entry = [
+            'filename' => 'unknown.jar',
+            'file_signature' => $signature,
+            'hashes' => $hashes,
+        ];
+
+        self::assertSame('2026-08-01T00:00:00Z', $service->exposeUnresolvedLastCheckedAt($existing, $entry));
+        self::assertNotSame(
+            '2026-08-01T00:00:00Z',
+            $service->exposeUnresolvedLastCheckedAt($existing, [
+                ...$entry,
+                'file_signature' => ['size' => 124, 'modified_at' => $signature['modified_at']],
+            ]),
+        );
+    }
+
     /** @param array<int, array<string, mixed>> $entries */
     private function document(array $entries): InstalledMetadataDocument
     {
@@ -176,5 +203,14 @@ class TestableInstalledProjectService extends InstalledProjectService
     public function exposeSingleUpsert(array $entries, array $incoming): array
     {
         return $this->upsertInstalledEntry($entries, $incoming);
+    }
+
+    /**
+     * @param  array<string, mixed>|null  $existing
+     * @param  array<string, mixed>  $entry
+     */
+    public function exposeUnresolvedLastCheckedAt(?array $existing, array $entry): string
+    {
+        return $this->unresolvedLastCheckedAt($existing, $entry);
     }
 }

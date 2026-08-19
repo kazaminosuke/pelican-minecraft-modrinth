@@ -538,12 +538,14 @@ class InstalledProjectService
             $entry = [
                 'filename' => $filename,
                 'file_signature' => $filesToResolve[$filename]['file_signature'],
-                'last_checked_at' => now()->toIso8601String(),
             ];
 
             if (isset($hashesByFilename[$filename])) {
                 $entry['hashes'] = $hashesByFilename[$filename];
             }
+
+            $existingUnresolved = $unresolvedByFilename[strtolower($filename)] ?? null;
+            $entry['last_checked_at'] = $this->unresolvedLastCheckedAt($existingUnresolved, $entry);
 
             $scannedUnresolved[] = $entry;
         }
@@ -635,6 +637,26 @@ class InstalledProjectService
         }
 
         return $hashes;
+    }
+
+    /**
+     * Reuse last_checked_at when the unresolved file has not changed so a
+     * cache-miss scan does not force a no-op Wings PUT.
+     *
+     * @param  array<string, mixed>|null  $existing
+     * @param  array<string, mixed>  $entry
+     */
+    protected function unresolvedLastCheckedAt(?array $existing, array $entry): string
+    {
+        if (is_array($existing)
+            && ($existing['file_signature'] ?? null) === ($entry['file_signature'] ?? null)
+            && ($existing['hashes'] ?? null) === ($entry['hashes'] ?? null)
+            && is_string($existing['last_checked_at'] ?? null)
+            && $existing['last_checked_at'] !== '') {
+            return $existing['last_checked_at'];
+        }
+
+        return now()->toIso8601String();
     }
 
     /**
