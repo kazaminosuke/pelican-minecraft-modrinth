@@ -68,6 +68,7 @@ class ModManagerPage extends Page implements HasTable
     }
     use InteractsWithTable {
         InteractsWithTable::applyTableColumnManager as protected baseApplyTableColumnManager;
+        InteractsWithTable::bootedInteractsWithTable as protected baseBootedInteractsWithTable;
         InteractsWithTable::loadTable as protected baseLoadTable;
         InteractsWithTable::resetTableColumnManager as protected baseResetTableColumnManager;
         InteractsWithTable::updatedTableFilters as protected baseUpdatedTableFilters;
@@ -207,6 +208,9 @@ class ModManagerPage extends Page implements HasTable
     protected int $modManagerTimingVersionLookups = 0;
 
     protected int $modManagerTimingVersionLookupDurationMs = 0;
+
+    /** Dispatch the initial catalog warm only after Filament has initialized the table. */
+    protected bool $catalogWarmPending = false;
 
     /**
      * Display-only component state. Keeping this in the Livewire snapshot
@@ -426,6 +430,24 @@ class ModManagerPage extends Page implements HasTable
         $this->loadDefaultActiveTab();
         $this->refreshInstalledOperationState();
 
+        $this->catalogWarmPending = true;
+    }
+
+    /**
+     * InteractsWithTable initializes its typed $table property in this hook,
+     * which runs after the page's mount() method. Defer the initial warm until
+     * that initialization has completed; subsequent Livewire updates already
+     * hydrate the table before their updated* hooks run.
+     */
+    public function bootedInteractsWithTable(): void
+    {
+        $this->baseBootedInteractsWithTable();
+
+        if (!$this->catalogWarmPending) {
+            return;
+        }
+
+        $this->catalogWarmPending = false;
         $this->dispatchCatalogWarm();
     }
 
