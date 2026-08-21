@@ -10,7 +10,8 @@
     "namespace": "Kazaminosuke\\ModManager",
     "class": "ModManagerPlugin",
     "panels": [
-        "server"
+        "server",
+        "admin"
     ],
     "panel_version": null,
     "composer_packages": null

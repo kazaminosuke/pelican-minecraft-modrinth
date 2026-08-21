@@ -7,13 +7,41 @@ use App\Models\Server;
 use App\Models\User;
 use Illuminate\Config\Repository as LaravelConfigRepository;
 use Illuminate\Container\Container;
+use Illuminate\Database\Capsule\Manager as Capsule;
 use Kazaminosuke\ModManager\Enums\ProjectOperation;
+use Kazaminosuke\ModManager\Models\ModManagerServerSetting;
 use Kazaminosuke\ModManager\Support\ProjectOperationAuthorizer;
 use Mockery;
 use PHPUnit\Framework\TestCase;
 
 class ProjectOperationAuthorizerTest extends TestCase
 {
+    private static ?Capsule $capsule = null;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        if (self::$capsule === null) {
+            self::$capsule = new Capsule();
+            self::$capsule->addConnection(['driver' => 'sqlite', 'database' => ':memory:']);
+            self::$capsule->setAsGlobal();
+            self::$capsule->bootEloquent();
+        }
+
+        Capsule::schema()->dropIfExists('mod_manager_server_settings');
+        Capsule::schema()->create('mod_manager_server_settings', function ($table): void {
+            $table->id();
+            $table->unsignedInteger('server_id')->unique();
+            $table->boolean('enabled')->default(true);
+            $table->boolean('allow_user_egg_profile_edit')->nullable();
+            $table->boolean('allow_user_project_install')->nullable();
+            $table->boolean('allow_user_project_update')->nullable();
+            $table->boolean('allow_user_project_delete')->nullable();
+            $table->timestamps();
+        });
+    }
+
     protected function tearDown(): void
     {
         Mockery::close();
@@ -85,6 +113,51 @@ class ProjectOperationAuthorizerTest extends TestCase
         }
     }
 
+    public function test_role_permission_still_precedes_a_server_deny(): void
+    {
+        $user = $this->user(permissions: [
+            'update minecraftModManager' => true,
+        ]);
+        ModManagerServerSetting::query()->create([
+            'server_id' => 1,
+            'enabled' => true,
+            'allow_user_project_update' => false,
+        ]);
+
+        self::assertTrue($this->allows($user, ProjectOperation::Update));
+    }
+
+    public function test_server_false_override_does_not_fall_back_to_global_true(): void
+    {
+        $user = $this->user(permissions: [
+            SubuserPermission::FileCreate->value => true,
+            SubuserPermission::FileDelete->value => true,
+        ]);
+        ModManagerServerSetting::query()->create([
+            'server_id' => 1,
+            'enabled' => true,
+            'allow_user_project_update' => false,
+        ]);
+
+        self::assertFalse($this->allows($user, ProjectOperation::Update, [
+            'allow_user_project_update' => true,
+        ]));
+    }
+
+    public function test_server_true_override_allows_file_permission_fallback_when_global_is_false(): void
+    {
+        $user = $this->user(permissions: [
+            SubuserPermission::FileCreate->value => true,
+        ]);
+        ModManagerServerSetting::query()->create([
+            'server_id' => 1,
+            'enabled' => true,
+            'allow_user_project_install' => true,
+        ]);
+
+        self::assertTrue($this->allows($user, ProjectOperation::Install));
+    }
+
     /**
      * @param array<string, bool> $config
      */
@@ -98,8 +171,8 @@ class ProjectOperationAuthorizerTest extends TestCase
         Container::setInstance($container);
 
         try {
-            /** @var Server $server */
-            $server = Mockery::mock(Server::class);
+            $server = new Server();
+            $server->id = 1;
 
             return (new ProjectOperationAuthorizer())->allows($user, $server, $operation);
         } finally {

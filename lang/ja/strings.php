@@ -48,6 +48,24 @@ return [
         'egg_profiles_removed' => ':egg のEggプロファイルを自動検出にリセットしました',
     ],
 
+    'server_mod_manager' => [
+        'tab' => 'Mod Manager',
+        'access' => 'Mod Managerの利用設定',
+        'access_helper' => 'この設定はこのサーバーだけに適用されます。プロジェクト操作では、Root Adminと該当するMod Manager権限を持つロールは引き続き許可されます。',
+        'enabled' => 'Mod Managerを有効にする',
+        'enabled_helper' => '無効にすると、このサーバーではMod Managerページと旧URLを開けなくなります。',
+        'egg_profile' => 'Eggプロファイル',
+        'egg_profile_helper' => 'プロファイルはこのeggに保存され、このeggを使用するすべてのサーバーに適用されます。',
+        'edit_egg_profile' => 'Eggプロファイルを編集',
+        'inherit' => 'グローバル設定を使用(:state)',
+        'allow' => '許可',
+        'deny' => '禁止',
+        'on' => 'ON',
+        'off' => 'OFF',
+        'save' => 'Mod Manager設定を保存',
+        'saved' => 'サーバーのMod Manager設定を保存しました',
+    ],
+
     'page' => [
         'open_folder' => ':folder フォルダを開く',
         'minecraft_version' => 'Minecraftバージョン',

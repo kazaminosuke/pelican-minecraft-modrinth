@@ -8,6 +8,10 @@ use Kazaminosuke\ModManager\Enums\ProjectOperation;
 
 final class ProjectOperationAuthorizer
 {
+    public function __construct(
+        private readonly ?ServerModManagerSettings $settings = null,
+    ) {}
+
     public function allows(?User $user, Server $server, ProjectOperation $operation): bool
     {
         if ($user === null) {
@@ -21,7 +25,7 @@ final class ProjectOperationAuthorizer
             return true;
         }
 
-        if (!(bool) config('pelican-minecraft-modrinth.'.$operation->allowsUserConfigKey(), false)) {
+        if (!$this->settings()->allowsProjectOperation($server, $operation)) {
             return false;
         }
 
@@ -32,5 +36,10 @@ final class ProjectOperationAuthorizer
         }
 
         return true;
+    }
+
+    private function settings(): ServerModManagerSettings
+    {
+        return $this->settings ?? app(ServerModManagerSettings::class);
     }
 }

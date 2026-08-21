@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\ServiceProvider;
 use Kazaminosuke\ModManager\Console\Commands\WarmCatalogCacheCommand;
 use Kazaminosuke\ModManager\Contracts\SourceFetchExecutorInterface;
+use Kazaminosuke\ModManager\Repositories\ServerModManagerSettingRepository;
 use Kazaminosuke\ModManager\Services\InstalledOperationManager;
 use Kazaminosuke\ModManager\Services\InstalledProjectService;
 use Kazaminosuke\ModManager\Services\VersionLookupCoordinator;
@@ -17,8 +18,9 @@ use Kazaminosuke\ModManager\Sources\HangarSource;
 use Kazaminosuke\ModManager\Sources\ModrinthSource;
 use Kazaminosuke\ModManager\Support\EggProfileResolver;
 use Kazaminosuke\ModManager\Support\MinecraftVersionResolver;
-use Kazaminosuke\ModManager\Support\ProjectSourceRegistry;
 use Kazaminosuke\ModManager\Support\ProjectOperationAuthorizer;
+use Kazaminosuke\ModManager\Support\ProjectSourceRegistry;
+use Kazaminosuke\ModManager\Support\ServerModManagerSettings;
 use Kazaminosuke\ModManager\Support\SourceCache;
 use Kazaminosuke\ModManager\Support\SourceFetchExecutor;
 use Kazaminosuke\ModManager\Support\WarmRequestThrottle;
@@ -40,6 +42,8 @@ class ModManagerServiceProvider extends ServiceProvider
             InstalledProjectService::class,
             InstalledOperationManager::class,
             ProjectOperationAuthorizer::class,
+            ServerModManagerSettingRepository::class,
+            ServerModManagerSettings::class,
             WarmRequestThrottle::class,
         ] as $service) {
             $this->app->singleton($service);
@@ -71,6 +75,10 @@ class ModManagerServiceProvider extends ServiceProvider
             // doesn't vary per job, so re-parsing it every job would be
             // pure waste.
             EggProfileResolver::clear();
+
+            if ($this->app->resolved(ServerModManagerSettingRepository::class)) {
+                $this->app->make(ServerModManagerSettingRepository::class)->clear();
+            }
 
             if ($this->app->resolved(InstalledProjectService::class)) {
                 $this->app->make(InstalledProjectService::class)->clearRuntimeCaches();

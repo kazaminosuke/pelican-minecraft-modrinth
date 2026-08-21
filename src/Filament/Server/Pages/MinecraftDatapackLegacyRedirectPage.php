@@ -7,6 +7,7 @@ use Filament\Facades\Filament;
 use Filament\Pages\Page;
 use Filament\Schemas\Schema;
 use Kazaminosuke\ModManager\Enums\ProjectType;
+use Kazaminosuke\ModManager\Support\ServerModManagerSettings;
 
 /**
  * Kept at the plugin's original "modrinth-datapacks" URL slug so links or
@@ -28,7 +29,9 @@ class MinecraftDatapackLegacyRedirectPage extends Page
         /** @var Server $server */
         $server = Filament::getTenant();
 
-        return parent::canAccess() && ProjectType::supportsDatapacks($server);
+        return parent::canAccess()
+            && app(ServerModManagerSettings::class)->isEnabled($server)
+            && ProjectType::supportsDatapacks($server);
     }
 
     public function mount(): void

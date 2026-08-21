@@ -5,6 +5,7 @@ namespace Kazaminosuke\ModManager\Tests\Unit\Providers;
 use Illuminate\Foundation\Application;
 use Kazaminosuke\ModManager\Contracts\SourceFetchExecutorInterface;
 use Kazaminosuke\ModManager\Providers\ModManagerServiceProvider;
+use Kazaminosuke\ModManager\Repositories\ServerModManagerSettingRepository;
 use Kazaminosuke\ModManager\Services\InstalledOperationManager;
 use Kazaminosuke\ModManager\Services\InstalledProjectService;
 use Kazaminosuke\ModManager\Services\VersionLookupCoordinator;
@@ -14,6 +15,7 @@ use Kazaminosuke\ModManager\Sources\HangarSource;
 use Kazaminosuke\ModManager\Sources\ModrinthSource;
 use Kazaminosuke\ModManager\Support\ProjectOperationAuthorizer;
 use Kazaminosuke\ModManager\Support\ProjectSourceRegistry;
+use Kazaminosuke\ModManager\Support\ServerModManagerSettings;
 use Kazaminosuke\ModManager\Support\SourceCache;
 use Kazaminosuke\ModManager\Support\WarmRequestThrottle;
 use PHPUnit\Framework\TestCase;
@@ -37,6 +39,8 @@ class ModManagerServiceProviderTest extends TestCase
             InstalledProjectService::class,
             InstalledOperationManager::class,
             ProjectOperationAuthorizer::class,
+            ServerModManagerSettingRepository::class,
+            ServerModManagerSettings::class,
             WarmRequestThrottle::class,
         ] as $service) {
             self::assertTrue($application->isShared($service), "{$service} was not registered as a singleton.");

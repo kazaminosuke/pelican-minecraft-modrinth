@@ -48,6 +48,24 @@ return [
         'egg_profiles_removed' => 'Egg profile for :egg reset to automatic detection',
     ],
 
+    'server_mod_manager' => [
+        'tab' => 'Mod Manager',
+        'access' => 'Mod Manager access',
+        'access_helper' => 'These settings apply only to this server. Root Admins and roles with the relevant Mod Manager permission remain allowed for project operations.',
+        'enabled' => 'Mod Manager enabled',
+        'enabled_helper' => 'When disabled, the Mod Manager pages and legacy URLs cannot be opened for this server.',
+        'egg_profile' => 'Egg profile',
+        'egg_profile_helper' => 'The profile is stored for this egg and applies to every server using it.',
+        'edit_egg_profile' => 'Edit egg profile',
+        'inherit' => 'Use global setting (:state)',
+        'allow' => 'Allow',
+        'deny' => 'Deny',
+        'on' => 'ON',
+        'off' => 'OFF',
+        'save' => 'Save Mod Manager settings',
+        'saved' => 'Server Mod Manager settings saved',
+    ],
+
     'page' => [
         'open_folder' => 'Open :folder folder',
         'minecraft_version' => 'Minecraft Version',

@@ -12,10 +12,12 @@ use Illuminate\Support\Facades\Facade;
 use Kazaminosuke\ModManager\Console\Commands\WarmCatalogCacheCommand;
 use Kazaminosuke\ModManager\Contracts\ProjectSourceInterface;
 use Kazaminosuke\ModManager\Enums\ProjectType;
+use Kazaminosuke\ModManager\Repositories\ServerModManagerSettingRepository;
 use Kazaminosuke\ModManager\Services\InstalledOperationManager;
 use Kazaminosuke\ModManager\Support\EggProfileRegistry;
 use Kazaminosuke\ModManager\Support\EggProfileResolver;
 use Kazaminosuke\ModManager\Support\ProjectSourceRegistry;
+use Kazaminosuke\ModManager\Support\ServerModManagerSettings;
 use Mockery;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\Console\Input\ArrayInput;
@@ -56,6 +58,7 @@ class WarmCatalogCacheCommandTest extends TestCase
 
         Capsule::schema()->dropIfExists('server_variables');
         Capsule::schema()->dropIfExists('egg_variables');
+        Capsule::schema()->dropIfExists('mod_manager_server_settings');
         Capsule::schema()->dropIfExists('servers');
         Capsule::schema()->dropIfExists('eggs');
         Capsule::schema()->create('eggs', function ($table): void {
@@ -69,6 +72,16 @@ class WarmCatalogCacheCommandTest extends TestCase
         Capsule::schema()->create('servers', function ($table): void {
             $table->id();
             $table->unsignedBigInteger('egg_id');
+        });
+        Capsule::schema()->create('mod_manager_server_settings', function ($table): void {
+            $table->id();
+            $table->unsignedInteger('server_id')->unique();
+            $table->boolean('enabled')->default(true);
+            $table->boolean('allow_user_egg_profile_edit')->nullable();
+            $table->boolean('allow_user_project_install')->nullable();
+            $table->boolean('allow_user_project_update')->nullable();
+            $table->boolean('allow_user_project_delete')->nullable();
+            $table->timestamps();
         });
         Capsule::schema()->create('egg_variables', function ($table): void {
             $table->id();
@@ -166,7 +179,11 @@ class WarmCatalogCacheCommandTest extends TestCase
             new NullOutput(),
         ));
 
-        self::assertSame(0, $command->handle($operations, $registry));
+        self::assertSame(0, $command->handle(
+            $operations,
+            $registry,
+            new ServerModManagerSettings(new ServerModManagerSettingRepository()),
+        ));
     }
 
     public function test_discovers_an_auto_detected_egg_and_its_profile_specific_minecraft_version(): void
@@ -191,7 +208,10 @@ class WarmCatalogCacheCommandTest extends TestCase
         ]);
 
         $method = new \ReflectionMethod(WarmCatalogCacheCommand::class, 'discoverCombos');
-        $combos = $method->invoke(new WarmCatalogCacheCommand());
+        $combos = $method->invoke(
+            new WarmCatalogCacheCommand(),
+            new ServerModManagerSettings(new ServerModManagerSettingRepository()),
+        );
 
         self::assertSame([[
             'loader' => 'spigot',
@@ -200,5 +220,27 @@ class WarmCatalogCacheCommandTest extends TestCase
             'server_id' => 1,
             'server_count' => 1,
         ]], $combos);
+    }
+
+    public function test_does_not_discover_disabled_servers(): void
+    {
+        Capsule::table('eggs')->insert([
+            'id' => 1,
+            'uuid' => 'spigot-uuid',
+            'name' => 'Spigot',
+            'features' => json_encode([]),
+            'tags' => json_encode(['minecraft']),
+        ]);
+        Capsule::table('servers')->insert(['id' => 1, 'egg_id' => 1]);
+        Capsule::table('mod_manager_server_settings')->insert([
+            'server_id' => 1,
+            'enabled' => false,
+        ]);
+
+        $method = new \ReflectionMethod(WarmCatalogCacheCommand::class, 'discoverCombos');
+        self::assertSame([], $method->invoke(
+            new WarmCatalogCacheCommand(),
+            new ServerModManagerSettings(new ServerModManagerSettingRepository()),
+        ));
     }
 }

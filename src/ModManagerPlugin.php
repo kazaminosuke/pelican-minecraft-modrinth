@@ -3,6 +3,8 @@
 namespace Kazaminosuke\ModManager;
 
 use App\Contracts\Plugins\HasPluginSettings;
+use App\Enums\TabPosition;
+use App\Filament\Admin\Resources\Servers\Pages\EditServer;
 use App\Models\Egg;
 use App\Models\Server;
 use App\Repositories\Daemon\DaemonFileRepository;
@@ -23,6 +25,7 @@ use Filament\View\PanelsRenderHook;
 use Illuminate\Support\HtmlString;
 use Kazaminosuke\ModManager\Enums\MinecraftLoader;
 use Kazaminosuke\ModManager\Enums\ProjectType;
+use Kazaminosuke\ModManager\Filament\Admin\ServerModManagerTab;
 use Kazaminosuke\ModManager\Filament\Server\Pages\MinecraftDatapackPage;
 use Kazaminosuke\ModManager\Filament\Server\Pages\ModManagerPage;
 use Kazaminosuke\ModManager\Models\ModManagerEggProfile;
@@ -44,6 +47,12 @@ class ModManagerPlugin implements HasPluginSettings, Plugin
     public function register(Panel $panel): void
     {
         $id = str($panel->getId())->title();
+
+        if ($panel->getId() === 'admin') {
+            EditServer::registerCustomTabs(TabPosition::After, ServerModManagerTab::make());
+
+            return;
+        }
 
         $panel->discoverPages(plugin_path($this->getId(), "src/Filament/$id/Pages"), "Kazaminosuke\\ModManager\\Filament\\$id\\Pages");
 

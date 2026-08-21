@@ -58,6 +58,7 @@ use Kazaminosuke\ModManager\Support\ProjectIconUrl;
 use Kazaminosuke\ModManager\Support\ProjectOperationAuthorizer;
 use Kazaminosuke\ModManager\Support\ProjectSourceRegistry;
 use Kazaminosuke\ModManager\Support\RequestPerformanceProfiler;
+use Kazaminosuke\ModManager\Support\ServerModManagerSettings;
 use Livewire\Attributes\Locked;
 
 class ModManagerPage extends Page implements HasTable
@@ -260,7 +261,9 @@ class ModManagerPage extends Page implements HasTable
         /** @var Server $server */
         $server = Filament::getTenant();
 
-        return parent::canAccess() && (static::detectProjectType($server) !== null || static::needsManualEggSetup($server));
+        return parent::canAccess()
+            && app(ServerModManagerSettings::class)->isEnabled($server)
+            && (static::detectProjectType($server) !== null || static::needsManualEggSetup($server));
     }
 
     protected static function needsManualEggSetup(Server $server): bool
@@ -3086,7 +3089,7 @@ class ModManagerPage extends Page implements HasTable
 
     protected function canEditEggProfile(Server $server): bool
     {
-        if ((bool) config('pelican-minecraft-modrinth.allow_user_egg_profile_edit', false)) {
+        if (app(ServerModManagerSettings::class)->allowsEggProfileEdit($server)) {
             return (bool) user()?->can(SubuserPermission::StartupUpdate, $server);
         }
 

@@ -7,6 +7,7 @@ use Filament\Facades\Filament;
 use Filament\Pages\Page;
 use Filament\Schemas\Schema;
 use Kazaminosuke\ModManager\Enums\ProjectType;
+use Kazaminosuke\ModManager\Support\ServerModManagerSettings;
 
 /**
  * Kept at the plugin's original "modrinth" URL slug so links or bookmarks made
@@ -28,7 +29,9 @@ class LegacyModrinthSlugRedirectPage extends Page
         /** @var Server $server */
         $server = Filament::getTenant();
 
-        return parent::canAccess() && ProjectType::fromServer($server) !== null;
+        return parent::canAccess()
+            && app(ServerModManagerSettings::class)->isEnabled($server)
+            && ProjectType::fromServer($server) !== null;
     }
 
     public function mount(): void

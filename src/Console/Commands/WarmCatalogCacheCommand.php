@@ -11,6 +11,7 @@ use Kazaminosuke\ModManager\Jobs\WarmCatalogSearch;
 use Kazaminosuke\ModManager\Services\InstalledOperationManager;
 use Kazaminosuke\ModManager\Support\EggProfileResolver;
 use Kazaminosuke\ModManager\Support\ProjectSourceRegistry;
+use Kazaminosuke\ModManager\Support\ServerModManagerSettings;
 
 /**
  * Discovers the (loader, Minecraft version, project type) combinations
@@ -31,8 +32,11 @@ final class WarmCatalogCacheCommand extends Command
 
     protected $description = 'Warm the mod-manager catalog cache for every (loader, Minecraft version, project type) combination actually in use.';
 
-    public function handle(InstalledOperationManager $operations, ProjectSourceRegistry $registry): int
-    {
+    public function handle(
+        InstalledOperationManager $operations,
+        ProjectSourceRegistry $registry,
+        ServerModManagerSettings $settings,
+    ): int {
         if (!(bool) config('pelican-minecraft-modrinth.warm_catalog_enabled', true)) {
             $this->comment('Catalog warming is disabled (pelican-minecraft-modrinth.warm_catalog_enabled).');
 
@@ -45,7 +49,7 @@ final class WarmCatalogCacheCommand extends Command
             return self::SUCCESS;
         }
 
-        $combos = $this->discoverCombos();
+        $combos = $this->discoverCombos($settings);
 
         if ($combos === []) {
             $this->info('No server currently has a supported mod/plugin manager egg configured; nothing to warm.');
@@ -130,8 +134,10 @@ final class WarmCatalogCacheCommand extends Command
      *
      * @return array<int, array{loader: string, mc_version: string, project_type: string, server_id: int, server_count: int}>
      */
-    protected function discoverCombos(): array
+    protected function discoverCombos(?ServerModManagerSettings $settings = null): array
     {
+        $settings ??= app(ServerModManagerSettings::class);
+
         $servers = Server::query()
             ->with([
                 'egg:id,uuid,name,update_url,features,tags',
@@ -164,6 +170,10 @@ final class WarmCatalogCacheCommand extends Command
         $combos = [];
 
         foreach ($servers as $server) {
+            if (!$settings->isEnabled($server)) {
+                continue;
+            }
+
             $type = ProjectType::fromServer($server);
 
             if ($type === null) {
