@@ -12,6 +12,9 @@ return [
     ],
     'curseforge_api_key' => env('CURSEFORGE_API_KEY'),
     'github_token' => env('GITHUB_TOKEN'),
+    // Local-only Performance Profiler + existing timing logs. Leave false
+    // in production: the Mod Manager overlay and Livewire/image hooks are
+    // not registered unless this is true.
     'debug_timing' => env('MOD_MANAGER_DEBUG_TIMING', false),
 
     // Operator kill switch for the catalog warm system (Stage 5): the

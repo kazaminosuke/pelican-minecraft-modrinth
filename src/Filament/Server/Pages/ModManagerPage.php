@@ -57,6 +57,7 @@ use Kazaminosuke\ModManager\Support\InstalledScanResult;
 use Kazaminosuke\ModManager\Support\ProjectIconUrl;
 use Kazaminosuke\ModManager\Support\ProjectOperationAuthorizer;
 use Kazaminosuke\ModManager\Support\ProjectSourceRegistry;
+use Kazaminosuke\ModManager\Support\RequestPerformanceProfiler;
 use Livewire\Attributes\Locked;
 
 class ModManagerPage extends Page implements HasTable
@@ -307,6 +308,17 @@ class ModManagerPage extends Page implements HasTable
 
         request()->attributes->set('mmr_timing_request_id', $this->modManagerTimingRequestId);
         request()->attributes->set('mmr_timing_started_at', $this->modManagerTimingStartedAt);
+        RequestPerformanceProfiler::start($this->modManagerTimingRequestId);
+    }
+
+    public function rendering($view): void
+    {
+        RequestPerformanceProfiler::markRenderStart();
+    }
+
+    public function rendered($view, $html): void
+    {
+        RequestPerformanceProfiler::markRenderEnd();
     }
 
     public function dehydrate(): void
@@ -314,6 +326,20 @@ class ModManagerPage extends Page implements HasTable
         if (!$this->isModManagerTimingEnabled()) {
             return;
         }
+
+        $filterState = $this->tableFilters ?? [];
+        RequestPerformanceProfiler::mergeContext([
+            'source' => $this->activeTab,
+            'page' => (int) $this->getTablePage(),
+            'search' => (string) $this->getTableSearch(),
+            'filter_category' => $filterState['catalog_category']['value'] ?? null,
+            'filter_environment' => $filterState['catalog_environment']['value'] ?? null,
+            'sort' => $this->catalogSort,
+            'table_loaded' => (bool) $this->isTableLoaded,
+            'php_ms' => $this->getModManagerTimingElapsedMs(),
+            'version_lookup_count' => $this->modManagerTimingVersionLookups,
+            'version_lookup_ms' => $this->modManagerTimingVersionLookupDurationMs,
+        ]);
 
         Log::info('Mod manager timing', [
             'stage' => 'total_component_request',
@@ -324,6 +350,51 @@ class ModManagerPage extends Page implements HasTable
             'version_lookup_count' => $this->modManagerTimingVersionLookups,
             'version_lookup_duration_ms' => $this->modManagerTimingVersionLookupDurationMs,
         ]);
+
+        if ($this->shouldPublishPerformanceProfiler()) {
+            $this->dispatch(RequestPerformanceProfiler::EVENT, snapshot: RequestPerformanceProfiler::snapshot());
+        }
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    protected function currentLivewireCallMethods(): array
+    {
+        $components = request()->input('components');
+        if (!is_array($components) || $components === []) {
+            return [];
+        }
+
+        $calls = $components[0]['calls'] ?? [];
+        if (!is_array($calls)) {
+            return [];
+        }
+
+        $methods = [];
+        foreach ($calls as $call) {
+            if (is_array($call) && is_string($call['method'] ?? null) && $call['method'] !== '') {
+                $methods[] = $call['method'];
+            }
+        }
+
+        return $methods;
+    }
+
+    protected function shouldPublishPerformanceProfiler(): bool
+    {
+        $methods = $this->currentLivewireCallMethods();
+        if ($methods === []) {
+            return true;
+        }
+
+        foreach ($methods as $method) {
+            if (!in_array($method, ['pollInstalledOperation', 'pollEnrichment'], true)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     protected function getModManagerTimingElapsedMs(?float $timestamp = null): int
@@ -1922,6 +1993,10 @@ class ModManagerPage extends Page implements HasTable
                 }
 
                 if ($this->isModManagerTimingEnabled()) {
+                    RequestPerformanceProfiler::mergeContext([
+                        'source' => $currentSource->getKey()->value,
+                        'hits' => count($response['hits']),
+                    ]);
                     Log::info('Mod manager timing', [
                         'stage' => 'catalog_records',
                         'request_id' => $this->modManagerTimingRequestId,

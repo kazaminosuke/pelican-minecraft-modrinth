@@ -253,6 +253,13 @@ class ModManagerPlugin implements HasPluginSettings, Plugin
             fn () => view('pelican-minecraft-modrinth::components.table-swr-cache'),
             $pageClasses,
         );
+        $panel->renderHook(
+            PanelsRenderHook::BODY_END,
+            fn () => config('pelican-minecraft-modrinth.debug_timing')
+                ? view('pelican-minecraft-modrinth::components.performance-profiler')
+                : '',
+            $pageClasses,
+        );
 
     }
 

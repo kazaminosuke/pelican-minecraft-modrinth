@@ -29,42 +29,64 @@ final class SourceCache
 
     public function swr(SourceFetchSpec $spec, CacheProfile $profile): mixed
     {
-        $entry = $this->readEntry($spec);
-
-        if ($entry !== null && $entry['fresh_until'] > time()) {
-            return $entry['data'];
-        }
-
-        if ($this->hasFailureMarker($spec)) {
-            return $entry !== null ? $entry['data'] : $this->emptyResult($spec);
-        }
-
-        if ($entry !== null && $this->supportsAsyncDispatch()) {
-            $this->dispatchRevalidation($spec, $profile);
-
-            return $entry['data'];
-        }
+        $shouldProfile = $spec->operation === 'search' && RequestPerformanceProfiler::isCapturing();
+        $cacheStartedAt = $shouldProfile ? microtime(true) : 0.0;
+        $status = 'MISS';
+        $cacheMs = 0;
 
         try {
-            return $this->fetchAndStore($spec, $profile, $profile->inlineBudgetSeconds());
-        } catch (Throwable $exception) {
-            $this->markFailure($spec, $profile, $exception);
+            $entry = $this->readEntry($spec);
+            if ($shouldProfile) {
+                $cacheMs = (int) round((microtime(true) - $cacheStartedAt) * 1000);
+            }
 
-            if ($entry !== null) {
+            if ($entry !== null && $entry['fresh_until'] > time()) {
+                $status = 'HIT';
+
                 return $entry['data'];
             }
 
-            if ($this->supportsAsyncDispatch()) {
-                // The marker suppresses subsequent requests, but the request
-                // that observed the miss still queues one background attempt.
-                $this->dispatchRevalidation($spec, $profile, ignoreFailureMarker: true);
+            if ($this->hasFailureMarker($spec)) {
+                $status = $entry !== null ? 'STALE' : 'MISS';
+
+                return $entry !== null ? $entry['data'] : $this->emptyResult($spec);
             }
 
-            if ($exception instanceof PartialSourceFetchException) {
-                return $exception->fallback();
+            if ($entry !== null && $this->supportsAsyncDispatch()) {
+                $this->dispatchRevalidation($spec, $profile);
+                $status = 'STALE';
+
+                return $entry['data'];
             }
 
-            return $this->emptyResult($spec);
+            try {
+                $status = 'MISS';
+
+                return $this->fetchAndStore($spec, $profile, $profile->inlineBudgetSeconds());
+            } catch (Throwable $exception) {
+                $this->markFailure($spec, $profile, $exception);
+                $status = $entry !== null ? 'STALE' : 'MISS';
+
+                if ($entry !== null) {
+                    return $entry['data'];
+                }
+
+                if ($this->supportsAsyncDispatch()) {
+                    // The marker suppresses subsequent requests, but the request
+                    // that observed the miss still queues one background attempt.
+                    $this->dispatchRevalidation($spec, $profile, ignoreFailureMarker: true);
+                }
+
+                if ($exception instanceof PartialSourceFetchException) {
+                    return $exception->fallback();
+                }
+
+                return $this->emptyResult($spec);
+            }
+        } finally {
+            if ($shouldProfile) {
+                RequestPerformanceProfiler::recordCatalogCache($spec->sourceKey, $status, $cacheMs);
+            }
         }
     }
 

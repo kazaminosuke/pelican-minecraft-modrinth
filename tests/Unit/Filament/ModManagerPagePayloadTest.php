@@ -6,6 +6,7 @@ use App\Models\Server;
 use App\Repositories\Daemon\DaemonFileRepository;
 use Illuminate\Config\Repository as LaravelConfigRepository;
 use Illuminate\Container\Container;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Facade;
 use Kazaminosuke\ModManager\Contracts\ProjectSourceInterface;
 use Kazaminosuke\ModManager\Enums\ProjectSourceKey;
@@ -124,6 +125,11 @@ final class TestableModManagerPage extends ModManagerPage
     public function catalogWarmPlanForTest(): array
     {
         return $this->catalogWarmPlan();
+    }
+
+    public function shouldPublishPerformanceProfilerForTest(): bool
+    {
+        return $this->shouldPublishPerformanceProfiler();
     }
 
     public int $pollEnrichmentSkipRenderCallsForTest = 0;
@@ -726,6 +732,37 @@ class ModManagerPagePayloadTest extends TestCase
         self::assertSame([
             ['sourceKey' => 'curseforge', 'page' => 2],
         ], $page->catalogPagesToWarmForTest());
+    }
+
+    public function test_profiler_is_not_published_for_enrichment_polls(): void
+    {
+        $previousContainer = Container::getInstance();
+        $previousFacade = Facade::getFacadeApplication();
+        $request = Request::create('/livewire/update', 'POST', [
+            'components' => [[
+                'calls' => [['method' => 'pollEnrichment', 'params' => []]],
+            ]],
+        ]);
+        $container = new Container();
+        $container->instance('request', $request);
+        Container::setInstance($container);
+        Facade::setFacadeApplication($container);
+
+        try {
+            $page = new TestableModManagerPage();
+            self::assertFalse($page->shouldPublishPerformanceProfilerForTest());
+
+            $listRequest = Request::create('/livewire/update', 'POST', [
+                'components' => [[
+                    'calls' => [['method' => 'loadTable', 'params' => []]],
+                ]],
+            ]);
+            $container->instance('request', $listRequest);
+            self::assertTrue($page->shouldPublishPerformanceProfilerForTest());
+        } finally {
+            Container::setInstance($previousContainer);
+            Facade::setFacadeApplication($previousFacade);
+        }
     }
 
     public function test_catalog_records_peek_latest_versions_instead_of_blocking(): void

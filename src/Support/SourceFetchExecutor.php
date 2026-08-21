@@ -19,7 +19,20 @@ final class SourceFetchExecutor implements SourceFetchExecutorInterface
 
     public function fetch(SourceFetchSpec $spec, float $timeoutSeconds): mixed
     {
-        return $this->handler($spec)->fetchSourceData($spec, $timeoutSeconds);
+        if ($spec->operation !== 'search' || !RequestPerformanceProfiler::isCapturing()) {
+            return $this->handler($spec)->fetchSourceData($spec, $timeoutSeconds);
+        }
+
+        $startedAt = microtime(true);
+
+        try {
+            return $this->handler($spec)->fetchSourceData($spec, $timeoutSeconds);
+        } finally {
+            RequestPerformanceProfiler::addSearchApi(
+                $spec->sourceKey,
+                (int) round((microtime(true) - $startedAt) * 1000),
+            );
+        }
     }
 
     public function emptyResult(SourceFetchSpec $spec): mixed
