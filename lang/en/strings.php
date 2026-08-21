@@ -1,7 +1,6 @@
 <?php
 
 return [
-    'plugin_name' => 'Minecraft Mod Manager',
     'minecraft_mods' => 'Minecraft Mods',
     'minecraft_plugins' => 'Minecraft Plugins',
     'minecraft_datapacks' => 'Minecraft Datapacks',
@@ -107,11 +106,9 @@ return [
         'downloads' => 'Downloads',
         'published' => 'Published',
         'changelog' => 'Changelog',
-        'no_file_found' => 'No file found',
     ],
 
     'actions' => [
-        'scan' => 'Scan Mods',
         'rescan_mods_for_updates' => 'Rescan mods for updates',
         'rescan_plugins_for_updates' => 'Rescan plugins for updates',
         'rescan_datapacks_for_updates' => 'Rescan datapacks for updates',
@@ -166,11 +163,6 @@ return [
         'uninstall_success_body' => 'Successfully uninstalled :name',
         'uninstall_failed' => 'Uninstall failed',
         'uninstall_failed_body' => 'An error occurred during uninstallation. Please try again or contact support if the issue persists.',
-        'scan_in_progress_mods' => 'Scanning mods... please wait a moment.',
-        'scan_in_progress_plugins' => 'Scanning plugins... please wait a moment.',
-        'scan_in_progress_datapacks' => 'Scanning datapacks... please wait a moment.',
-        'scan_success' => ':count mod(s) imported from scan.',
-        'scan_failed' => 'Scan failed. Please try again.',
         'bulk_update_success' => ':count item(s) updated.',
         'bulk_update_partial' => ':updated updated, :failed failed.',
         'bulk_update_none' => 'All items are already up to date.',
