@@ -114,22 +114,36 @@ final class TestableModManagerPage extends ModManagerPage
         return $this->lowercaseInstalledSearchValue($value);
     }
 
-    public function catalogPagesToWarmForTest(): array
+    public int $tablePageForTest = 1;
+
+    public ?string $tableSearchForTest = null;
+
+    public function catalogPagesToWarmForTest(bool $includeOtherSources = true): array
     {
-        return $this->catalogPagesToWarm();
+        return $this->catalogPagesToWarm($includeOtherSources);
     }
 
     /**
      * @return array{queued: array<int, array{sourceKey: string, page: int}>, immediate: array<int, array{sourceKey: string, page: int}>}
      */
-    public function catalogWarmPlanForTest(): array
+    public function catalogWarmPlanForTest(bool $includeOtherSources = true): array
     {
-        return $this->catalogWarmPlan();
+        return $this->catalogWarmPlan($includeOtherSources);
     }
 
     public function shouldPublishPerformanceProfilerForTest(): bool
     {
         return $this->shouldPublishPerformanceProfiler();
+    }
+
+    public function getTablePage(): int
+    {
+        return $this->tablePageForTest;
+    }
+
+    public function getTableSearch(): ?string
+    {
+        return $this->tableSearchForTest;
     }
 
     public int $pollEnrichmentSkipRenderCallsForTest = 0;
@@ -732,6 +746,69 @@ class ModManagerPagePayloadTest extends TestCase
         self::assertSame([
             ['sourceKey' => 'curseforge', 'page' => 2],
         ], $page->catalogPagesToWarmForTest());
+    }
+
+    public function test_catalog_warm_prefers_the_next_page_then_the_previous_page(): void
+    {
+        $page = $this->pageWithSources([
+            $this->source(ProjectSourceKey::CurseForge, true),
+            $this->source(ProjectSourceKey::Modrinth, true),
+        ]);
+        $page->activeTab = ProjectSourceKey::Modrinth->value;
+        $page->tablePageForTest = 250;
+
+        self::assertSame([
+            ['sourceKey' => 'curseforge', 'page' => 1],
+            ['sourceKey' => 'modrinth', 'page' => 251],
+            ['sourceKey' => 'modrinth', 'page' => 249],
+        ], $page->catalogPagesToWarmForTest());
+        self::assertSame([
+            ['sourceKey' => 'modrinth', 'page' => 251],
+            ['sourceKey' => 'modrinth', 'page' => 249],
+        ], $page->catalogPagesToWarmForTest(false));
+    }
+
+    public function test_catalog_warm_keeps_modrinth_pages_beyond_the_curseforge_index_cap(): void
+    {
+        $page = $this->pageWithSources([
+            $this->source(ProjectSourceKey::Modrinth, true),
+        ]);
+        $page->activeTab = ProjectSourceKey::Modrinth->value;
+        $page->tablePageForTest = 501;
+
+        self::assertSame([
+            ['sourceKey' => 'modrinth', 'page' => 502],
+            ['sourceKey' => 'modrinth', 'page' => 500],
+        ], $page->catalogPagesToWarmForTest());
+    }
+
+    public function test_catalog_warm_does_not_queue_curseforge_pages_past_the_api_cap(): void
+    {
+        $page = $this->pageWithSources([
+            $this->source(ProjectSourceKey::CurseForge, true),
+        ]);
+        $page->activeTab = ProjectSourceKey::CurseForge->value;
+        $page->tablePageForTest = 500;
+
+        self::assertSame([
+            ['sourceKey' => 'curseforge', 'page' => 499],
+        ], $page->catalogPagesToWarmForTest());
+    }
+
+    public function test_catalog_warm_skips_adjacent_pages_when_searching(): void
+    {
+        $page = $this->pageWithSources([
+            $this->source(ProjectSourceKey::CurseForge, true),
+            $this->source(ProjectSourceKey::Modrinth, true),
+        ]);
+        $page->activeTab = ProjectSourceKey::CurseForge->value;
+        $page->tablePageForTest = 3;
+        $page->tableSearchForTest = 'jei';
+
+        self::assertSame([
+            ['sourceKey' => 'modrinth', 'page' => 1],
+        ], $page->catalogPagesToWarmForTest());
+        self::assertSame([], $page->catalogPagesToWarmForTest(false));
     }
 
     public function test_profiler_is_not_published_for_enrichment_polls(): void

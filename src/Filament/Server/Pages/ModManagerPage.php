@@ -430,13 +430,13 @@ class ModManagerPage extends Page implements HasTable
     }
 
     /**
-     * Warm other catalog sources so a tab switch is a Redis hit. Hangar's
-     * /projects call is ~1s, so its page-1 job is dispatched first instead
-     * of waiting behind Modrinth on a single queue worker. Other sources
-     * stay queued so this request never blocks on their APIs. The active
+     * Warm likely-next catalog pages in the background. Hangar's
+     * /projects call is ~1s, so its jobs are dispatched first instead of
+     * waiting behind Modrinth on a single queue worker. Other sources stay
+     * queued so this request never blocks on their APIs. The active
      * source's current page is fetched by records()/loadTable itself.
      */
-    protected function dispatchCatalogWarm(): void
+    protected function dispatchCatalogWarm(bool $includeOtherSources = true): void
     {
         if (!(bool) config('pelican-minecraft-modrinth.warm_catalog_enabled', true)) {
             return;
@@ -464,7 +464,7 @@ class ModManagerPage extends Page implements HasTable
             return;
         }
 
-        $plan = $this->catalogWarmPlan();
+        $plan = $this->catalogWarmPlan($includeOtherSources);
 
         foreach ([...$plan['immediate'], ...$plan['queued']] as $page) {
             $source = $this->catalogSourceByKey($page['sourceKey']);
@@ -491,13 +491,18 @@ class ModManagerPage extends Page implements HasTable
     }
 
     /**
-     * Pages the current visit should warm in the background. Page 1 of the
-     * active catalog source is omitted: records() (or the deferred
+     * Pages the current visit should warm in the background. The active
+     * source's current page is omitted: records() (or the deferred
      * loadTable that follows a cold miss) already performs that fetch.
+     *
+     * Adjacent pages (p+1, then p-1) are queued only for the default
+     * unfiltered catalog. Search/filter combinations use different cache
+     * keys than WarmCatalogSearch, so prefetching them would spend the
+     * throttle on unused entries.
      *
      * @return array<int, array{sourceKey: string, page: int}>
      */
-    protected function catalogPagesToWarm(): array
+    protected function catalogPagesToWarm(bool $includeOtherSources = true): array
     {
         $activeSourceKey = $this->getCurrentSource()?->getKey()->value;
         $otherSourcePages = [];
@@ -511,15 +516,67 @@ class ModManagerPage extends Page implements HasTable
             $sourceKey = $source->getKey()->value;
 
             if ($sourceKey === $activeSourceKey) {
-                $activeSourcePages[] = ['sourceKey' => $sourceKey, 'page' => 2];
+                if ($this->shouldWarmAdjacentCatalogPages()) {
+                    $activeSourcePages = $this->adjacentCatalogPagesToWarm(
+                        $sourceKey,
+                        $this->currentCatalogPageForWarm(),
+                    );
+                }
 
                 continue;
             }
 
-            $otherSourcePages[] = ['sourceKey' => $sourceKey, 'page' => 1];
+            if ($includeOtherSources) {
+                $otherSourcePages[] = ['sourceKey' => $sourceKey, 'page' => 1];
+            }
         }
 
         return [...$otherSourcePages, ...$activeSourcePages];
+    }
+
+    protected function shouldWarmAdjacentCatalogPages(): bool
+    {
+        if (trim((string) $this->getTableSearch()) !== '') {
+            return false;
+        }
+
+        $filterState = $this->tableFilters ?? [];
+        $category = $filterState['catalog_category']['value'] ?? null;
+        $environment = $filterState['catalog_environment']['value'] ?? null;
+
+        return ($category === null || $category === '')
+            && ($environment === null || $environment === '');
+    }
+
+    protected function currentCatalogPageForWarm(): int
+    {
+        return max(1, (int) $this->getTablePage());
+    }
+
+    /**
+     * @return array<int, array{sourceKey: string, page: int}>
+     */
+    protected function adjacentCatalogPagesToWarm(string $sourceKey, int $currentPage): array
+    {
+        $currentPage = max(1, $currentPage);
+        // CurseForge rejects index + pageSize above 10,000 (page 500 at
+        // 20 hits). Do not apply that clamp to Modrinth: later pages stay
+        // browsable and can still be warmed.
+        $maxPage = $sourceKey === ProjectSourceKey::CurseForge->value ? 500 : null;
+        $pages = [];
+        $nextPage = $currentPage + 1;
+
+        if ($maxPage === null || $nextPage <= $maxPage) {
+            $pages[] = ['sourceKey' => $sourceKey, 'page' => $nextPage];
+        }
+
+        $previousPage = $currentPage - 1;
+
+        if ($previousPage >= 1 && ($maxPage === null || $previousPage <= $maxPage)) {
+            $pages[] = ['sourceKey' => $sourceKey, 'page' => $previousPage];
+        }
+
+        return $pages;
     }
 
     /**
@@ -530,12 +587,12 @@ class ModManagerPage extends Page implements HasTable
      *
      * @return array{queued: array<int, array{sourceKey: string, page: int}>, immediate: array<int, array{sourceKey: string, page: int}>}
      */
-    protected function catalogWarmPlan(): array
+    protected function catalogWarmPlan(bool $includeOtherSources = true): array
     {
         $queued = [];
         $immediate = [];
 
-        foreach ($this->catalogPagesToWarm() as $page) {
+        foreach ($this->catalogPagesToWarm($includeOtherSources) as $page) {
             if ($page['sourceKey'] === ProjectSourceKey::Hangar->value) {
                 $immediate[] = $page;
             } else {
@@ -679,6 +736,7 @@ class ModManagerPage extends Page implements HasTable
 
         $this->resetPage($this->getTablePaginationPageName());
         $this->resetTable();
+        $this->dispatchCatalogWarm();
     }
 
     public function updatedActiveTab(?string $activeTab): void
@@ -725,7 +783,7 @@ class ModManagerPage extends Page implements HasTable
         $this->tableFilters = [];
         $this->resetTable();
         $this->queueHeaderScroll();
-
+        $this->dispatchCatalogWarm();
     }
 
     public function updatedPaginators($page, $pageName): void
@@ -736,6 +794,7 @@ class ModManagerPage extends Page implements HasTable
 
         $this->isTableLoaded = false;
         $this->queueHeaderScroll();
+        $this->dispatchCatalogWarm(includeOtherSources: false);
     }
 
     /**
