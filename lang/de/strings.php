@@ -1,7 +1,6 @@
 <?php
 
 return [
-    'plugin_name' => 'Minecraft-Mod-Manager',
     'minecraft_mods' => 'Minecraft Mods',
     'minecraft_plugins' => 'Minecraft Plugins',
     'minecraft_datapacks' => 'Minecraft Datapacks',
@@ -107,11 +106,9 @@ return [
         'downloads' => 'Downloads',
         'published' => 'Veröffentlicht',
         'changelog' => 'Änderungsprotokoll',
-        'no_file_found' => 'Keine Datei gefunden',
     ],
 
     'actions' => [
-        'scan' => 'Mods scannen',
         'rescan_mods_for_updates' => 'Mods auf Updates erneut scannen',
         'rescan_plugins_for_updates' => 'Plugins auf Updates erneut scannen',
         'rescan_datapacks_for_updates' => 'Datapacks auf Updates erneut scannen',
@@ -166,11 +163,6 @@ return [
         'uninstall_success_body' => ':name erfolgreich deinstalliert',
         'uninstall_failed' => 'Deinstallation fehlgeschlagen',
         'uninstall_failed_body' => 'Bei der Deinstallation ist ein Fehler aufgetreten. Bitte versuche es erneut oder wende dich an den Support, wenn das Problem weiterhin besteht.',
-        'scan_in_progress_mods' => 'Mods werden gescannt... bitte kurz warten.',
-        'scan_in_progress_plugins' => 'Plugins werden gescannt... bitte kurz warten.',
-        'scan_in_progress_datapacks' => 'Datapacks werden gescannt... bitte kurz warten.',
-        'scan_success' => ':count Mod(s) beim Scan importiert.',
-        'scan_failed' => 'Scan fehlgeschlagen. Bitte versuche es erneut.',
         'bulk_update_success' => ':count Element(e) aktualisiert.',
         'bulk_update_partial' => ':updated aktualisiert, :failed fehlgeschlagen.',
         'bulk_update_none' => 'Alle Elemente sind bereits aktuell.',
