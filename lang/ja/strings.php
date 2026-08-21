@@ -1,7 +1,6 @@
 <?php
 
 return [
-    'plugin_name' => 'Minecraft Modマネージャー',
     'minecraft_mods' => 'Minecraft Mod',
     'minecraft_plugins' => 'Minecraft Plugin',
     'minecraft_datapacks' => 'Minecraft Datapack',
@@ -107,11 +106,9 @@ return [
         'downloads' => 'ダウンロード数',
         'published' => '公開日',
         'changelog' => '変更履歴',
-        'no_file_found' => 'ファイルが見つかりません',
     ],
 
     'actions' => [
-        'scan' => 'Modをスキャン',
         'rescan_mods_for_updates' => 'Modの更新を再スキャン',
         'rescan_plugins_for_updates' => 'Pluginの更新を再スキャン',
         'rescan_datapacks_for_updates' => 'Datapackの更新を再スキャン',
@@ -166,11 +163,6 @@ return [
         'uninstall_success_body' => ':name を正常にアンインストールしました',
         'uninstall_failed' => 'アンインストールに失敗しました',
         'uninstall_failed_body' => 'アンインストール中にエラーが発生しました。もう一度お試しいただくか、問題が解決しない場合はサポートにお問い合わせください。',
-        'scan_in_progress_mods' => 'Modをスキャンしています…しばらくお待ちください。',
-        'scan_in_progress_plugins' => 'Pluginをスキャンしています…しばらくお待ちください。',
-        'scan_in_progress_datapacks' => 'Datapackをスキャンしています…しばらくお待ちください。',
-        'scan_success' => 'スキャンにより :count 件のModをインポートしました。',
-        'scan_failed' => 'スキャンに失敗しました。もう一度お試しください。',
         'bulk_update_success' => ':count 件のアイテムを更新しました。',
         'bulk_update_partial' => ':updated 件を更新、:failed 件が失敗しました。',
         'bulk_update_none' => 'すべてのアイテムは既に最新です。',
