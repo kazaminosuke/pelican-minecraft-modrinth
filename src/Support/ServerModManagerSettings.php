@@ -4,6 +4,7 @@ namespace Kazaminosuke\ModManager\Support;
 
 use App\Models\Server;
 use Kazaminosuke\ModManager\Enums\ProjectOperation;
+use Kazaminosuke\ModManager\Enums\ProjectType;
 use Kazaminosuke\ModManager\Models\ModManagerServerSetting;
 use Kazaminosuke\ModManager\Repositories\ServerModManagerSettingRepository;
 
@@ -25,6 +26,50 @@ final class ServerModManagerSettings
         return $this->repository->forServer($server)?->enabled ?? true;
     }
 
+    /**
+     * Resolve the independent page switch for one project type.
+     *
+     * The legacy `enabled` value remains a master switch so an explicit
+     * disable made before the per-type migration cannot accidentally reopen a
+     * server. Missing rows and newly added type columns remain enabled.
+     */
+    public function isTypeEnabled(Server|int $server, ProjectType $type): bool
+    {
+        if (!$this->isEnabled($server)) {
+            return false;
+        }
+
+        return $this->configuredTypeEnabled($server, $type);
+    }
+
+    /**
+     * Return the stored type switch without applying the legacy master
+     * switch. The admin form uses this so temporarily disabling the whole
+     * manager does not turn every independent type switch off on the next
+     * standard Save.
+     */
+    public function configuredTypeEnabled(Server|int $server, ProjectType $type): bool
+    {
+        $setting = $this->repository->forServer($server);
+
+        return $setting?->{$this->typeEnabledField($type)} ?? true;
+    }
+
+    public function hasAnyManagerTypeEnabled(Server|int $server): bool
+    {
+        if (!$this->isEnabled($server)) {
+            return false;
+        }
+
+        foreach ([ProjectType::Mod, ProjectType::Plugin, ProjectType::Datapack] as $type) {
+            if ($this->isTypeEnabled($server, $type)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     public function allowsEggProfileEdit(Server|int $server): bool
     {
         return $this->resolve($server, 'allow_user_egg_profile_edit');
@@ -33,6 +78,18 @@ final class ServerModManagerSettings
     public function allowsProjectOperation(Server|int $server, ProjectOperation $operation): bool
     {
         return $this->resolve($server, $operation->allowsUserConfigKey());
+    }
+
+    public function navigationSort(Server|int $server, ProjectType $type): int
+    {
+        $override = $this->navigationSortOverride($server, $type);
+
+        return $override ?? (int) config('pelican-minecraft-modrinth.navigation_sort.'.$type->value, 11);
+    }
+
+    public function navigationSortOverride(Server|int $server, ProjectType $type): ?int
+    {
+        return $this->repository->forServer($server)?->{$this->navigationSortField($type)};
     }
 
     /**
@@ -69,5 +126,15 @@ final class ServerModManagerSettings
         };
 
         return $setting->{$field};
+    }
+
+    private function typeEnabledField(ProjectType $type): string
+    {
+        return $type->value.'_enabled';
+    }
+
+    private function navigationSortField(ProjectType $type): string
+    {
+        return $type->value.'_navigation_sort';
     }
 }

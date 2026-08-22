@@ -77,6 +77,12 @@ class WarmCatalogCacheCommandTest extends TestCase
             $table->id();
             $table->unsignedInteger('server_id')->unique();
             $table->boolean('enabled')->default(true);
+            $table->boolean('mod_enabled')->default(true);
+            $table->boolean('plugin_enabled')->default(true);
+            $table->boolean('datapack_enabled')->default(true);
+            $table->integer('mod_navigation_sort')->nullable();
+            $table->integer('plugin_navigation_sort')->nullable();
+            $table->integer('datapack_navigation_sort')->nullable();
             $table->boolean('allow_user_egg_profile_edit')->nullable();
             $table->boolean('allow_user_project_install')->nullable();
             $table->boolean('allow_user_project_update')->nullable();
@@ -238,6 +244,30 @@ class WarmCatalogCacheCommandTest extends TestCase
         ]);
 
         $method = new \ReflectionMethod(WarmCatalogCacheCommand::class, 'discoverCombos');
+        self::assertSame([], $method->invoke(
+            new WarmCatalogCacheCommand(),
+            new ServerModManagerSettings(new ServerModManagerSettingRepository()),
+        ));
+    }
+
+    public function test_does_not_discover_a_server_when_its_detected_type_is_disabled(): void
+    {
+        Capsule::table('eggs')->insert([
+            'id' => 1,
+            'uuid' => 'spigot-uuid',
+            'name' => 'Spigot',
+            'features' => json_encode([]),
+            'tags' => json_encode(['minecraft']),
+        ]);
+        Capsule::table('servers')->insert(['id' => 1, 'egg_id' => 1]);
+        Capsule::table('mod_manager_server_settings')->insert([
+            'server_id' => 1,
+            'enabled' => true,
+            'plugin_enabled' => false,
+        ]);
+
+        $method = new \ReflectionMethod(WarmCatalogCacheCommand::class, 'discoverCombos');
+
         self::assertSame([], $method->invoke(
             new WarmCatalogCacheCommand(),
             new ServerModManagerSettings(new ServerModManagerSettingRepository()),

@@ -28,9 +28,10 @@ class MinecraftDatapackLegacyRedirectPage extends Page
     {
         /** @var Server $server */
         $server = Filament::getTenant();
+        $settings = app(ServerModManagerSettings::class);
 
         return parent::canAccess()
-            && app(ServerModManagerSettings::class)->isEnabled($server)
+            && $settings->isTypeEnabled($server, ProjectType::Datapack)
             && ProjectType::supportsDatapacks($server);
     }
 

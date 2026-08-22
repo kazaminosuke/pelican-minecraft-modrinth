@@ -3,6 +3,7 @@
 namespace Kazaminosuke\ModManager\Filament\Server\Pages;
 
 use App\Models\Server;
+use Filament\Facades\Filament;
 use Kazaminosuke\ModManager\Enums\ProjectType;
 
 class MinecraftDatapackPage extends ModManagerPage
@@ -13,12 +14,21 @@ class MinecraftDatapackPage extends ModManagerPage
 
     public static function getNavigationSort(): ?int
     {
-        return static::navigationSortFor(ProjectType::Datapack);
+        /** @var Server $server */
+        $server = Filament::getTenant();
+
+        return static::navigationSortFor(ProjectType::Datapack, $server);
     }
 
     public static function getNavigationLabel(): string
     {
         return trans('pelican-minecraft-modrinth::strings.minecraft_datapacks');
+    }
+
+    /** @return array<int, ProjectType> */
+    protected static function enabledProjectTypesForAccess(): array
+    {
+        return [ProjectType::Datapack];
     }
 
     protected static function detectProjectType(Server $server): ?ProjectType

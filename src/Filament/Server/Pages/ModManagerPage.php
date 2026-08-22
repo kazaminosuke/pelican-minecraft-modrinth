@@ -238,6 +238,12 @@ class ModManagerPage extends Page implements HasTable
         return (int) config("pelican-minecraft-modrinth.navigation_sort.{$type->value}", 11);
     }
 
+    /** @return array<int, ProjectType> */
+    protected static function enabledProjectTypesForAccess(): array
+    {
+        return [ProjectType::Mod, ProjectType::Plugin];
+    }
+
     protected static function detectProjectType(Server $server): ?ProjectType
     {
         return ProjectType::fromServer($server);
@@ -260,10 +266,33 @@ class ModManagerPage extends Page implements HasTable
     {
         /** @var Server $server */
         $server = Filament::getTenant();
+        $settings = app(ServerModManagerSettings::class);
+
+        // This cheap server-setting gate runs before egg/profile detection.
+        // A disabled page type must not trigger the expensive detector just
+        // to decide that its page is unavailable.
+        if (!$settings->isEnabled($server)) {
+            return false;
+        }
+
+        $hasEnabledPageType = false;
+        foreach (static::enabledProjectTypesForAccess() as $enabledType) {
+            if ($settings->isTypeEnabled($server, $enabledType)) {
+                $hasEnabledPageType = true;
+
+                break;
+            }
+        }
+
+        if (!$hasEnabledPageType) {
+            return false;
+        }
+
+        $type = static::detectProjectType($server);
 
         return parent::canAccess()
-            && app(ServerModManagerSettings::class)->isEnabled($server)
-            && (static::detectProjectType($server) !== null || static::needsManualEggSetup($server));
+            && ($type === null || $settings->isTypeEnabled($server, $type))
+            && ($type !== null || static::needsManualEggSetup($server));
     }
 
     protected static function needsManualEggSetup(Server $server): bool

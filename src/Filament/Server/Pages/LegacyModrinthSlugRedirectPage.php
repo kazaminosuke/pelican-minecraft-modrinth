@@ -28,10 +28,20 @@ class LegacyModrinthSlugRedirectPage extends Page
     {
         /** @var Server $server */
         $server = Filament::getTenant();
+        $settings = app(ServerModManagerSettings::class);
+
+        if (
+            !$settings->isEnabled($server)
+            || (!$settings->isTypeEnabled($server, ProjectType::Mod) && !$settings->isTypeEnabled($server, ProjectType::Plugin))
+        ) {
+            return false;
+        }
+
+        $type = ProjectType::fromServer($server);
 
         return parent::canAccess()
-            && app(ServerModManagerSettings::class)->isEnabled($server)
-            && ProjectType::fromServer($server) !== null;
+            && $settings->isTypeEnabled($server, $type ?? ProjectType::Mod)
+            && $type !== null;
     }
 
     public function mount(): void

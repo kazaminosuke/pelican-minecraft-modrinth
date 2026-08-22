@@ -4,13 +4,13 @@ namespace Kazaminosuke\ModManager\Filament\Admin;
 
 use App\Models\Server;
 use Filament\Actions\Action;
+use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
 use Filament\Forms\Components\ToggleButtons;
-use Filament\Notifications\Notification;
 use Filament\Schemas\Components\Actions;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Components\Tabs\Tab;
-use Filament\Schemas\Components\Utilities\Get;
+use Kazaminosuke\ModManager\Enums\ProjectType;
 use Kazaminosuke\ModManager\ModManagerPlugin;
 use Kazaminosuke\ModManager\Repositories\ServerModManagerSettingRepository;
 use Kazaminosuke\ModManager\Support\EggProfileResolver;
@@ -19,13 +19,28 @@ use Kazaminosuke\ModManager\Support\ServerModManagerSettings;
 /**
  * The root-admin-only tab added to Admin > Server > Edit > Mod Manager.
  *
- * These fields are intentionally not Server attributes. Every setting field
- * is dehydrated(false), and the explicit action reads its live state and
- * writes the separate settings row after a fresh root-admin check.
+ * The fields remain outside the Server model state. Filament's standard
+ * EditRecord save flow calls the tab's relationship callback, which saves the
+ * separate settings row in the same transaction without adding fake columns
+ * to the Server update payload.
  */
 final class ServerModManagerTab
 {
     private const ENABLED = 'mod_manager_enabled';
+
+    /** @var array<string, string> */
+    private const TYPE_ENABLED_FIELDS = [
+        'mod' => 'mod_manager_mod_enabled',
+        'plugin' => 'mod_manager_plugin_enabled',
+        'datapack' => 'mod_manager_datapack_enabled',
+    ];
+
+    /** @var array<string, string> */
+    private const NAVIGATION_SORT_FIELDS = [
+        'mod' => 'mod_manager_mod_navigation_sort',
+        'plugin' => 'mod_manager_plugin_navigation_sort',
+        'datapack' => 'mod_manager_datapack_navigation_sort',
+    ];
 
     /** @var array<string, string> */
     private const PERMISSION_FIELDS = [
@@ -41,6 +56,13 @@ final class ServerModManagerTab
             ->label(trans('pelican-minecraft-modrinth::strings.server_mod_manager.tab'))
             ->icon('tabler-packages')
             ->visible(fn (): bool => self::isRootAdmin())
+            // EditRecord calls this during its normal form getState() flow.
+            // Keeping it on the tab means hidden tabs are saved too, while
+            // every value stays out of the Server model's update payload.
+            ->saveRelationshipsUsing(function (Tab $component): void {
+                self::saveFromLivewire($component);
+            })
+            ->saveRelationshipsWhenHidden()
             ->schema([
                 Section::make(trans('pelican-minecraft-modrinth::strings.server_mod_manager.access'))
                     ->description(trans('pelican-minecraft-modrinth::strings.server_mod_manager.access_helper'))
@@ -51,6 +73,22 @@ final class ServerModManagerTab
                             ->helperText(trans('pelican-minecraft-modrinth::strings.server_mod_manager.enabled_helper'))
                             ->formatStateUsing(fn (Server $record): bool => app(ServerModManagerSettings::class)->isEnabled($record))
                             ->dehydrated(false),
+                        self::typeToggle(ProjectType::Mod),
+                        self::typeToggle(ProjectType::Plugin),
+                        self::typeToggle(ProjectType::Datapack),
+                    ]),
+                Section::make(trans('pelican-minecraft-modrinth::strings.server_mod_manager.navigation'))
+                    ->description(trans('pelican-minecraft-modrinth::strings.server_mod_manager.navigation_helper'))
+                    ->columns(3)
+                    ->schema([
+                        self::navigationSortInput(ProjectType::Mod),
+                        self::navigationSortInput(ProjectType::Plugin),
+                        self::navigationSortInput(ProjectType::Datapack),
+                    ]),
+                Section::make(trans('pelican-minecraft-modrinth::strings.server_mod_manager.permissions'))
+                    ->description(trans('pelican-minecraft-modrinth::strings.server_mod_manager.permissions_helper'))
+                    ->columns(2)
+                    ->schema([
                         ToggleButtons::make(self::PERMISSION_FIELDS['allow_user_egg_profile_edit'])
                             ->label(trans('pelican-minecraft-modrinth::strings.settings.allow_user_egg_profile_edit'))
                             ->options(self::permissionOptions('allow_user_egg_profile_edit'))
@@ -107,22 +145,11 @@ final class ServerModManagerTab
                                 }),
                         ]),
                     ]),
-                Actions::make([
-                    Action::make('save_mod_manager_settings')
-                        ->label(trans('pelican-minecraft-modrinth::strings.server_mod_manager.save'))
-                        ->icon('tabler-device-floppy')
-                        ->color('primary')
-                        ->authorize(fn (): bool => self::isRootAdmin())
-                        ->action(function (Server $record, Get $get): void {
-                            self::save($record, self::stateFrom($get));
-                        }),
-                ]),
             ]);
     }
 
     /**
-     * Save the non-Server state. This method is deliberately public so the
-     * Action and focused unit tests share the exact same authorization path.
+     * Save the non-Server state through EditRecord's standard Save action.
      *
      * @param array<string, mixed> $data
      */
@@ -134,9 +161,21 @@ final class ServerModManagerTab
         $current = $repository->forServer($server);
         $attributes = [
             'enabled' => array_key_exists(self::ENABLED, $data)
-                ? (bool) $data[self::ENABLED]
+                ? self::decodeBoolean($data[self::ENABLED])
                 : ($current?->enabled ?? true),
         ];
+
+        foreach (self::TYPE_ENABLED_FIELDS as $type => $field) {
+            $attributes[$type.'_enabled'] = array_key_exists($field, $data)
+                ? self::decodeBoolean($data[$field])
+                : ($current?->{$type.'_enabled'} ?? true);
+        }
+
+        foreach (self::NAVIGATION_SORT_FIELDS as $type => $field) {
+            $attributes[$type.'_navigation_sort'] = array_key_exists($field, $data)
+                ? self::decodeNavigationSort($data[$field])
+                : $current?->{$type.'_navigation_sort'};
+        }
 
         foreach (self::PERMISSION_FIELDS as $globalKey => $field) {
             $attributes[$globalKey] = array_key_exists($field, $data)
@@ -145,16 +184,9 @@ final class ServerModManagerTab
         }
 
         $repository->save($server, $attributes);
-
-        Notification::make()
-            ->title(trans('pelican-minecraft-modrinth::strings.server_mod_manager.saved'))
-            ->success()
-            ->send();
     }
 
-    /**
-     * @return array<string, string>
-     */
+    /** @return array<string, string> */
     public static function permissionOptions(string $globalKey): array
     {
         $global = app(ServerModManagerSettings::class)->global($globalKey);
@@ -169,6 +201,59 @@ final class ServerModManagerTab
         ];
     }
 
+    private static function typeToggle(ProjectType $type): Toggle
+    {
+        $field = self::TYPE_ENABLED_FIELDS[$type->value];
+
+        return Toggle::make($field)
+            ->label(trans('pelican-minecraft-modrinth::strings.server_mod_manager.type_enabled', ['type' => $type->getLabel()]))
+            ->helperText(trans('pelican-minecraft-modrinth::strings.server_mod_manager.type_enabled_helper'))
+            ->formatStateUsing(fn (Server $record): bool => app(ServerModManagerSettings::class)->configuredTypeEnabled($record, $type))
+            ->visible(fn (Server $record): bool => self::isTypeVisible($record, $type))
+            ->dehydrated(false);
+    }
+
+    private static function navigationSortInput(ProjectType $type): TextInput
+    {
+        $field = self::NAVIGATION_SORT_FIELDS[$type->value];
+
+        return TextInput::make($field)
+            ->label(trans('pelican-minecraft-modrinth::strings.server_mod_manager.navigation_sort', ['type' => $type->getLabel()]))
+            ->helperText(trans('pelican-minecraft-modrinth::strings.server_mod_manager.navigation_sort_helper'))
+            ->placeholder(fn (Server $record): string => (string) app(ServerModManagerSettings::class)->navigationSort($record, $type))
+            ->formatStateUsing(fn (Server $record): ?int => app(ServerModManagerSettings::class)->navigationSortOverride($record, $type))
+            ->numeric()
+            ->nullable()
+            ->visible(fn (Server $record): bool => self::isTypeVisible($record, $type))
+            ->dehydrated(false);
+    }
+
+    private static function saveFromLivewire(Tab $component): void
+    {
+        $livewire = $component->getLivewire();
+
+        if (!method_exists($livewire, 'getRecord')) {
+            return;
+        }
+
+        $record = $livewire->getRecord();
+
+        if ($record instanceof Server) {
+            self::save($record, (array) data_get($livewire, 'data', []));
+        }
+    }
+
+    private static function isTypeVisible(Server $server, ProjectType $type): bool
+    {
+        if ($type === ProjectType::Datapack) {
+            return ProjectType::supportsDatapacks($server);
+        }
+
+        $detected = ProjectType::fromServer($server);
+
+        return $detected === null || $detected === $type;
+    }
+
     private static function overrideState(Server $server, string $globalKey): string
     {
         return match (app(ServerModManagerSettings::class)->override($server, $globalKey)) {
@@ -178,16 +263,22 @@ final class ServerModManagerTab
         };
     }
 
-    /** @return array<string, mixed> */
-    private static function stateFrom(Get $get): array
+    private static function decodeBoolean(mixed $value): bool
     {
-        return [
-            self::ENABLED => $get(self::ENABLED),
-            ...array_combine(
-                array_values(self::PERMISSION_FIELDS),
-                array_map(static fn (string $field): mixed => $get($field), array_values(self::PERMISSION_FIELDS)),
-            ),
-        ];
+        if (is_string($value)) {
+            return filter_var($value, FILTER_VALIDATE_BOOLEAN);
+        }
+
+        return (bool) $value;
+    }
+
+    private static function decodeNavigationSort(mixed $value): ?int
+    {
+        if ($value === null || $value === '' || !is_numeric($value)) {
+            return null;
+        }
+
+        return (int) $value;
     }
 
     private static function decodeOverride(mixed $value): ?bool

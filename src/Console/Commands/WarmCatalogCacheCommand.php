@@ -170,13 +170,16 @@ final class WarmCatalogCacheCommand extends Command
         $combos = [];
 
         foreach ($servers as $server) {
-            if (!$settings->isEnabled($server)) {
+            // Do the cheap server/type gate before resolving an egg. A
+            // completely disabled server must not spend time in Stage 8
+            // detection just to discover that no page could be warmed.
+            if (!$settings->hasAnyManagerTypeEnabled($server)) {
                 continue;
             }
 
             $type = ProjectType::fromServer($server);
 
-            if ($type === null) {
+            if ($type === null || !$settings->isTypeEnabled($server, $type)) {
                 continue;
             }
 
