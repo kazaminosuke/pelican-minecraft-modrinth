@@ -60,6 +60,8 @@ use Kazaminosuke\ModManager\Support\ProjectSourceRegistry;
 use Kazaminosuke\ModManager\Support\RequestPerformanceProfiler;
 use Kazaminosuke\ModManager\Support\ServerModManagerSettings;
 use Livewire\Attributes\Locked;
+use Livewire\Attributes\Url;
+use Livewire\WithoutUrlPagination;
 
 class ModManagerPage extends Page implements HasTable
 {
@@ -75,9 +77,13 @@ class ModManagerPage extends Page implements HasTable
         InteractsWithTable::updatedTableFilters as protected baseUpdatedTableFilters;
         InteractsWithTable::updatedTableSearch as protected baseUpdatedTableSearch;
     }
+    use WithoutUrlPagination;
 
     /** Keep every catalog source and the table paginator on the same page size. */
     private const TABLE_PAGE_SIZE = 20;
+
+    /** The catalog table has no Filament query-string identifier. */
+    private const TABLE_PAGINATOR_NAME = 'page';
 
     /** A success outcome remains visible long enough to be read, but never persists. */
     private const INSTALLED_SCAN_COMPLETION_VISIBLE_SECONDS = 5;
@@ -140,6 +146,19 @@ class ModManagerPage extends Page implements HasTable
      * it changes result ordering but never narrows the result set.
      */
     public string $catalogSort = 'downloads';
+
+    /** Catalog source only; Installed intentionally clears this query value. */
+    #[Url(as: 'source', history: true, keep: false)]
+    public ?string $source = null;
+
+    /** Catalog page; page 1 is intentionally omitted from the URL. */
+    #[Url(as: 'page', history: true, keep: false, except: 1)]
+    public int $catalogPage = 1;
+
+    protected bool $syncingCatalogUrl = false;
+
+    /** Keep the default catalog source omitted while restoring a URL pop. */
+    protected bool $preservingDefaultCatalogSource = false;
 
     /** Null until a successful installed-scan cache provides the Wings file count. */
     public ?int $installedFilesCount = null;
@@ -230,11 +249,15 @@ class ModManagerPage extends Page implements HasTable
         /** @var Server $server */
         $server = Filament::getTenant();
 
-        return static::navigationSortFor(static::detectProjectType($server) ?? ProjectType::Mod);
+        return static::navigationSortFor(static::detectProjectType($server) ?? ProjectType::Mod, $server);
     }
 
-    protected static function navigationSortFor(ProjectType $type): int
+    protected static function navigationSortFor(ProjectType $type, ?Server $server = null): int
     {
+        if ($server !== null) {
+            return app(ServerModManagerSettings::class)->navigationSort($server, $type);
+        }
+
         return (int) config("pelican-minecraft-modrinth.navigation_sort.{$type->value}", 11);
     }
 
@@ -460,6 +483,8 @@ class ModManagerPage extends Page implements HasTable
         // cached definition permanently misses the Installed count badge for
         // the whole component request (including after a browser reload).
         $this->loadDefaultActiveTab();
+        $this->restoreCatalogStateFromUrl();
+        $this->paginators[self::TABLE_PAGINATOR_NAME] = max(1, $this->catalogPage);
         $this->refreshInstalledOperationState();
 
         $this->catalogWarmPending = true;
@@ -788,13 +813,16 @@ class ModManagerPage extends Page implements HasTable
         $this->catalogSort = $this->normalizeCatalogSort($sort);
         session()->put($this->getCatalogSortSessionKey(), $this->catalogSort);
 
-        $this->resetPage($this->getTablePaginationPageName());
+        $this->resetPage(self::TABLE_PAGINATOR_NAME);
         $this->resetTable();
         $this->dispatchCatalogWarm();
     }
 
     public function updatedActiveTab(?string $activeTab): void
     {
+        $catalogPageBeforeTabChange = $this->catalogPage;
+        $preserveCatalogPage = $this->shouldPreserveCatalogPageOnTabChange($activeTab);
+
         // Scan progress and its brief success outcome belong exclusively to
         // the Installed tab. Do not let a tab switch make a catalog visitor
         // see an operation that finished while they were browsing sources.
@@ -823,6 +851,12 @@ class ModManagerPage extends Page implements HasTable
         // with far fewer results) - plus resets the column manager state. It was
         // being silently dropped by this method overriding it without calling it.
         $this->baseUpdatedActiveTab();
+        // A tab change starts a new result set. Let Livewire initialize page 1
+        // from its default instead of carrying a literal `page=1` into the
+        // URL, especially for Installed where page and source are not
+        // meaningful query state.
+        unset($this->paginators[self::TABLE_PAGINATOR_NAME]);
+        $this->catalogPage = 1;
         $this->refreshInstalledScanDataReady();
         // A long-lived component can outlive the ten-minute scan cache. A
         // catalog-tab switch is still a manager-page visit, so restore the
@@ -838,17 +872,96 @@ class ModManagerPage extends Page implements HasTable
         $this->resetTable();
         $this->queueHeaderScroll();
         $this->dispatchCatalogWarm();
+        $this->syncSourceFromActiveTab($activeTab);
+        // resetTable() above resets the paginator after the earlier lifecycle
+        // hook, so clear it once more before Livewire serializes the URL.
+        if ($preserveCatalogPage) {
+            $this->paginators[self::TABLE_PAGINATOR_NAME] = $catalogPageBeforeTabChange;
+            $this->catalogPage = $catalogPageBeforeTabChange;
+        } else {
+            unset($this->paginators[self::TABLE_PAGINATOR_NAME]);
+            $this->catalogPage = 1;
+        }
+    }
+
+    protected function shouldPreserveCatalogPageOnTabChange(?string $activeTab): bool
+    {
+        if ($activeTab === null || $activeTab === 'installed' || $this->catalogPage <= 1) {
+            return false;
+        }
+
+        $tabSource = $this->sourceForTab($activeTab);
+
+        return $this->source === $tabSource
+            || ($this->source === null && $activeTab === $this->getDefaultActiveTab());
+    }
+
+    public function updatedSource(?string $source): void
+    {
+        if ($this->syncingCatalogUrl) {
+            return;
+        }
+
+        $tab = $this->catalogTabForSource($source);
+        $preserveDefaultCatalogSource = false;
+
+        if ($tab === null) {
+            $this->syncingCatalogUrl = true;
+            $this->source = null;
+            unset($this->paginators[self::TABLE_PAGINATOR_NAME]);
+            $this->catalogPage = 1;
+            $this->syncingCatalogUrl = false;
+            $tab = $this->getDefaultActiveTab();
+            $preserveDefaultCatalogSource = true;
+        }
+
+        if ($this->activeTab === $tab) {
+            return;
+        }
+
+        $this->syncingCatalogUrl = true;
+        $this->activeTab = $tab;
+        $this->syncingCatalogUrl = false;
+
+        $this->preservingDefaultCatalogSource = $preserveDefaultCatalogSource;
+
+        try {
+            $this->updatedActiveTab($tab);
+        } finally {
+            $this->preservingDefaultCatalogSource = false;
+        }
     }
 
     public function updatedPaginators($page, $pageName): void
     {
-        if ($pageName !== $this->getTablePaginationPageName()) {
+        if ($pageName !== self::TABLE_PAGINATOR_NAME) {
             return;
         }
 
+        $this->catalogPage = max(1, (int) $page);
         $this->isTableLoaded = false;
         $this->queueHeaderScroll();
         $this->dispatchCatalogWarm(includeOtherSources: false);
+    }
+
+    public function updatedCatalogPage($page): void
+    {
+        $page = max(1, (int) $page);
+        $this->catalogPage = $page;
+        $this->paginators[self::TABLE_PAGINATOR_NAME] = $page;
+    }
+
+    /**
+     * Keep the paginator out of Livewire's built-in URL hook. Livewire's
+     * PaginationUrl drops the `except` option while installing that hook, so
+     * page 1 would remain in the URL. The public catalogPage property above
+     * uses the normal Url attribute instead.
+     *
+     * @return array<string, never>
+     */
+    public function queryStringHandlesPagination(): array
+    {
+        return [];
     }
 
     /**
@@ -1044,6 +1157,72 @@ class ModManagerPage extends Page implements HasTable
         return array_key_first($this->getCachedTabs());
     }
 
+    protected function restoreCatalogStateFromUrl(): void
+    {
+        if ($this->source === null) {
+            return;
+        }
+
+        $tab = $this->catalogTabForSource($this->source);
+
+        if ($tab === null) {
+            $this->source = null;
+            unset($this->paginators[self::TABLE_PAGINATOR_NAME]);
+            $this->catalogPage = 1;
+
+            return;
+        }
+
+        $this->source = $this->sourceForTab($tab);
+        $this->activeTab = $tab;
+    }
+
+    protected function catalogTabForSource(?string $source): ?string
+    {
+        if ($source === null || $source === '') {
+            return null;
+        }
+
+        $sources = $this->getCatalogSources();
+
+        if (count($sources) <= 1) {
+            $onlySource = $sources[0]?->getKey()->value;
+
+            return in_array($source, ['all', $onlySource], true) ? 'all' : null;
+        }
+
+        return array_key_exists($source, $this->getTabs()) && $source !== 'installed'
+            ? $source
+            : null;
+    }
+
+    protected function sourceForTab(string|int|null $tab): ?string
+    {
+        if (!is_string($tab) || $tab === 'installed') {
+            return null;
+        }
+
+        // With one source the visible catalog tab is named `all`, but the
+        // source still has a stable URL identity. Keep an explicit source
+        // selection copyable without leaking it into the Installed tab.
+        if ($tab === 'all') {
+            return $this->getCatalogSources()[0]?->getKey()->value;
+        }
+
+        return $this->catalogTabForSource($tab) === $tab ? $tab : null;
+    }
+
+    protected function syncSourceFromActiveTab(?string $activeTab): void
+    {
+        if ($this->syncingCatalogUrl || $this->preservingDefaultCatalogSource) {
+            return;
+        }
+
+        $this->syncingCatalogUrl = true;
+        $this->source = $this->sourceForTab($activeTab);
+        $this->syncingCatalogUrl = false;
+    }
+
     protected function getSourceLabel(?string $sourceKey): string
     {
         if (!$sourceKey) {
@@ -1110,7 +1289,8 @@ class ModManagerPage extends Page implements HasTable
             // table to deferred loading and discards the valid page we can
             // already render in this same response. Keep Livewire's public
             // paginator state in sync directly instead.
-            $this->paginators[$this->getTablePaginationPageName()] = $clampedPage;
+            $this->paginators[self::TABLE_PAGINATOR_NAME] = $clampedPage;
+            $this->catalogPage = $clampedPage;
         }
 
         return $clampedPage;

@@ -8,6 +8,8 @@ use Illuminate\Config\Repository as LaravelConfigRepository;
 use Illuminate\Container\Container;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Facade;
+use Illuminate\Translation\ArrayLoader;
+use Illuminate\Translation\Translator;
 use Kazaminosuke\ModManager\Contracts\ProjectSourceInterface;
 use Kazaminosuke\ModManager\Enums\ProjectSourceKey;
 use Kazaminosuke\ModManager\Enums\ProjectType;
@@ -20,6 +22,7 @@ use Kazaminosuke\ModManager\Support\InstalledMetadataReadStatus;
 use Kazaminosuke\ModManager\Support\InstalledOperationState;
 use Kazaminosuke\ModManager\Support\InstalledScanResult;
 use Livewire\Attributes\Locked;
+use Livewire\Attributes\Url;
 use Mockery;
 use PHPUnit\Framework\TestCase;
 use ReflectionProperty;
@@ -55,6 +58,23 @@ final class TestableModManagerPage extends ModManagerPage
     public static function navigationSortForTest(ProjectType $type): int
     {
         return self::navigationSortFor($type);
+    }
+
+    public function catalogTabForSourceTest(?string $source): ?string
+    {
+        return $this->catalogTabForSource($source);
+    }
+
+    public function sourceForTabTest(string|int|null $tab): ?string
+    {
+        return $this->sourceForTab($tab);
+    }
+
+    public function syncSourceFromActiveTabForTest(?string $activeTab): ?string
+    {
+        $this->syncSourceFromActiveTab($activeTab);
+
+        return $this->source;
     }
 
     public function markOperationHandledForTest(InstalledOperationState $state): void
@@ -214,6 +234,19 @@ class ModManagerPagePayloadTest extends TestCase
         Mockery::close();
 
         parent::tearDown();
+    }
+
+    public function test_catalog_page_uses_livewire_url_sync_without_page_one(): void
+    {
+        $property = new ReflectionProperty(ModManagerPage::class, 'catalogPage');
+        $attribute = $property->getAttributes(Url::class)[0];
+
+        self::assertSame([
+            'as' => 'page',
+            'history' => true,
+            'keep' => false,
+            'except' => 1,
+        ], $attribute->getArguments());
     }
 
     public function test_unknown_files_are_not_part_of_the_livewire_snapshot(): void
@@ -579,6 +612,37 @@ class ModManagerPagePayloadTest extends TestCase
         self::assertSame(ProjectSourceKey::CurseForge->value, $page->getDefaultActiveTab());
     }
 
+    public function test_catalog_source_is_canonicalized_for_url_and_installed_has_no_source(): void
+    {
+        $previousContainer = Container::getInstance();
+        $container = new Container();
+        $container->instance('translator', new Translator(new ArrayLoader(), 'en'));
+        Container::setInstance($container);
+
+        try {
+            $page = $this->pageWithSources([
+                $this->source(ProjectSourceKey::CurseForge, supportsSearch: true),
+                $this->source(ProjectSourceKey::Modrinth, supportsSearch: true),
+            ]);
+
+            self::assertSame(ProjectSourceKey::CurseForge->value, $page->catalogTabForSourceTest(ProjectSourceKey::CurseForge->value));
+            self::assertSame(ProjectSourceKey::CurseForge->value, $page->sourceForTabTest(ProjectSourceKey::CurseForge->value));
+            self::assertNull($page->catalogTabForSourceTest('missing-source'));
+            self::assertNull($page->catalogTabForSourceTest('installed'));
+            self::assertNull($page->sourceForTabTest('installed'));
+            self::assertSame(ProjectSourceKey::Modrinth->value, $page->syncSourceFromActiveTabForTest(ProjectSourceKey::Modrinth->value));
+            self::assertNull($page->syncSourceFromActiveTabForTest('installed'));
+
+            $singleSourcePage = $this->pageWithSources([
+                $this->source(ProjectSourceKey::Modrinth, supportsSearch: true),
+            ]);
+            self::assertSame('all', $singleSourcePage->catalogTabForSourceTest(ProjectSourceKey::Modrinth->value));
+            self::assertSame(ProjectSourceKey::Modrinth->value, $singleSourcePage->sourceForTabTest('all'));
+        } finally {
+            Container::setInstance($previousContainer);
+        }
+    }
+
     public function test_out_of_range_table_pages_are_clamped_to_the_last_real_page(): void
     {
         $page = new TestableModManagerPage();
@@ -860,6 +924,7 @@ class ModManagerPagePayloadTest extends TestCase
     {
         $source = Mockery::mock(ProjectSourceInterface::class);
         $source->shouldReceive('getKey')->andReturn($key);
+        $source->shouldReceive('getLabel')->andReturn($key->value);
         $source->shouldReceive('supportsSearch')->andReturn($supportsSearch);
         $source->shouldReceive('isConfigured')->andReturn($configured);
 

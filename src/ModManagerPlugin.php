@@ -264,6 +264,11 @@ class ModManagerPlugin implements HasPluginSettings, Plugin
         );
         $panel->renderHook(
             PanelsRenderHook::BODY_END,
+            fn () => view('pelican-minecraft-modrinth::components.catalog-url-history'),
+            $pageClasses,
+        );
+        $panel->renderHook(
+            PanelsRenderHook::BODY_END,
             fn () => config('pelican-minecraft-modrinth.debug_timing')
                 ? view('pelican-minecraft-modrinth::components.performance-profiler')
                 : '',
